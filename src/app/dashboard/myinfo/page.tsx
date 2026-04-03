@@ -86,8 +86,8 @@ export default function MyInfoPage() {
         <div className="grid grid-cols-3 gap-4 items-start">
           <div className="card text-center py-6">
             {profile.avatar_url
-              ? <img src={profile.avatar_url} alt={profile.name} className="w-20 h-20 rounded-full object-cover mx-auto mb-3" />
-              : <div className="w-20 h-20 rounded-full mx-auto mb-3 flex items-center justify-center text-3xl font-bold"
+              ? <img src={profile.avatar_url} alt={profile.name} className="w-32 h-32 rounded-full object-cover mx-auto mb-3 border-4 border-gray-100" />
+              : <div className="w-32 h-32 rounded-full mx-auto mb-3 flex items-center justify-center text-4xl font-bold"
                   style={{background:profile.color||'#EEEDFE',color:profile.tc||'#3C3489'}}>{profile.name?.[0]}</div>
             }
             <div className="text-base font-semibold text-gray-800">{profile.name}</div>

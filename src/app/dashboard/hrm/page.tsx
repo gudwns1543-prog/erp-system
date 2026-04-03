@@ -258,7 +258,7 @@ export default function HrmPage() {
           <div className="card overflow-x-auto mb-4">
             <table className="w-full text-sm">
               <thead><tr className="border-b border-gray-100">
-                {['이름','직급','계약연봉','부양가족','식대','교통비','통신비','시간단가','편집'].map(h=>(
+                {['','이름','직급','계약연봉','부양가족','식대','교통비','통신비','시간단가','편집'].map(h=>(
                   <th key={h} className="pb-2 text-left font-medium text-gray-400 pr-3 text-xs whitespace-nowrap">{h}</th>
                 ))}
               </tr></thead>

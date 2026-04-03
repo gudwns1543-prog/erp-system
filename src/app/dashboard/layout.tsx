@@ -251,8 +251,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
           <div className="flex items-center gap-2">
             {profile.avatar_url
-              ? <img src={profile.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0 border-2 border-gray-100" />
-              : <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+              ? <img src={profile.avatar_url} alt="" className="w-14 h-14 rounded-full object-cover flex-shrink-0 border-2 border-gray-100" />
+              : <div className="w-14 h-14 rounded-full flex items-center justify-center text-lg font-bold flex-shrink-0"
                   style={{ background: profile.color || '#EEEDFE', color: profile.tc || '#3C3489' }}>
                   {profile.name?.[0]}
                 </div>}
