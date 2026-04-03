@@ -107,11 +107,11 @@ export default function PaySlipPage() {
                 <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">지급 항목</div>
                 {[
                   ['기본급', result.base],
-                  result.payExt>0&&['평일 시간외 ×1.5', result.payExt],
-                  result.payNight>0&&['평일 야간 ×2.0', result.payNight],
-                  result.payHol>0&&['휴일 근무 ×1.5', result.payHol],
-                  result.payHolExt>0&&['휴일 시간외 ×2.0', result.payHolExt],
-                  result.payHolNight>0&&['휴일 야간 ×2.5', result.payHolNight],
+                  result.payExt>0&&work?.extH>0&&[`평일 시간외 ${work.extH}h × 1.5`, result.payExt],
+                  result.payNight>0&&work?.nightH>0&&[`평일 야간 ${work.nightH}h × 2.0`, result.payNight],
+                  result.payHol>0&&work?.holH>0&&[`휴일 정규 ${work.holH}h × 1.5`, result.payHol],
+                  result.payHolExt>0&&work?.holExtH>0&&[`휴일 시간외 ${work.holExtH}h × 2.0`, result.payHolExt],
+                  result.payHolNight>0&&work?.holNightH>0&&[`휴일 야간 ${work.holNightH}h × 2.5`, result.payHolNight],
                   salary?.meal>0&&['식대 (비과세)', salary.meal],
                   salary?.transport>0&&['교통비 (비과세)', salary.transport],
                   salary?.comm>0&&['통신비 (비과세)', salary.comm],
