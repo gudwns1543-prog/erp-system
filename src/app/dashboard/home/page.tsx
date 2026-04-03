@@ -126,15 +126,50 @@ export default function HomePage() {
 
       const today = todayStr()
       const todayDate = new Date()
-      const next7 = new Date(todayDate)
-      next7.setDate(todayDate.getDate() + 7)
-      const next7str = next7.toISOString().slice(0,10) + 'T23:59:59'
+      const days = ['일','월','화','수','목','금','토']
 
-      // 내 일정 (참석자 포함)
+      // 내 프로필
+      const { data: p } = await supabase.from('profiles')
+        .select('role,name,grade,dept,annual_leave,join_date').eq('id', session.user.id).single()
+
+      // 오늘 출퇴근
+      const { data: todayAttRows } = await supabase.from('attendance')
+        .select('check_in,check_out,reg_hours,ext_hours,night_hours').eq('user_id', session.user.id).eq('work_date', today)
+      const todayAtt = todayAttRows?.[0]
+      const attendStatus = todayAtt?.check_in
+        ? ('출근 ' + todayAtt.check_in.slice(0,5) + (todayAtt.check_out ? ' → 퇴근 ' + todayAtt.check_out.slice(0,5) : ' (근무중)'))
+        : '미출근'
+
+      // 이번달 근태 요약
+      const thisMonth = todayDate.getMonth() + 1
+      const monthStart = todayDate.getFullYear() + '-' + String(thisMonth).padStart(2,'0') + '-01'
+      const { data: monthAtts } = await supabase.from('attendance')
+        .select('reg_hours,ext_hours,night_hours,hol_hours').eq('user_id', session.user.id).gte('work_date', monthStart).lte('work_date', today)
+      const monthReg = (monthAtts||[]).reduce((a: number, r: any) => a + (r.reg_hours||0), 0)
+      const monthExt = (monthAtts||[]).reduce((a: number, r: any) => a + (r.ext_hours||0) + (r.night_hours||0) + (r.hol_hours||0), 0)
+      const workDays = (monthAtts||[]).filter((r: any) => r.reg_hours > 0).length
+
+      // 잔여 연차
+      const { data: usedLeaves } = await supabase.from('approvals')
+        .select('type').eq('requester_id', session.user.id).eq('status','approved')
+        .in('type',['연차','반차(오전)','반차(오후)']).gte('start_date', todayDate.getFullYear() + '-01-01')
+      const usedLeave = (usedLeaves||[]).reduce((a: number, l: any) =>
+        a + (l.type.includes('반차') ? 0.5 : 1), 0)
+      const remainLeave = (p?.annual_leave || 0) - usedLeave
+
+      // 급여일 계산 (매월 25일)
+      const payDay = 25
+      const today_d = todayDate.getDate()
+      const daysToPayday = today_d <= payDay ? payDay - today_d : (new Date(todayDate.getFullYear(), todayDate.getMonth()+1, payDay).getDate() + (new Date(todayDate.getFullYear(), todayDate.getMonth()+1, 0).getDate() - today_d))
+      const paydayMsg = today_d === payDay ? '🎉 오늘이 급여일입니다!' : ('급여일까지 ' + (payDay - today_d > 0 ? payDay - today_d : new Date(todayDate.getFullYear(), todayDate.getMonth()+1, 0).getDate() - today_d + payDay) + '일 남았어요')
+
+      // 다가오는 7일 일정
+      const next7 = new Date(todayDate); next7.setDate(todayDate.getDate() + 7)
+      const next7str = next7.toISOString().slice(0,10) + 'T23:59:59'
       const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
       const attIds = (myAtt||[]).map((a: any) => a.event_id)
       let eventsQuery = supabase.from('events')
-        .select('title,start_at,end_at,location').order('start_at')
+        .select('title,start_at,location').order('start_at')
         .gte('start_at', today).lte('start_at', next7str)
       if (attIds.length > 0) {
         eventsQuery = eventsQuery.or('creator_id.eq.' + session.user.id + ',id.in.(' + attIds.join(',') + ')')
@@ -142,46 +177,74 @@ export default function HomePage() {
         eventsQuery = eventsQuery.eq('creator_id', session.user.id)
       }
       const { data: events } = await eventsQuery
+      const eventList = (events||[]).slice(0,5).map((e: any) =>
+        e.start_at.slice(5,10).replace('-','/') + ' ' + e.start_at.slice(11,16) + ' ' + e.title + (e.location ? ' @ ' + e.location : '')
+      )
 
-      // 프로필 + 대기결재
-      const { data: p } = await supabase.from('profiles').select('role,name,grade,dept').eq('id', session.user.id).single()
+      // 대기 결재
       const pendingCol = p?.role === 'director' ? 'approver_id' : 'requester_id'
       const { data: pendingApprovals } = await supabase.from('approvals')
         .select('type,start_date,requester:requester_id(name)')
         .eq(pendingCol, session.user.id).eq('status','pending').limit(5)
+      const approvalList = (pendingApprovals||[]).map((a: any) =>
+        p?.role === 'director'
+          ? ((a.requester as any)?.name + '님 ' + a.type + ' (' + a.start_date + ')')
+          : (a.type + ' 결재 대기중')
+      )
 
-      // 오늘 출퇴근
-      const { data: todayAtt } = await supabase.from('attendance')
-        .select('check_in,check_out,reg_hours').eq('user_id', session.user.id).eq('work_date', today)
+      // 팀원 생일/입사기념일 (7일 이내) - 관리자만
+      let anniversaries: string[] = []
+      if (p?.role === 'director') {
+        const { data: allStaff } = await supabase.from('profiles')
+          .select('name,birth_date,join_date').eq('status','active').neq('id', session.user.id)
+        const thisYear = todayDate.getFullYear()
+        ;(allStaff||[]).forEach((s: any) => {
+          if (s.birth_date) {
+            const bd = s.birth_date.slice(5)
+            const bdThis = thisYear + '-' + bd
+            const diff = Math.ceil((new Date(bdThis).getTime() - todayDate.getTime()) / 86400000)
+            if (diff >= 0 && diff <= 7) anniversaries.push(s.name + '님 생일 D-' + diff + ' (' + bd.replace('-','/') + ')')
+          }
+          if (s.join_date) {
+            const jd = s.join_date.slice(5)
+            const jdThis = thisYear + '-' + jd
+            const diff2 = Math.ceil((new Date(jdThis).getTime() - todayDate.getTime()) / 86400000)
+            if (diff2 >= 0 && diff2 <= 7) {
+              const years = thisYear - parseInt(s.join_date.slice(0,4))
+              if (years > 0) anniversaries.push(s.name + '님 입사 ' + years + '주년 D-' + diff2)
+            }
+          }
+        })
+      }
+
+      // 이번주 팀원 현황 (관리자만)
+      let teamStatus = ''
+      if (p?.role === 'director') {
+        const now = new Date(); const dow = now.getDay()
+        const mon = new Date(now); mon.setDate(now.getDate() - (dow===0?6:dow-1))
+        const { data: weekAtts } = await supabase.from('attendance')
+          .select('user_id').eq('work_date', today).not('check_in','is',null)
+        teamStatus = '오늘 출근 ' + (weekAtts?.length || 0) + '명'
+      }
 
       // 미읽음 공지
       const lastRead = localStorage.getItem('notice_read_' + session.user.id) || '2000-01-01'
       const { count: noticeCount } = await supabase.from('notices')
         .select('*',{count:'exact',head:true}).gt('created_at', lastRead)
 
-      const days = ['일','월','화','수','목','금','토']
-      const checkIn = todayAtt?.[0]?.check_in
-      const checkOut = todayAtt?.[0]?.check_out
-      const attendStatus = checkIn
-        ? ('출근 ' + checkIn.slice(0,5) + (checkOut ? ' / 퇴근 ' + checkOut.slice(0,5) : ' (근무중)'))
-        : '미출근'
-
-      const eventList = (events||[]).map((e: any) =>
-        e.start_at.slice(5,10).replace('-','/') + ' ' + e.start_at.slice(11,16) + ' ' + e.title + (e.location ? ' (' + e.location + ')' : '')
-      )
-      const approvalList = (pendingApprovals||[]).map((a: any) =>
-        p?.role === 'director'
-          ? ((a.requester as any)?.name + '님의 ' + a.type + ' (' + a.start_date + ')')
-          : (a.type + ' 신청 대기중 (' + a.start_date + ')')
-      )
-
+      // AI에게 보낼 최종 데이터
       const briefData = {
-        오늘날짜: (todayDate.getMonth()+1) + '월 ' + todayDate.getDate() + '일 ' + days[todayDate.getDay()] + '요일',
-        직원정보: (p?.name || '') + ' ' + (p?.grade || '') + ' (' + (p?.dept || '') + ')',
-        출퇴근상태: attendStatus,
-        다가오는일정: eventList,
-        대기결재: approvalList,
-        미읽음공지: noticeCount || 0,
+        날짜: (todayDate.getMonth()+1) + '월 ' + todayDate.getDate() + '일 ' + days[todayDate.getDay()] + '요일',
+        직원: (p?.name||'') + ' ' + (p?.grade||'') + ' / ' + (p?.dept||''),
+        출퇴근: attendStatus,
+        이번달근태: workDays + '일 출근 / 정규 ' + monthReg + 'h / 초과 ' + monthExt + 'h',
+        잔여연차: remainLeave + '일 (사용 ' + usedLeave + '일)',
+        급여일: paydayMsg,
+        다가오는일정: eventList.length ? eventList : ['없음'],
+        대기결재: approvalList.length ? approvalList : ['없음'],
+        미읽음공지: (noticeCount||0) + '건',
+        팀원생일입사기념: anniversaries.length ? anniversaries : undefined,
+        팀원출근현황: teamStatus || undefined,
       }
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -189,9 +252,9 @@ export default function HomePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 1000,
-          system: '당신은 회사 ERP 시스템의 AI 어시스턴트입니다. 주어진 업무 데이터를 바탕으로 오늘의 업무 브리핑을 친근하고 간결하게 한국어로 작성해주세요. 인사말 없이 바로 핵심 내용으로 시작하고, 이모지를 활용하여 가독성을 높이고, 3~5줄 이내로 간결하게 작성하며, 없는 내용은 언급하지 마세요. 마지막에 짧은 응원 멘트를 추가해주세요.',
-          messages: [{ role: 'user', content: '오늘 업무 데이터:\n' + JSON.stringify(briefData, null, 2) }]
+          max_tokens: 600,
+          system: '당신은 회사 ERP 시스템의 친근한 AI 어시스턴트입니다. 주어진 업무 데이터를 분석해서 오늘의 업무 브리핑을 작성해주세요. 규칙: 1) 인사말 없이 바로 핵심 내용 2) 이모지로 가독성 높이기 3) 중요한 것 먼저 (급한 결재, 오늘 일정 등) 4) 5줄 이내로 간결하게 5) 없는 항목은 언급 안함 6) 마지막 줄에 짧은 응원 멘트',
+          messages: [{ role: 'user', content: '업무 데이터:\n' + JSON.stringify(briefData, null, 2) }]
         })
       })
       const data = await response.json()
