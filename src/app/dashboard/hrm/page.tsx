@@ -96,7 +96,7 @@ export default function HrmPage() {
                 <tr key={u.id}
                   onClick={()=>setViewing(u)}
                   className="border-b border-gray-50 hover:bg-purple-50 cursor-pointer transition-colors">
-                  <td className="py-2 pr-3"><Avatar u={u} size={10} /></td>
+                  <td className="py-2 pr-3"><Avatar u={u} size={8} /></td>
                   <td className="py-2 pr-3 font-medium">{u.name}</td>
                   <td className="py-2 pr-3 text-gray-500 text-xs">{u.dept}</td>
                   <td className="py-2 pr-3">{u.grade}</td>
@@ -309,7 +309,7 @@ function SalaryRow({u, sal, rate, onSave, Avatar}: any) {
   })
   return (
     <tr className="border-b border-gray-50 hover:bg-gray-50">
-      <td className="py-2 pr-3"><Avatar u={u} size={10} /></td>
+      <td className="py-2 pr-3"><Avatar u={u} size={8} /></td>
       <td className="py-2 pr-3 font-medium">{u.name}</td>
       <td className="py-2 pr-3 text-gray-500">{u.grade}</td>
       {editing ? (
