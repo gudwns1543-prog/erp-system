@@ -145,7 +145,7 @@ export default function CalendarPage() {
   }
 
   function openEdit(ev: any) {
-    const atts = attendees.filter(a=>a.event_id===ev.id&&a.user_id!==profile?.id).map((a:any)=>a.user_id)
+    const atts = attendees.filter((a:any)=>a.event_id===ev.id).map((a:any)=>a.user_id)
     setForm({
       title:ev.title, description:ev.description||'',
       start_date:ev.start_at.slice(0,10), start_time:ev.start_at.slice(11,16),
@@ -413,7 +413,7 @@ export default function CalendarPage() {
                 </div>
               )}
               <div>
-                <div className="text-xs font-medium text-gray-500 mb-2">주최자</div>
+                <div className="text-xs font-medium text-gray-500 mb-2">등록자</div>
                 <div className="flex items-center gap-2">
                   <Avatar u={showDetail.creator} />
                   <span className="text-sm text-gray-700">{(showDetail.creator as any)?.name}</span>

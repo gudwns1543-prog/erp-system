@@ -1,12 +1,12 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Logo } from '@/components/Logo'
 import { createClient } from '@/lib/supabase'
 import { classifyWork, minutesToHours, isHoliday } from '@/lib/attendance'
+import { Logo } from '@/components/Logo'
 
 const DAYS = ['일','월','화','수','목','금','토']
-
+const DAYS_SHORT = ['일','월','화','수','목','금','토']
 function todayStr() { return new Date().toISOString().slice(0,10) }
 
 export default function HomePage() {
@@ -14,14 +14,13 @@ export default function HomePage() {
   const [profile, setProfile] = useState<any>(null)
   const [time, setTime] = useState('')
   const [today, setToday] = useState<any>(null)
-  const [stats, setStats] = useState({monthReg:0, remainLeave:0, pendingApprovals:0, pendingInvites:0})
-  const [todayEvents, setTodayEvents] = useState<any[]>([])
-  const [upcomingEvents, setUpcomingEvents] = useState<any[]>([])
-  const [calMonth, setCalMonth] = useState(new Date().getMonth())
-  const [calYear, setCalYear] = useState(new Date().getFullYear())
+  const [stats, setStats] = useState({monthReg:0, remainLeave:0, pendingApprovals:0})
+  const [allEvents, setAllEvents] = useState<any[]>([])
   const [pendingApprovals, setPendingApprovals] = useState<any[]>([])
   const [recentNotices, setRecentNotices] = useState<any[]>([])
   const [teamStatus, setTeamStatus] = useState<any[]>([])
+  const [calYear, setCalYear] = useState(new Date().getFullYear())
+  const [calMonth, setCalMonth] = useState(new Date().getMonth())
 
   function nowStr() {
     const n = new Date()
@@ -32,9 +31,9 @@ export default function HomePage() {
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
-    const ds = todayStr(); const inTime = nowStr()
+    const ds = todayStr()
     await supabase.from('attendance').upsert({
-      user_id: session.user.id, work_date: ds, check_in: inTime, is_holiday: isHoliday(ds),
+      user_id: session.user.id, work_date: ds, check_in: nowStr(), is_holiday: isHoliday(ds),
     }, { onConflict: 'user_id,work_date' })
     load()
   }
@@ -56,27 +55,15 @@ export default function HomePage() {
     load()
   }
 
-  async function handleStatusChange(newStatus: 'checkin'|'checkout') {
+  async function handleResumeWork() {
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
-    const ds = todayStr(); const nowTime = nowStr()
-    if (newStatus === 'checkin') {
-      await supabase.from('attendance').upsert({
-        user_id: session.user.id, work_date: ds, check_in: nowTime,
-        check_out: null, is_holiday: isHoliday(ds),
-      }, { onConflict: 'user_id,work_date' })
-    } else {
-      if (!today?.check_in) return
-      const r = classifyWork(ds, today.check_in, nowTime)
-      await supabase.from('attendance').update({
-        check_out: nowTime,
-        reg_hours: minutesToHours(r.reg), ext_hours: minutesToHours(r.ext),
-        night_hours: minutesToHours(r.night), hol_hours: minutesToHours(r.hReg),
-        hol_eve_hours: minutesToHours(r.hEve), hol_night_hours: minutesToHours(r.hNight),
-        ignored_hours: minutesToHours(r.ignored),
-      }).eq('user_id', session.user.id).eq('work_date', ds)
-    }
+    const ds = todayStr()
+    await supabase.from('attendance').update({
+      check_in: nowStr(), check_out: null,
+      reg_hours:0, ext_hours:0, night_hours:0,
+    }).eq('user_id', session.user.id).eq('work_date', ds)
     load()
   }
 
@@ -86,72 +73,43 @@ export default function HomePage() {
     if (!session) return
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
-
-    // 오늘 출퇴근
     const { data: t } = await supabase.from('attendance')
       .select('*').eq('user_id', session.user.id).eq('work_date', todayStr()).maybeSingle()
     setToday(t)
-
-    // 이번달 근태 합계
     const now = new Date()
     const start = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`
     const { data: recs } = await supabase.from('attendance').select('reg_hours')
       .eq('user_id', session.user.id).gte('work_date', start)
     const monthReg = (recs||[]).reduce((a:number,r:any)=>a+(r.reg_hours||0),0)
-
-    // 미결 결재 수 (관리자: 받은 것, 직원: 보낸 것 중 대기)
-    let pendingApprovalCount = 0
+    let pendingCount = 0
     if (p?.role === 'director') {
       const { count } = await supabase.from('approvals').select('*',{count:'exact',head:true})
         .eq('approver_id', session.user.id).eq('status','pending')
-      pendingApprovalCount = count||0
-    } else {
-      const { count } = await supabase.from('approvals').select('*',{count:'exact',head:true})
-        .eq('requester_id', session.user.id).eq('status','pending')
-      pendingApprovalCount = count||0
+      pendingCount = count||0
     }
-
-    // 미응답 일정 초대
-    const { count: invCount } = await supabase.from('event_attendees').select('*',{count:'exact',head:true})
-      .eq('user_id', session.user.id).eq('status','pending')
-
-    setStats({ monthReg, remainLeave: p?.annual_leave||0, pendingApprovals: pendingApprovalCount, pendingInvites: invCount||0 })
-
-    // 오늘 일정
-    const { data: evAtts } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
-    const attIds = (evAtts||[]).map(a=>a.event_id)
+    setStats({ monthReg, remainLeave: p?.annual_leave||0, pendingApprovals: pendingCount })
+    // 이번달 일정
+    const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
+    const attIds = (myAtt||[]).map((a:any)=>a.event_id)
     const { data: evs } = await supabase.from('events')
-      .select('*, creator:creator_id(name)')
+      .select('id,title,start_at,end_at,color,creator_id')
       .or(`creator_id.eq.${session.user.id}${attIds.length?`,id.in.(${attIds.join(',')})`:''}`).order('start_at')
-    const todayEvs = (evs||[]).filter(e=>e.start_at.slice(0,10)<=todayStr()&&e.end_at.slice(0,10)>=todayStr())
-    setTodayEvents(todayEvs.slice(0,3))
-    const upcoming = (evs||[]).filter(e=>e.start_at.slice(0,10)>todayStr()).slice(0,10)
-    setUpcomingEvents(upcoming)
-
-    // 결재 대기 (관리자)
+    setAllEvents(evs||[])
     if (p?.role === 'director') {
       const { data: apps } = await supabase.from('approvals')
-        .select('*, requester:requester_id(name,color,tc)')
+        .select('*, requester:requester_id(name,color,tc,avatar_url)')
         .eq('approver_id', session.user.id).eq('status','pending').limit(4)
       setPendingApprovals(apps||[])
+      const { data: allStaff } = await supabase.from('profiles').select('id,name,dept,color,tc,avatar_url').eq('status','active').neq('id', session.user.id)
+      const { data: todayAtts } = await supabase.from('attendance').select('user_id,check_in,check_out').eq('work_date', todayStr())
+      setTeamStatus((allStaff||[]).map((s:any)=>{
+        const att = (todayAtts||[]).find((a:any)=>a.user_id===s.id)
+        return { ...s, checkIn: att?.check_in, status: att?.check_out?'done':att?.check_in?'working':'absent' }
+      }).slice(0,5))
     }
-
-    // 최근 공지
     const { data: notices } = await supabase.from('notices')
       .select('*, author:author_id(name)').order('created_at',{ascending:false}).limit(3)
     setRecentNotices(notices||[])
-
-    // 팀원 오늘 근태 현황
-    if (p?.role === 'director') {
-      const { data: allStaff } = await supabase.from('profiles').select('id,name,dept,color,tc,avatar_url').eq('status','active').neq('id', session.user.id)
-      const { data: todayAtts } = await supabase.from('attendance').select('user_id,check_in,check_out').eq('work_date', todayStr())
-      const statusList = (allStaff||[]).map(s=>{
-        const att = (todayAtts||[]).find(a=>a.user_id===s.id)
-        return { ...s, checkIn: att?.check_in, checkOut: att?.check_out,
-          status: att?.check_out ? 'done' : att?.check_in ? 'working' : 'absent' }
-      })
-      setTeamStatus(statusList.slice(0,5))
-    }
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -166,7 +124,17 @@ export default function HomePage() {
   const d = new Date()
   const dateStr = `${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일 ${DAYS[d.getDay()]}요일`
 
-  const Avatar = ({u,size=6}:{u:any,size?:number}) => (
+  const firstDay = new Date(calYear, calMonth, 1).getDay()
+  const daysInMonth = new Date(calYear, calMonth+1, 0).getDate()
+  const todayDate = todayStr()
+
+  function getEventsForDate(ds: string) {
+    return allEvents.filter((e:any) => e.start_at.slice(0,10) <= ds && ds <= e.end_at.slice(0,10))
+  }
+  function prevMonth() { if(calMonth===0){setCalYear(y=>y-1);setCalMonth(11)}else setCalMonth(m=>m-1) }
+  function nextMonth() { if(calMonth===11){setCalYear(y=>y+1);setCalMonth(0)}else setCalMonth(m=>m+1) }
+
+  const Avatar = ({u,size=5}:{u:any,size?:number}) => (
     u?.avatar_url
       ? <img src={u.avatar_url} className={`w-${size} h-${size} rounded-full object-cover flex-shrink-0`} alt="" />
       : <div className={`w-${size} h-${size} rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0`}
@@ -174,246 +142,153 @@ export default function HomePage() {
   )
 
   const SHORTCUTS = [
-    {icon:'⏱', label:'출퇴근', href:'/dashboard'},
-    {icon:'📋', label:'근태기록', href:'/dashboard/attendance'},
-    {icon:'📄', label:'급여명세', href:'/dashboard/payslip'},
-    {icon:'⚡', label:'예상급여', href:'/dashboard/paysim'},
-    {icon:'📅', label:'일정', href:'/dashboard/calendar'},
-    {icon:'💬', label:'메시지', href:'/dashboard/chat'},
-    {icon:'✅', label:'결재함', href:'/dashboard/approval'},
-    {icon:'📢', label:'공지사항', href:'/dashboard/notice'},
+    {icon:'⏰',label:'출퇴근',href:'/dashboard'},
+    {icon:'📋',label:'근태기록',href:'/dashboard/attendance'},
+    {icon:'📄',label:'급여명세',href:'/dashboard/payslip'},
+    {icon:'⚡',label:'예상급여',href:'/dashboard/paysim'},
+    {icon:'📅',label:'일정',href:'/dashboard/calendar'},
+    {icon:'💬',label:'메시지',href:'/dashboard/chat'},
+    {icon:'✅',label:'결재함',href:'/dashboard/approval'},
+    {icon:'📢',label:'공지사항',href:'/dashboard/notice'},
   ]
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
-      {/* 인사말 + 출퇴근 버튼 */}
+    <div className="p-6 max-w-6xl mx-auto">
+      {/* 인사말 + 출퇴근 */}
       <div className="mb-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Logo size={36} />
             <div>
-              <div className="text-xl font-semibold text-gray-800">
-                안녕하세요, {profile?.name} {profile?.grade}님 👋
-              </div>
+              <div className="text-xl font-semibold text-gray-800">안녕하세요, {profile?.name} {profile?.grade}님 👋</div>
               <div className="text-sm text-gray-400 mt-0.5">{dateStr}</div>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <div className="text-xl font-bold text-gray-700 tabular-nums">{time}</div>
             <div className="flex gap-2">
-              <button onClick={handleCheckIn} disabled={!!today?.check_in && !today?.check_out === false}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-colors
-                  bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                <span style={{fontSize:18}}>🔴</span> 출근
+              <button onClick={handleCheckIn} disabled={!!today?.check_in && !today?.check_out}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                <span style={{fontSize:16}}>🔴</span> 출근
               </button>
-              <button onClick={handleCheckOut} disabled={!today?.check_in || !!today?.check_out}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-colors
-                  bg-gray-600 text-white hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                <span style={{fontSize:18}}>🔴</span> 퇴근
+              <button onClick={handleCheckOut} disabled={!today?.check_in||!!today?.check_out}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium bg-gray-600 text-white hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                <span style={{fontSize:16}}>🔴</span> 퇴근
               </button>
             </div>
           </div>
         </div>
-        {/* 근무상태 변경 (퇴근 후 복귀 가능) */}
         {today?.check_out && (
           <div className="mt-3 p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-center justify-between">
-            <div className="text-xs text-amber-700">퇴근 처리됨 · 업무에 복귀하시겠습니까?</div>
-            <button onClick={()=>handleStatusChange('checkin')}
-              className="text-xs bg-amber-600 text-white px-3 py-1.5 rounded-lg hover:bg-amber-700">
-              🔄 근무 복귀
-            </button>
+            <span className="text-xs text-amber-700">퇴근 처리됨 · 업무에 복귀하시겠습니까?</span>
+            <button onClick={handleResumeWork} className="text-xs bg-amber-600 text-white px-3 py-1.5 rounded-lg hover:bg-amber-700">🔄 근무 복귀</button>
           </div>
         )}
       </div>
 
-      {/* 요약 카드 4개 */}
+      {/* 요약 카드 */}
       <div className="grid grid-cols-4 gap-3 mb-5">
         {[
-          { label:'출근 시간', val: today?.check_in?.slice(0,5)||'--:--',
-            sub: today?.check_out?'퇴근 완료':today?.check_in?'근무 중':'미출근',
-            color:'text-gray-800', icon:'⏱' },
-          { label:'이번달 근태', val: Math.round(stats.monthReg*10)/10+'h',
-            sub:'정규 근무 합계', color:'text-purple-600', icon:'📊' },
-          { label:'잔여 연차', val: stats.remainLeave+'일',
-            sub:'사용 가능', color:'text-teal-600', icon:'🌿' },
-          { label: profile?.role==='director'?'미결 결재':'대기 중 결재',
-            val: stats.pendingApprovals+'건',
-            sub: profile?.role==='director'?'승인 대기':'상신 후 대기',
-            color: stats.pendingApprovals>0?'text-amber-600':'text-gray-400', icon:'📝' },
+          {label:'출근 시간', val:today?.check_in?.slice(0,5)||'--:--', sub:today?.check_out?'퇴근완료':today?.check_in?'근무중':'미출근', c:'text-gray-800'},
+          {label:'이번달 근태', val:Math.round(stats.monthReg*10)/10+'h', sub:'정규 근무', c:'text-purple-600'},
+          {label:'잔여 연차', val:stats.remainLeave+'일', sub:'사용 가능', c:'text-teal-600'},
+          {label:profile?.role==='director'?'미결 결재':'대기 결재', val:stats.pendingApprovals+'건', sub:'승인 대기', c:stats.pendingApprovals>0?'text-amber-600':'text-gray-400'},
         ].map(m=>(
           <div key={m.label} className="card">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-xs text-gray-400">{m.label}</div>
-              <span style={{fontSize:16}}>{m.icon}</span>
-            </div>
-            <div className={`text-2xl font-semibold ${m.color}`}>{m.val}</div>
+            <div className="text-xs text-gray-400 mb-1">{m.label}</div>
+            <div className={`text-2xl font-semibold ${m.c}`}>{m.val}</div>
             <div className="text-xs text-gray-400 mt-1">{m.sub}</div>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-5 gap-4">
-        {/* 왼쪽 (3/5) */}
-        <div className="col-span-3 space-y-4">
-          {/* 미니 캘린더 + 일정 */}
-          <div className="card">
-            <div className="flex justify-between items-center mb-3">
-              <div className="text-sm font-medium text-gray-700">📅 일정</div>
-              <div className="flex items-center gap-1">
-                <button onClick={()=>{if(calMonth===0){setCalMonth(11);setCalYear(y=>y-1)}else setCalMonth(m=>m-1)}}
-                  className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xs">‹</button>
-                <span className="text-xs text-gray-500 w-14 text-center">{calYear}년 {calMonth+1}월</span>
-                <button onClick={()=>{if(calMonth===11){setCalMonth(0);setCalYear(y=>y+1)}else setCalMonth(m=>m+1)}}
-                  className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xs">›</button>
-                <button onClick={()=>router.push('/dashboard/calendar')}
-                  className="text-xs text-purple-600 hover:text-purple-800 ml-1">전체 →</button>
-              </div>
-            </div>
-            {/* 미니 캘린더 */}
-            {(()=>{
-              const DAYS_KR = ['일','월','화','수','목','금','토']
-              const firstDay = new Date(calYear, calMonth, 1).getDay()
-              const daysInMonth = new Date(calYear, calMonth+1, 0).getDate()
-              const todayD = new Date()
-              const isThisMonth = calYear===todayD.getFullYear()&&calMonth===todayD.getMonth()
-              return (
-                <div className="mb-3">
-                  <div className="grid grid-cols-7 mb-1">
-                    {DAYS_KR.map((d,i)=>(
-                      <div key={d} className={`text-center text-xs py-0.5 font-medium
-                        ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-400'}`}>{d}</div>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-7 gap-y-0.5">
-                    {Array.from({length:firstDay}).map((_,i)=><div key={`e${i}`}/>)}
-                    {Array.from({length:daysInMonth}).map((_,i)=>{
-                      const day = i+1
-                      const ds = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
-                      const isToday = isThisMonth && day===todayD.getDate()
-                      const hasEvent = [...todayEvents,...upcomingEvents].some(ev=>ev.start_at.slice(0,10)<=ds&&ds<=ev.end_at.slice(0,10))
-                      const dow = (firstDay+i)%7
-                      return (
-                        <div key={day} onClick={()=>router.push('/dashboard/calendar')}
-                          className="flex flex-col items-center cursor-pointer py-0.5">
-                          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs
-                            ${isToday?'bg-purple-600 text-white font-bold'
-                              :dow===0?'text-red-400':dow===6?'text-blue-400':'text-gray-600'}`}>
-                            {day}
-                          </div>
-                          {hasEvent && <div className="w-1 h-1 rounded-full bg-purple-400 mt-0.5"></div>}
-                        </div>
-                      )
-                    })}
-                  </div>
+      {/* 캘린더 - 풀 폭 */}
+      <div className="card mb-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-medium text-gray-700">📅 일정</div>
+          <div className="flex items-center gap-1">
+            <button onClick={prevMonth} className="btn-secondary px-2 py-1 text-xs">‹</button>
+            <span className="text-xs font-medium text-gray-600 px-1">{calYear}년 {calMonth+1}월</span>
+            <button onClick={nextMonth} className="btn-secondary px-2 py-1 text-xs">›</button>
+            <button onClick={()=>{setCalYear(new Date().getFullYear());setCalMonth(new Date().getMonth())}}
+              className="btn-secondary px-2 py-1 text-xs text-purple-600 ml-1">오늘</button>
+            <button onClick={()=>router.push('/dashboard/calendar')}
+              className="text-xs text-purple-600 hover:text-purple-800 ml-2">전체 →</button>
+          </div>
+        </div>
+        <div className="grid grid-cols-7 mb-1">
+          {DAYS_SHORT.map((d,i)=>(
+            <div key={d} className={`text-center text-xs font-semibold py-1.5
+              ${i===0?'text-red-400 bg-red-50':i===6?'text-blue-500 bg-blue-50':'text-gray-500 bg-gray-50'} rounded-sm`}>{d}</div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7">
+          {Array.from({length:firstDay}).map((_,i)=>(
+            <div key={`e-${i}`} className="min-h-[80px] bg-gray-50/30" />
+          ))}
+          {Array.from({length:daysInMonth}).map((_,i)=>{
+            const day = i+1
+            const ds = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
+            const dayEvs = getEventsForDate(ds)
+            const isToday = ds === todayDate
+            const dow = (firstDay + i) % 7
+            const isHol = isHoliday(ds)
+            const isSun = dow===0; const isSat = dow===6
+            return (
+              <div key={day}
+                onClick={()=>router.push('/dashboard/calendar')}
+                className={`min-h-[80px] border border-gray-100 p-1 cursor-pointer transition-colors
+                  ${isHol?'bg-red-50':isSun?'bg-rose-50/60':isSat?'bg-blue-50/60':'bg-white'}
+                  hover:bg-purple-50/40`}>
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold mb-0.5
+                  ${isToday?'bg-purple-600 text-white':isHol||isSun?'text-red-400':isSat?'text-blue-500':'text-gray-700'}`}>
+                  {day}
                 </div>
-              )
-            })()}
-            {/* 오늘 일정 */}
-            {todayEvents.length > 0 && (
-              <div className="border-t border-gray-50 pt-2 mb-2">
-                <div className="text-xs font-medium text-gray-500 mb-1.5">오늘</div>
-                {todayEvents.map(ev=>(
-                  <div key={ev.id} className="flex items-center gap-2 py-1">
-                    <div className="w-2 h-2 rounded-full flex-shrink-0" style={{background:ev.color||'#534AB7'}}></div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-medium text-gray-800 truncate">{ev.title}</div>
-                      <div className="text-xs text-gray-400">{ev.all_day?'종일':`${ev.start_at.slice(11,16)}~${ev.end_at.slice(11,16)}`}</div>
-                    </div>
+                {dayEvs.slice(0,3).map((ev:any)=>(
+                  <div key={ev.id}
+                    className="text-white rounded px-1 mb-0.5 truncate"
+                    style={{background:ev.color||'#534AB7',fontSize:'10px',lineHeight:'16px'}}>
+                    {ev.title}
                   </div>
                 ))}
+                {dayEvs.length>3 && <div className="text-gray-400" style={{fontSize:'10px'}}>+{dayEvs.length-3}</div>}
               </div>
-            )}
-            {/* 다가오는 일정 */}
-            {upcomingEvents.slice(0,3).length > 0 && (
-              <div className="border-t border-gray-50 pt-2">
-                <div className="text-xs font-medium text-gray-500 mb-1.5">다가오는 일정</div>
-                {upcomingEvents.slice(0,3).map(ev=>(
-                  <div key={ev.id} className="flex items-center gap-2 py-1">
-                    <div className="w-2 h-2 rounded-full flex-shrink-0" style={{background:ev.color||'#534AB7'}}></div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-medium text-gray-800 truncate">{ev.title}</div>
-                      <div className="text-xs text-gray-400">{ev.start_at.slice(0,10)}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {todayEvents.length===0 && upcomingEvents.length===0 && (
-              <div className="py-3 text-center text-gray-300 text-xs">예정된 일정이 없습니다</div>
-            )}
-            {stats.pendingInvites > 0 && (
-              <div className="mt-2 p-2 bg-amber-50 rounded-lg flex items-center justify-between">
-                <span className="text-xs text-amber-700">📬 미응답 초대 {stats.pendingInvites}건</span>
-                <button onClick={()=>router.push('/dashboard/calendar')}
-                  className="text-xs text-amber-700 font-medium">응답하기 →</button>
-              </div>
-            )}
-          </div>
+            )
+          })}
+        </div>
+      </div>
 
-          {/* 빠른 바로가기 */}
-          <div className="card">
-            <div className="text-sm font-medium text-gray-700 mb-3">🚀 바로가기</div>
-            <div className="grid grid-cols-4 gap-2">
-              {SHORTCUTS.map(s=>(
-                <button key={s.href} onClick={()=>router.push(s.href)}
-                  className="flex flex-col items-center gap-1.5 p-3 bg-gray-50 rounded-xl hover:bg-purple-50 transition-colors group">
-                  <span style={{fontSize:20}}>{s.icon}</span>
-                  <span className="text-xs text-gray-500 group-hover:text-purple-600 transition-colors">{s.label}</span>
-                </button>
-              ))}
-            </div>
+      {/* 하단 3열 */}
+      <div className="grid grid-cols-3 gap-4">
+        {/* 바로가기 */}
+        <div className="card">
+          <div className="text-sm font-medium text-gray-700 mb-3">🚀 바로가기</div>
+          <div className="grid grid-cols-4 gap-2">
+            {SHORTCUTS.map(s=>(
+              <button key={s.href} onClick={()=>router.push(s.href)}
+                className="flex flex-col items-center gap-1 p-2 bg-gray-50 rounded-xl hover:bg-purple-50 transition-colors group">
+                <span style={{fontSize:18}}>{s.icon}</span>
+                <span className="text-xs text-gray-500 group-hover:text-purple-600">{s.label}</span>
+              </button>
+            ))}
           </div>
-
-          {/* 팀원 오늘 현황 (관리자) */}
-          {profile?.role === 'director' && (
-            <div className="card">
-              <div className="flex justify-between items-center mb-3">
-                <div className="text-sm font-medium text-gray-700">👥 오늘 팀원 현황</div>
-                <button onClick={()=>router.push('/dashboard/attendance')}
-                  className="text-xs text-purple-600 hover:text-purple-800">전체 보기 →</button>
-              </div>
-              {teamStatus.map(u=>(
-                <div key={u.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                  <div className="flex items-center gap-2">
-                    <Avatar u={u} />
-                    <div>
-                      <div className="text-sm font-medium text-gray-800">{u.name}</div>
-                      <div className="text-xs text-gray-400">{u.dept}</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {u.checkIn && <span className="text-xs text-gray-400">{u.checkIn.slice(0,5)}</span>}
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium
-                      ${u.status==='working'?'bg-green-50 text-green-700':
-                        u.status==='done'?'bg-purple-50 text-purple-700':'bg-gray-100 text-gray-500'}`}>
-                      {u.status==='working'?'근무중':u.status==='done'?'퇴근':'미출근'}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
-        {/* 오른쪽 (2/5) */}
-        <div className="col-span-2 space-y-4">
-          {/* 결재 대기 */}
-          {profile?.role === 'director' && (
+        {/* 결재대기 + 공지 */}
+        <div className="space-y-3">
+          {profile?.role==='director' && pendingApprovals.length>0 && (
             <div className="card">
-              <div className="flex justify-between items-center mb-3">
+              <div className="flex justify-between items-center mb-2">
                 <div className="text-sm font-medium text-gray-700">✅ 결재 대기</div>
-                <button onClick={()=>router.push('/dashboard/approval')}
-                  className="text-xs text-purple-600 hover:text-purple-800">결재함 →</button>
+                <button onClick={()=>router.push('/dashboard/approval')} className="text-xs text-purple-600">결재함 →</button>
               </div>
-              {pendingApprovals.length === 0 ? (
-                <div className="py-4 text-center text-gray-300 text-xs">대기 중인 결재가 없습니다</div>
-              ) : pendingApprovals.map(a=>(
-                <div key={a.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+              {pendingApprovals.map((a:any)=>(
+                <div key={a.id} className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0">
                   <div className="flex items-center gap-2">
                     <Avatar u={a.requester} size={5} />
                     <div>
                       <div className="text-xs font-medium text-gray-800">{(a.requester as any)?.name}</div>
-                      <div className="text-xs text-gray-400">{a.type} · {a.start_date}</div>
+                      <div className="text-xs text-gray-400">{a.type}</div>
                     </div>
                   </div>
                   <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">대기</span>
@@ -421,39 +296,58 @@ export default function HomePage() {
               ))}
             </div>
           )}
-
-          {/* 최근 공지 */}
           <div className="card">
-            <div className="flex justify-between items-center mb-3">
+            <div className="flex justify-between items-center mb-2">
               <div className="text-sm font-medium text-gray-700">📢 최근 공지</div>
-              <button onClick={()=>router.push('/dashboard/notice')}
-                className="text-xs text-purple-600 hover:text-purple-800">전체 보기 →</button>
+              <button onClick={()=>router.push('/dashboard/notice')} className="text-xs text-purple-600">전체 →</button>
             </div>
-            {recentNotices.length === 0 ? (
-              <div className="py-4 text-center text-gray-300 text-xs">공지사항이 없습니다</div>
-            ) : recentNotices.map(n=>(
-              <div key={n.id} className="py-2 border-b border-gray-50 last:border-0">
-                <div className="text-xs font-medium text-gray-800 truncate">{n.title}</div>
-                <div className="text-xs text-gray-400 mt-0.5">{(n.author as any)?.name} · {n.created_at?.slice(0,10)}</div>
-              </div>
-            ))}
+            {recentNotices.length===0
+              ? <div className="py-3 text-center text-gray-300 text-xs">공지사항이 없습니다</div>
+              : recentNotices.map((n:any)=>(
+                <div key={n.id} className="py-1.5 border-b border-gray-50 last:border-0">
+                  <div className="text-xs font-medium text-gray-800 truncate">{n.title}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">{(n.author as any)?.name} · {n.created_at?.slice(0,10)}</div>
+                </div>
+              ))
+            }
           </div>
+        </div>
 
-          {/* 나의 결재 현황 */}
-          <div className="card">
-            <div className="flex justify-between items-center mb-3">
-              <div className="text-sm font-medium text-gray-700">📝 나의 결재</div>
-              <button onClick={()=>router.push('/dashboard/leave')}
-                className="text-xs text-purple-600 hover:text-purple-800">신청하기 →</button>
+        {/* 팀원현황 + 나의결재 */}
+        <div className="space-y-3">
+          {profile?.role==='director' && (
+            <div className="card">
+              <div className="flex justify-between items-center mb-2">
+                <div className="text-sm font-medium text-gray-700">👥 팀원 현황</div>
+                <button onClick={()=>router.push('/dashboard/attendance')} className="text-xs text-purple-600">전체 →</button>
+              </div>
+              {teamStatus.map((u:any)=>(
+                <div key={u.id} className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0">
+                  <div className="flex items-center gap-2">
+                    <Avatar u={u} size={5} />
+                    <div className="text-xs font-medium text-gray-800">{u.name}</div>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium
+                    ${u.status==='working'?'bg-green-50 text-green-700':u.status==='done'?'bg-purple-50 text-purple-700':'bg-gray-100 text-gray-500'}`}>
+                    {u.status==='working'?'근무중':u.status==='done'?'퇴근':'미출근'}
+                  </span>
+                </div>
+              ))}
             </div>
-            <div className="space-y-2">
+          )}
+          <div className="card">
+            <div className="flex justify-between items-center mb-2">
+              <div className="text-sm font-medium text-gray-700">📝 나의 결재</div>
+              <button onClick={()=>router.push('/dashboard/leave')} className="text-xs text-purple-600">신청 →</button>
+            </div>
+            <div className="space-y-1.5">
               <button onClick={()=>router.push('/dashboard/leave')}
-                className="w-full text-left p-2.5 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors">
+                className="w-full text-left p-2 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors">
                 <div className="text-xs font-medium text-purple-700">+ 휴가·출장 신청</div>
-                <div className="text-xs text-purple-500 mt-0.5">연차 · 반차 · 출장 · 외근</div>
+                <div className="text-xs text-purple-400 mt-0.5">연차 · 반차 · 출장 · 외근</div>
               </button>
               <button onClick={()=>router.push('/dashboard/approval')}
-                className="w-full text-left p-2.5 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                className="w-full text-left p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
                 <div className="text-xs font-medium text-gray-700">결재함 확인</div>
                 <div className="text-xs text-gray-400 mt-0.5">보낸 결재 · 받은 결재</div>
               </button>

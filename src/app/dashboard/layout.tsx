@@ -45,6 +45,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [unreadNotice, setUnreadNotice] = useState(0)
   const [pendingInvite, setPendingInvite] = useState(0)
   const [pendingLeave, setPendingLeave] = useState(0)
+  const [chatToast, setChatToast] = useState<{name:string,avatar:string|null,color:string,tc:string,room:string,text:string,roomId:string}|null>(null)
+  const [toastTimer, setToastTimer] = useState<any>(null)
 
   useEffect(() => {
     const supabase = createClient()
@@ -119,6 +121,34 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             .select('room_id').eq('user_id', profile.id).eq('room_id', msg.room_id).maybeSingle()
           if (membership) {
             setUnreadChat(prev => prev + 1)
+            // 발신자 정보 조회
+            const { data: sender } = await supabase.from('profiles')
+              .select('name,avatar_url,color,tc').eq('id', msg.sender_id).single()
+            // 채팅방 이름 조회
+            const { data: room } = await supabase.from('chat_rooms')
+              .select('name').eq('id', msg.room_id).single()
+            if (sender && room) {
+              const toastData = {
+                name: sender.name || '누군가',
+                avatar: sender.avatar_url || null,
+                color: sender.color || '#EEEDFE',
+                tc: sender.tc || '#3C3489',
+                room: room.name,
+                roomId: msg.room_id,
+                text: msg.content?.substring(0,60) || '파일을 보냈습니다',
+              }
+              setChatToast(toastData)
+              if (toastTimer) clearTimeout(toastTimer)
+              const t = setTimeout(() => setChatToast(null), 5000)
+              setToastTimer(t)
+              // 브라우저 푸시 알림
+              if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification(\`💬 \${room.name} - \${sender.name}\`, {
+                  body: msg.content?.substring(0,80) || '파일을 보냈습니다',
+                  icon: '/favicon.svg'
+                })
+              }
+            }
           }
         })
       .on('postgres_changes', {event:'INSERT', schema:'public', table:'approvals'},
