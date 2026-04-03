@@ -76,16 +76,7 @@ export default function LoginPage() {
         </div>
 
         <div className="mt-4 card p-4">
-          <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
-            초기 관리자 계정 설정 안내
-          </div>
-          <div className="text-xs text-gray-500 leading-relaxed">
-            1. Supabase Authentication에서 첫 사용자 직접 생성<br />
-            2. profiles 테이블에서 role을 &apos;director&apos;로 변경<br />
-            3. salary_info 테이블에 급여 정보 등록
-          </div>
-        </div>
-      </div>
+          
     </div>
   )
 }
