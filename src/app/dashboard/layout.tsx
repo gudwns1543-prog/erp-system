@@ -235,8 +235,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   {profile.name?.[0]}
                 </div>}
             <div>
-              <div className="text-xs font-medium text-gray-800">{profile.name}</div>
-              <div className="text-xs text-gray-400">{profile.role === 'director' ? '권한관리자' : '일반직원'}</div>
+              <div className="text-xs font-semibold text-gray-800">{profile.name}</div>
+              <div className="text-xs text-gray-500">{profile.dept} · {profile.grade}</div>
+              <div className={`text-xs font-medium ${profile.role==='director'?'text-purple-600':'text-gray-400'}`}>
+                {profile.role==='director'?'관리자':'일반직원'}
+              </div>
             </div>
           </div>
         </div>
