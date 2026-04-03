@@ -16,6 +16,9 @@ export default function HomePage() {
   const [today, setToday] = useState<any>(null)
   const [stats, setStats] = useState({monthReg:0, remainLeave:0, pendingApprovals:0, pendingInvites:0})
   const [todayEvents, setTodayEvents] = useState<any[]>([])
+  const [upcomingEvents, setUpcomingEvents] = useState<any[]>([])
+  const [calMonth, setCalMonth] = useState(new Date().getMonth())
+  const [calYear, setCalYear] = useState(new Date().getFullYear())
   const [pendingApprovals, setPendingApprovals] = useState<any[]>([])
   const [recentNotices, setRecentNotices] = useState<any[]>([])
   const [teamStatus, setTeamStatus] = useState<any[]>([])
@@ -120,7 +123,10 @@ export default function HomePage() {
     const { data: evs } = await supabase.from('events')
       .select('*, creator:creator_id(name)')
       .or(`creator_id.eq.${session.user.id}${attIds.length?`,id.in.(${attIds.join(',')})`:''}`).order('start_at')
-    setTodayEvents((evs||[]).filter(e=>e.start_at.slice(0,10)<=todayStr()&&e.end_at.slice(0,10)>=todayStr()).slice(0,3))
+    const todayEvs = (evs||[]).filter(e=>e.start_at.slice(0,10)<=todayStr()&&e.end_at.slice(0,10)>=todayStr())
+    setTodayEvents(todayEvs.slice(0,3))
+    const upcoming = (evs||[]).filter(e=>e.start_at.slice(0,10)>todayStr()).slice(0,10)
+    setUpcomingEvents(upcoming)
 
     // 결재 대기 (관리자)
     if (p?.role === 'director') {
@@ -249,30 +255,95 @@ export default function HomePage() {
       <div className="grid grid-cols-5 gap-4">
         {/* 왼쪽 (3/5) */}
         <div className="col-span-3 space-y-4">
-          {/* 오늘 일정 */}
+          {/* 미니 캘린더 + 일정 */}
           <div className="card">
             <div className="flex justify-between items-center mb-3">
-              <div className="text-sm font-medium text-gray-700">📅 오늘 일정</div>
-              <button onClick={()=>router.push('/dashboard/calendar')}
-                className="text-xs text-purple-600 hover:text-purple-800">전체 보기 →</button>
+              <div className="text-sm font-medium text-gray-700">📅 일정</div>
+              <div className="flex items-center gap-1">
+                <button onClick={()=>{if(calMonth===0){setCalMonth(11);setCalYear(y=>y-1)}else setCalMonth(m=>m-1)}}
+                  className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xs">‹</button>
+                <span className="text-xs text-gray-500 w-14 text-center">{calYear}년 {calMonth+1}월</span>
+                <button onClick={()=>{if(calMonth===11){setCalMonth(0);setCalYear(y=>y+1)}else setCalMonth(m=>m+1)}}
+                  className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xs">›</button>
+                <button onClick={()=>router.push('/dashboard/calendar')}
+                  className="text-xs text-purple-600 hover:text-purple-800 ml-1">전체 →</button>
+              </div>
             </div>
-            {todayEvents.length === 0 ? (
-              <div className="py-4 text-center text-gray-300 text-xs">오늘 일정이 없습니다</div>
-            ) : todayEvents.map(ev=>(
-              <div key={ev.id} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
-                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{background:ev.color||'#534AB7'}}></div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-gray-800 truncate">{ev.title}</div>
-                  <div className="text-xs text-gray-400">
-                    {ev.all_day ? '종일' : `${ev.start_at.slice(11,16)} ~ ${ev.end_at.slice(11,16)}`}
-                    {ev.location && ` · 📍${ev.location}`}
+            {/* 미니 캘린더 */}
+            {(()=>{
+              const DAYS_KR = ['일','월','화','수','목','금','토']
+              const firstDay = new Date(calYear, calMonth, 1).getDay()
+              const daysInMonth = new Date(calYear, calMonth+1, 0).getDate()
+              const todayD = new Date()
+              const isThisMonth = calYear===todayD.getFullYear()&&calMonth===todayD.getMonth()
+              return (
+                <div className="mb-3">
+                  <div className="grid grid-cols-7 mb-1">
+                    {DAYS_KR.map((d,i)=>(
+                      <div key={d} className={`text-center text-xs py-0.5 font-medium
+                        ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-400'}`}>{d}</div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-7 gap-y-0.5">
+                    {Array.from({length:firstDay}).map((_,i)=><div key={`e${i}`}/>)}
+                    {Array.from({length:daysInMonth}).map((_,i)=>{
+                      const day = i+1
+                      const ds = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
+                      const isToday = isThisMonth && day===todayD.getDate()
+                      const hasEvent = [...todayEvents,...upcomingEvents].some(ev=>ev.start_at.slice(0,10)<=ds&&ds<=ev.end_at.slice(0,10))
+                      const dow = (firstDay+i)%7
+                      return (
+                        <div key={day} onClick={()=>router.push('/dashboard/calendar')}
+                          className="flex flex-col items-center cursor-pointer py-0.5">
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs
+                            ${isToday?'bg-purple-600 text-white font-bold'
+                              :dow===0?'text-red-400':dow===6?'text-blue-400':'text-gray-600'}`}>
+                            {day}
+                          </div>
+                          {hasEvent && <div className="w-1 h-1 rounded-full bg-purple-400 mt-0.5"></div>}
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
+              )
+            })()}
+            {/* 오늘 일정 */}
+            {todayEvents.length > 0 && (
+              <div className="border-t border-gray-50 pt-2 mb-2">
+                <div className="text-xs font-medium text-gray-500 mb-1.5">오늘</div>
+                {todayEvents.map(ev=>(
+                  <div key={ev.id} className="flex items-center gap-2 py-1">
+                    <div className="w-2 h-2 rounded-full flex-shrink-0" style={{background:ev.color||'#534AB7'}}></div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium text-gray-800 truncate">{ev.title}</div>
+                      <div className="text-xs text-gray-400">{ev.all_day?'종일':`${ev.start_at.slice(11,16)}~${ev.end_at.slice(11,16)}`}</div>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
+            {/* 다가오는 일정 */}
+            {upcomingEvents.slice(0,3).length > 0 && (
+              <div className="border-t border-gray-50 pt-2">
+                <div className="text-xs font-medium text-gray-500 mb-1.5">다가오는 일정</div>
+                {upcomingEvents.slice(0,3).map(ev=>(
+                  <div key={ev.id} className="flex items-center gap-2 py-1">
+                    <div className="w-2 h-2 rounded-full flex-shrink-0" style={{background:ev.color||'#534AB7'}}></div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium text-gray-800 truncate">{ev.title}</div>
+                      <div className="text-xs text-gray-400">{ev.start_at.slice(0,10)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {todayEvents.length===0 && upcomingEvents.length===0 && (
+              <div className="py-3 text-center text-gray-300 text-xs">예정된 일정이 없습니다</div>
+            )}
             {stats.pendingInvites > 0 && (
               <div className="mt-2 p-2 bg-amber-50 rounded-lg flex items-center justify-between">
-                <span className="text-xs text-amber-700">📬 미응답 일정 초대 {stats.pendingInvites}건</span>
+                <span className="text-xs text-amber-700">📬 미응답 초대 {stats.pendingInvites}건</span>
                 <button onClick={()=>router.push('/dashboard/calendar')}
                   className="text-xs text-amber-700 font-medium">응답하기 →</button>
               </div>

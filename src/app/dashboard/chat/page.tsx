@@ -35,7 +35,7 @@ export default function ChatPage() {
     const { data: memberRooms } = await supabase.from('chat_members').select('room_id').eq('user_id', uid)
     if (!memberRooms?.length) { setRooms([]); return }
     const roomIds = memberRooms.map((m:any) => m.room_id)
-    const { data } = await supabase.from('chat_rooms').select('*').in('id', roomIds).order('updated_at',{ascending:false})
+    const { data } = await supabase.from('chat_rooms').select('*').in('id', roomIds).order('created_at',{ascending:false})
     const { data: allMembers } = await supabase.from('chat_members')
       .select('room_id, user:user_id(name)').in('room_id', roomIds)
     const roomsWithMembers = (data||[]).map(r => {

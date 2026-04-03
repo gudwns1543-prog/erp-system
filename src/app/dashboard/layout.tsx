@@ -10,7 +10,7 @@ const NAV = [
     { href: '/dashboard/home', label: '홈', icon: '🏠' },
   ]},
   { group: '근태', items: [
-    { href: '/dashboard', label: '출퇴근', icon: '⏱' },
+    { href: '/dashboard', label: '출퇴근', icon: '⏰' },
     { href: '/dashboard/attendance', label: '근태 기록', icon: '📋' },
   ]},
   { group: '급여', items: [
@@ -175,9 +175,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="flex h-screen overflow-hidden bg-gray-50">
       {/* 사이드바 */}
       <div className="w-52 flex-shrink-0 bg-white border-r border-gray-100 flex flex-col">
-        <div className="p-4 border-b border-gray-100">
-          <div className="text-base font-bold text-purple-600">📊 (주)솔루션 ERP</div>
-          <div className="flex items-center gap-2 mt-3">
+        <div className="px-4 pt-5 pb-4 border-b border-gray-100">
+          <div className="flex flex-col items-center gap-1.5 mb-3">
+            <Logo size={48} />
+            <div className="text-sm font-bold text-gray-700 tracking-wide">(주)솔루션 ERP</div>
+          </div>
+          <div className="flex items-center gap-2">
             {profile.avatar_url
               ? <img src={profile.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0 border border-gray-100" />
               : <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
