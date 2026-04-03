@@ -122,75 +122,76 @@ export default function HomePage() {
     try {
       const supabase = createClient()
       const { data: { session } } = await supabase.auth.getSession()
-      if (!session) return
+      if (!session) { setBriefingLoading(false); return }
 
-      // 오늘 날짜
       const today = todayStr()
       const todayDate = new Date()
+      const next7 = new Date(todayDate)
+      next7.setDate(todayDate.getDate() + 7)
+      const next7str = next7.toISOString().slice(0,10) + 'T23:59:59'
 
-      // 다가오는 일정 (7일 이내)
-      const next7 = new Date(todayDate); next7.setDate(todayDate.getDate()+7)
+      // 내 일정 (참석자 포함)
       const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
-      const attIds = (myAtt||[]).map((a:any) => a.event_id)
-      const { data: events } = await supabase.from('events')
+      const attIds = (myAtt||[]).map((a: any) => a.event_id)
+      let eventsQuery = supabase.from('events')
         .select('title,start_at,end_at,location').order('start_at')
-        .gte('start_at', today).lte('start_at', next7.toISOString().slice(0,10)+'T23:59:59')
-        .or(`creator_id.eq.\${session.user.id}\${attIds.length?`,id.in.(\${attIds.join(',')})`:''}`)
+        .gte('start_at', today).lte('start_at', next7str)
+      if (attIds.length > 0) {
+        eventsQuery = eventsQuery.or('creator_id.eq.' + session.user.id + ',id.in.(' + attIds.join(',') + ')')
+      } else {
+        eventsQuery = eventsQuery.eq('creator_id', session.user.id)
+      }
+      const { data: events } = await eventsQuery
 
-      // 대기 결재
+      // 프로필 + 대기결재
       const { data: p } = await supabase.from('profiles').select('role,name,grade,dept').eq('id', session.user.id).single()
+      const pendingCol = p?.role === 'director' ? 'approver_id' : 'requester_id'
       const { data: pendingApprovals } = await supabase.from('approvals')
         .select('type,start_date,requester:requester_id(name)')
-        .eq(p?.role==='director'?'approver_id':'requester_id', session.user.id)
-        .eq('status','pending').limit(5)
+        .eq(pendingCol, session.user.id).eq('status','pending').limit(5)
 
-      // 오늘 출퇴근 상태
+      // 오늘 출퇴근
       const { data: todayAtt } = await supabase.from('attendance')
         .select('check_in,check_out,reg_hours').eq('user_id', session.user.id).eq('work_date', today)
 
       // 미읽음 공지
-      const lastRead = localStorage.getItem(`notice_read_\${session.user.id}`) || '2000-01-01'
+      const lastRead = localStorage.getItem('notice_read_' + session.user.id) || '2000-01-01'
       const { count: noticeCount } = await supabase.from('notices')
         .select('*',{count:'exact',head:true}).gt('created_at', lastRead)
 
-      // AI에게 보낼 데이터 구성
       const days = ['일','월','화','수','목','금','토']
-      const todayDay = days[todayDate.getDay()]
+      const checkIn = todayAtt?.[0]?.check_in
+      const checkOut = todayAtt?.[0]?.check_out
+      const attendStatus = checkIn
+        ? ('출근 ' + checkIn.slice(0,5) + (checkOut ? ' / 퇴근 ' + checkOut.slice(0,5) : ' (근무중)'))
+        : '미출근'
+
+      const eventList = (events||[]).map((e: any) =>
+        e.start_at.slice(5,10).replace('-','/') + ' ' + e.start_at.slice(11,16) + ' ' + e.title + (e.location ? ' (' + e.location + ')' : '')
+      )
+      const approvalList = (pendingApprovals||[]).map((a: any) =>
+        p?.role === 'director'
+          ? ((a.requester as any)?.name + '님의 ' + a.type + ' (' + a.start_date + ')')
+          : (a.type + ' 신청 대기중 (' + a.start_date + ')')
+      )
+
       const briefData = {
-        오늘날짜: `\${todayDate.getMonth()+1}월 \${todayDate.getDate()}일 \${todayDay}요일`,
-        직원정보: `\${p?.name} \${p?.grade} (\${p?.dept})`,
-        출퇴근상태: todayAtt?.[0]?.check_in
-          ? `출근 \${todayAtt[0].check_in?.slice(0,5)}\${todayAtt[0].check_out ? ' / 퇴근 '+todayAtt[0].check_out.slice(0,5) : ' (근무중)'}`
-          : '미출근',
-        다가오는일정: (events||[]).map((e:any) =>
-          `\${e.start_at.slice(5,10).replace('-','/')} \${e.start_at.slice(11,16)} \${e.title}\${e.location?' ('\+e.location+')':''}`
-        ),
-        대기결재: (pendingApprovals||[]).map((a:any) =>
-          p?.role==='director'
-            ? `\${(a.requester as any)?.name}님의 \${a.type} (\${a.start_date})`
-            : `\${a.type} 신청 대기중 (\${a.start_date})`
-        ),
-        미읽음공지: noticeCount||0,
+        오늘날짜: (todayDate.getMonth()+1) + '월 ' + todayDate.getDate() + '일 ' + days[todayDate.getDay()] + '요일',
+        직원정보: (p?.name || '') + ' ' + (p?.grade || '') + ' (' + (p?.dept || '') + ')',
+        출퇴근상태: attendStatus,
+        다가오는일정: eventList,
+        대기결재: approvalList,
+        미읽음공지: noticeCount || 0,
       }
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: {'Content-Type':'application/json'},
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 1000,
-          system: `당신은 회사 ERP 시스템의 AI 어시스턴트입니다. 
-주어진 업무 데이터를 바탕으로 오늘의 업무 브리핑을 친근하고 간결하게 한국어로 작성해주세요.
-형식: 
-- 인사말 없이 바로 핵심 내용
-- 이모지 활용해서 가독성 높이게
-- 3~5줄 이내로 간결하게
-- 없는 내용은 언급하지 말 것
-- 마지막에 한 마디 응원 멘트`,
-          messages: [{
-            role: 'user',
-            content: `오늘 업무 데이터:\n\${JSON.stringify(briefData, null, 2)}`
-          }]
+          system: '당신은 회사 ERP 시스템의 AI 어시스턴트입니다. 주어진 업무 데이터를 바탕으로 오늘의 업무 브리핑을 친근하고 간결하게 한국어로 작성해주세요. 인사말 없이 바로 핵심 내용으로 시작하고, 이모지를 활용하여 가독성을 높이고, 3~5줄 이내로 간결하게 작성하며, 없는 내용은 언급하지 마세요. 마지막에 짧은 응원 멘트를 추가해주세요.',
+          messages: [{ role: 'user', content: '오늘 업무 데이터:\n' + JSON.stringify(briefData, null, 2) }]
         })
       })
       const data = await response.json()
