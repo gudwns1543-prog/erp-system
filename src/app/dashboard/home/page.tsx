@@ -95,7 +95,7 @@ export default function HomePage() {
     const attIds = (myAtt||[]).map((a:any)=>a.event_id)
     const { data: evs } = await supabase.from('events')
       .select('id,title,start_at,end_at,color,creator_id')
-      .or(`creator_id.eq.${session.user.id}${attIds.length?`,id.in.(${attIds.join(',')})`:''}`).order('start_at')
+      .or('creator_id.eq.'+session.user.id+(attIds.length?',id.in.('+attIds.join(',')+')'  :'')).order('start_at')
     setAllEvents(evs||[])
     if (p?.role === 'director') {
       const { data: apps } = await supabase.from('approvals')
