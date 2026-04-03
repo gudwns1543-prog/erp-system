@@ -22,26 +22,31 @@ function overlap(s1: number, e1: number, s2: number, e2: number): number {
 
 export interface WorkResult {
   isHoliday: boolean
-  ignored: number   // 미인정 07~09
-  total: number     // 총 실근무(분)
-  reg: number       // 평일 정규
-  ext: number       // 평일 시간외
-  night: number     // 평일 야간
-  hReg: number      // 휴일 근로
-  hEve: number      // 휴일 저녁
-  hNight: number    // 휴일 야간
+  ignored: number
+  total: number
+  reg: number    // 평일 정규 09~18
+  ext: number    // 평일 시간외 19~22
+  night: number  // 평일 야간 22~익일07
+  hReg: number   // 휴일 정규 09~18
+  hEve: number   // 휴일 시간외 19~22
+  hNight: number // 휴일 야간 22~익일07
 }
 
 export function classifyWork(dateStr: string, inTime: string, outTime: string): WorkResult {
   const hol = isHoliday(dateStr)
   let inM = parseTime(inTime)
   let outM = parseTime(outTime)
-  if (outM <= inM) outM += 1440  // 다음날 새벽
 
-  const ignored = overlap(inM, outM, 420, 540)   // 07~09 미인정
-  const lunch   = overlap(inM, outM, 720, 780)   // 12~13 점심
-  const dinner  = overlap(inM, outM, 1080, 1140) // 18~19 저녁
-  const total   = outM - inM - ignored - lunch - dinner
+  // 버그수정: 같은시간=0, 작을때만 다음날
+  if (outM < inM) outM += 1440
+  if (outM === inM) {
+    return { isHoliday: hol, ignored:0, total:0, reg:0, ext:0, night:0, hReg:0, hEve:0, hNight:0 }
+  }
+
+  const ignored = overlap(inM, outM, 420, 540)
+  const lunch   = overlap(inM, outM, 720, 780)
+  const dinner  = overlap(inM, outM, 1080, 1140)
+  const total   = Math.max(0, outM - inM - ignored - lunch - dinner)
 
   if (!hol) {
     return {
@@ -56,50 +61,38 @@ export function classifyWork(dateStr: string, inTime: string, outTime: string): 
       isHoliday: true, ignored, total,
       reg: 0, ext: 0, night: 0,
       hReg:  Math.max(0, overlap(inM, outM, 540, 1080) - lunch),
-      hEve:  Math.max(0, overlap(inM, outM, 1080, 1320) - dinner),
+      hEve:  Math.max(0, overlap(inM, outM, 1140, 1320) - dinner),
       hNight: overlap(inM, outM, 1320, 1860),
     }
   }
 }
 
 export function minutesToHours(minutes: number): number {
+  if (minutes <= 0) return 0
   return Math.round(minutes / 6) / 10
 }
 
-// 급여 계산
+// 연차 계산 (입사일 기준, 1년차 15일, 매년 자동부여)
+export function calcAnnualLeave(joinDate: string): number {
+  const join = new Date(joinDate)
+  const today = new Date()
+  const diffMs = today.getTime() - join.getTime()
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  if (diffDays < 365) return Math.min(Math.floor(diffDays / 30), 11)
+  const years = Math.floor(diffDays / 365)
+  return Math.min(15 + Math.floor((years - 1) / 2), 25)
+}
+
 export interface SalaryInput {
-  annual: number
-  dependents: number
-  meal: number
-  transport: number
-  comm: number
-  regH: number
-  extH: number
-  nightH: number
-  holH: number
-  holExtH: number
-  holNightH: number
+  annual: number; dependents: number; meal: number; transport: number; comm: number
+  regH: number; extH: number; nightH: number; holH: number; holExtH: number; holNightH: number
 }
 
 export interface SalaryResult {
-  rate: number
-  base: number
-  payExt: number
-  payNight: number
-  payHol: number
-  payHolExt: number
-  payHolNight: number
-  allowance: number
-  grossTaxable: number
-  grossTotal: number
-  pension: number
-  health: number
-  ltc: number
-  employ: number
-  incomeTax: number
-  localTax: number
-  totalDeduct: number
-  netPay: number
+  rate: number; base: number; payExt: number; payNight: number; payHol: number
+  payHolExt: number; payHolNight: number; allowance: number; grossTaxable: number
+  grossTotal: number; pension: number; health: number; ltc: number; employ: number
+  incomeTax: number; localTax: number; totalDeduct: number; netPay: number
 }
 
 function calcIncomeTax(taxable: number, dep: number): number {
@@ -126,7 +119,6 @@ export function calcSalary(input: SalaryInput): SalaryResult {
   const allowance   = input.meal + input.transport + input.comm
   const grossTaxable = base + payExt + payNight + payHol + payHolExt + payHolNight
   const grossTotal   = grossTaxable + allowance
-
   const pension    = Math.round(grossTaxable * 0.045)
   const health     = Math.round(grossTaxable * 0.03545)
   const ltc        = Math.round(health * 0.1295)
@@ -134,13 +126,11 @@ export function calcSalary(input: SalaryInput): SalaryResult {
   const incomeTax  = calcIncomeTax(grossTaxable, input.dependents)
   const localTax   = Math.round(incomeTax * 0.1)
   const totalDeduct = pension + health + ltc + employ + incomeTax + localTax
-  const netPay     = grossTotal - totalDeduct
-
   return {
     rate, base, payExt, payNight, payHol, payHolExt, payHolNight,
     allowance, grossTaxable, grossTotal,
     pension, health, ltc, employ, incomeTax, localTax,
-    totalDeduct, netPay,
+    totalDeduct, netPay: grossTotal - totalDeduct,
   }
 }
 

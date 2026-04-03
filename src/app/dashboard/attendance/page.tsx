@@ -38,8 +38,8 @@ export default function AttendancePage() {
   const totals = records.reduce((a,r)=>({
     reg:a.reg+(r.reg_hours||0), ext:a.ext+(r.ext_hours||0),
     night:a.night+(r.night_hours||0), hReg:a.hReg+(r.hol_hours||0),
-    hExt:a.hExt+(r.hol_eve_hours||0), hNight:a.hNight+(r.hol_night_hours||0),
-  }),{reg:0,ext:0,night:0,hReg:0,hExt:0,hNight:0})
+    hEve:a.hExt+(r.hol_eve_hours||0), hNight:a.hNight+(r.hol_night_hours||0),
+  }),{reg:0,ext:0,night:0,hReg:0,hEve:0,hNight:0})
 
   const days = Array.from({length:31},(_,i)=>{
     const ds = `${selYear}-${String(selMonth).padStart(2,'0')}-${String(i+1).padStart(2,'0')}`
