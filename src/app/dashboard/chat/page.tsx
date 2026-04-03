@@ -26,7 +26,7 @@ export default function ChatPage() {
     if (!session) return null
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
-    const { data: users } = await supabase.from('profiles').select('id,name,color,tc,avatar_url').eq('status','active')
+    const { data: users } = await supabase.from('profiles').select('id,name,color,tc,avatar_url,dept,grade').eq('status','active')
     setAllUsers(users||[])
     return session.user.id
   }, [])
@@ -34,23 +34,20 @@ export default function ChatPage() {
   const loadRooms = useCallback(async (uid: string) => {
     const { data: memberRooms } = await supabase.from('chat_members').select('room_id').eq('user_id', uid)
     if (!memberRooms?.length) { setRooms([]); return }
-    const roomIds = memberRooms.map(m=>m.room_id)
+    const roomIds = memberRooms.map((m:any) => m.room_id)
     const { data } = await supabase.from('chat_rooms').select('*').in('id', roomIds).order('created_at')
-    // 각 방의 멤버 이름 로드
     const { data: allMembers } = await supabase.from('chat_members')
       .select('room_id, user:user_id(name)').in('room_id', roomIds)
-    const roomsWithMembers = (data||[]).map(r=>{
-      const roomMems = (allMembers||[]).filter((m:any)=>m.room_id===r.id)
-      const names = roomMems.map((m:any)=>(m.user as any)?.name).filter(Boolean).join(', ')
+    const roomsWithMembers = (data||[]).map(r => {
+      const roomMems = (allMembers||[]).filter((m:any) => m.room_id === r.id)
+      const names = roomMems.map((m:any) => (m.user as any)?.name).filter(Boolean).join(', ')
       return {...r, _members: names}
     })
     setRooms(roomsWithMembers)
-
-    // 읽지않음 수 계산
     const { data: reads } = await supabase.from('chat_reads').select('*').eq('user_id', uid)
     const counts: Record<string,number> = {}
     for (const room of (data||[])) {
-      const lastRead = reads?.find(r=>r.room_id===room.id)?.last_read_at
+      const lastRead = reads?.find((r:any) => r.room_id === room.id)?.last_read_at
       const { count } = await supabase.from('chat_messages')
         .select('*',{count:'exact',head:true}).eq('room_id',room.id).eq('is_system',false)
         .gt('created_at', lastRead || '2000-01-01')
@@ -66,7 +63,6 @@ export default function ChatPage() {
     const { data: mems } = await supabase.from('chat_members')
       .select('*, user:user_id(id,name,color,tc,avatar_url)').eq('room_id', roomId)
     setMembers(mems||[])
-    // 읽음 처리
     const { data: { session } } = await supabase.auth.getSession()
     if (session) {
       await supabase.from('chat_reads').upsert(
@@ -92,14 +88,12 @@ export default function ChatPage() {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({behavior:'smooth'}) }, [messages])
 
-  // 브라우저 푸시 알림 요청
   useEffect(() => {
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission()
     }
   }, [])
 
-  // 실시간 새 메시지 알림
   useEffect(() => {
     if (!profile) return
     const ch = supabase.channel('all-chat-notifications')
@@ -107,18 +101,14 @@ export default function ChatPage() {
         async (payload: any) => {
           const msg = payload.new
           if (msg.sender_id === profile.id || msg.is_system) return
-          const room = rooms.find(r=>r.id===msg.room_id)
+          const room = rooms.find(r => r.id === msg.room_id)
           if (!room) return
-          // 현재 보고 있는 방이 아닌 경우 알림
           if (msg.room_id !== activeRoom?.id) {
-            setUnreadCounts(prev=>({...prev,[msg.room_id]:(prev[msg.room_id]||0)+1}))
-            // 발신자 이름 조회
+            setUnreadCounts(prev => ({...prev,[msg.room_id]:(prev[msg.room_id]||0)+1}))
             const { data: sender } = await supabase.from('profiles').select('name').eq('id', msg.sender_id).single()
             const senderName = sender?.name || '누군가'
-            // 토스트 팝업
             setToast({room: room.name, sender: senderName, text: msg.content?.substring(0,40) || '파일을 보냈습니다'})
             setTimeout(() => setToast(null), 4000)
-            // 브라우저 푸시 알림
             if ('Notification' in window && Notification.permission === 'granted') {
               new Notification(`💬 ${room.name} - ${senderName}`, {
                 body: msg.content?.substring(0,60) || '파일을 보냈습니다',
@@ -126,7 +116,6 @@ export default function ChatPage() {
               })
             }
           } else {
-            // 현재 보고 있는 방이면 읽음 처리
             loadMessages(activeRoom.id)
           }
         })
@@ -161,7 +150,7 @@ export default function ChatPage() {
   }
 
   async function createRoom() {
-    if (!newRoomName.trim()||!profile) return
+    if (!newRoomName.trim() || !profile) return
     const { data: room } = await supabase.from('chat_rooms').insert({name:newRoomName,created_by:profile.id}).select().single()
     if (!room) return
     await supabase.from('chat_members').insert([profile.id,...selectedUsers].map(uid=>({room_id:room.id,user_id:uid})))
@@ -171,7 +160,7 @@ export default function ChatPage() {
   }
 
   async function inviteMembers() {
-    if (!activeRoom||!selectedUsers.length) return
+    if (!activeRoom || !selectedUsers.length) return
     for (const uid of selectedUsers) {
       await supabase.from('chat_members').upsert({room_id:activeRoom.id,user_id:uid})
       const u = allUsers.find(u=>u.id===uid)
@@ -181,14 +170,14 @@ export default function ChatPage() {
   }
 
   async function leaveRoom() {
-    if (!activeRoom||!profile||!confirm(`"${activeRoom.name}" 에서 나가시겠습니까?`)) return
+    if (!activeRoom || !profile || !confirm(`"${activeRoom.name}" 에서 나가시겠습니까?`)) return
     await supabase.from('chat_messages').insert({room_id:activeRoom.id,sender_id:profile.id,content:`${profile.name}님이 나갔습니다.`,is_system:true})
     await supabase.from('chat_members').delete().eq('room_id',activeRoom.id).eq('user_id',profile.id)
     setActiveRoom(null); loadRooms(profile.id)
   }
 
   async function deleteRoom() {
-    if (!activeRoom||!confirm(`"${activeRoom.name}" 을 삭제하시겠습니까?`)) return
+    if (!activeRoom || !confirm(`"${activeRoom.name}" 을 삭제하시겠습니까?`)) return
     await supabase.from('chat_rooms').delete().eq('id',activeRoom.id)
     setActiveRoom(null); loadRooms(profile?.id)
   }
@@ -200,11 +189,12 @@ export default function ChatPage() {
           style={{background:u?.color||'#EEEDFE',color:u?.tc||'#3C3489'}}>{u?.name?.[0]}</div>
   )
 
-  const notInRoom = allUsers.filter(u=>!members.find(m=>(m.user as any)?.id===u.id))
-  const totalUnread = Object.values(unreadCounts).reduce((a,b)=>a+b,0)
+  const notInRoom = allUsers.filter(u => !members.find(m => (m.user as any)?.id === u.id))
+  const totalUnread = Object.values(unreadCounts).reduce((a,b) => a+b, 0)
 
   return (
     <div className="p-6 h-[calc(100vh-48px)] flex flex-col">
+      <style>{`@keyframes slideIn{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
       <div className="flex items-center gap-2 mb-3 flex-shrink-0">
         <h1 className="text-lg font-semibold text-gray-800">메시지</h1>
         {totalUnread > 0 && (
@@ -221,19 +211,10 @@ export default function ChatPage() {
           </div>
           <div className="flex-1 overflow-y-auto">
             {rooms.length===0 && <div className="p-4 text-xs text-gray-300 text-center">채팅방이 없습니다</div>}
-            {rooms.map(r=>{
+            {rooms.map(r => {
               const unread = unreadCounts[r.id]||0
-              const roomMembers = allUsers.filter(u=>
-                members.filter(m=>m.event_id===r.id||true).length > 0
-                ? true : true
-              )
-              // 해당 방 멤버 이름 (간단히)
-              const [roomMemberNames, setRoomMemberNames] = [r._memberNames||'', ()=>{}]
               return (
-                <div key={r.id} onClick={async ()=>{
-                    setActiveRoom(r)
-                    setUnreadCounts(p=>({...p,[r.id]:0}))
-                  }}
+                <div key={r.id} onClick={()=>{setActiveRoom(r);setUnreadCounts(p=>({...p,[r.id]:0}))}}
                   className={`p-3 cursor-pointer border-b border-gray-50 transition-colors
                     ${activeRoom?.id===r.id?'bg-purple-50 border-l-2 border-l-purple-600':'hover:bg-gray-50'}`}>
                   <div className="flex items-center justify-between">
@@ -269,8 +250,8 @@ export default function ChatPage() {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2.5">
-              {messages.map(m=>{
-                const isMe = m.sender_id===profile?.id
+              {messages.map(m => {
+                const isMe = m.sender_id === profile?.id
                 if (m.is_system) return <div key={m.id} className="text-center text-xs text-gray-300 py-1">{m.content}</div>
                 const s = m.sender as any
                 return (
@@ -341,6 +322,7 @@ export default function ChatPage() {
                     onChange={e=>setSelectedUsers(s=>e.target.checked?[...s,u.id]:s.filter(x=>x!==u.id))} />
                   <Avatar u={u} size={6} />
                   <span className="text-sm text-gray-700">{u.name}</span>
+                  <span className="text-xs text-gray-400">{u.grade}</span>
                 </label>
               ))}
             </div>
@@ -386,12 +368,10 @@ export default function ChatPage() {
           </div>
         </div>
       )}
-    </div>
 
-      {/* 채팅 토스트 알림 */}
+      {/* 토스트 알림 */}
       {toast && (
-        <div
-          onClick={()=>{
+        <div onClick={()=>{
             const room = rooms.find(r=>r.name===toast.room)
             if (room) { setActiveRoom(room); setUnreadCounts(p=>({...p,[room.id]:0})) }
             setToast(null)
@@ -410,6 +390,6 @@ export default function ChatPage() {
             textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{toast.text}</div>
         </div>
       )}
-      <style>{`@keyframes slideIn{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
+    </div>
   )
 }
