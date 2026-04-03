@@ -135,7 +135,7 @@ export default function HomePage() {
       const { data: events } = await supabase.from('events')
         .select('title,start_at,end_at,location').order('start_at')
         .gte('start_at', today).lte('start_at', next7.toISOString().slice(0,10)+'T23:59:59')
-        .or(\`creator_id.eq.\${session.user.id}\${attIds.length?\`,id.in.(\${attIds.join(',')})\`:''}\`)
+        .or(`creator_id.eq.\${session.user.id}\${attIds.length?`,id.in.(\${attIds.join(',')})`:''}`)
 
       // 대기 결재
       const { data: p } = await supabase.from('profiles').select('role,name,grade,dept').eq('id', session.user.id).single()
@@ -149,7 +149,7 @@ export default function HomePage() {
         .select('check_in,check_out,reg_hours').eq('user_id', session.user.id).eq('work_date', today)
 
       // 미읽음 공지
-      const lastRead = localStorage.getItem(\`notice_read_\${session.user.id}\`) || '2000-01-01'
+      const lastRead = localStorage.getItem(`notice_read_\${session.user.id}`) || '2000-01-01'
       const { count: noticeCount } = await supabase.from('notices')
         .select('*',{count:'exact',head:true}).gt('created_at', lastRead)
 
@@ -157,18 +157,18 @@ export default function HomePage() {
       const days = ['일','월','화','수','목','금','토']
       const todayDay = days[todayDate.getDay()]
       const briefData = {
-        오늘날짜: \`\${todayDate.getMonth()+1}월 \${todayDate.getDate()}일 \${todayDay}요일\`,
-        직원정보: \`\${p?.name} \${p?.grade} (\${p?.dept})\`,
+        오늘날짜: `\${todayDate.getMonth()+1}월 \${todayDate.getDate()}일 \${todayDay}요일`,
+        직원정보: `\${p?.name} \${p?.grade} (\${p?.dept})`,
         출퇴근상태: todayAtt?.[0]?.check_in
-          ? \`출근 \${todayAtt[0].check_in?.slice(0,5)}\${todayAtt[0].check_out ? ' / 퇴근 '+todayAtt[0].check_out.slice(0,5) : ' (근무중)'}\`
+          ? `출근 \${todayAtt[0].check_in?.slice(0,5)}\${todayAtt[0].check_out ? ' / 퇴근 '+todayAtt[0].check_out.slice(0,5) : ' (근무중)'}`
           : '미출근',
         다가오는일정: (events||[]).map((e:any) =>
-          \`\${e.start_at.slice(5,10).replace('-','/')} \${e.start_at.slice(11,16)} \${e.title}\${e.location?' ('\+e.location+')':''}\`
+          `\${e.start_at.slice(5,10).replace('-','/')} \${e.start_at.slice(11,16)} \${e.title}\${e.location?' ('\+e.location+')':''}`
         ),
         대기결재: (pendingApprovals||[]).map((a:any) =>
           p?.role==='director'
-            ? \`\${(a.requester as any)?.name}님의 \${a.type} (\${a.start_date})\`
-            : \`\${a.type} 신청 대기중 (\${a.start_date})\`
+            ? `\${(a.requester as any)?.name}님의 \${a.type} (\${a.start_date})`
+            : `\${a.type} 신청 대기중 (\${a.start_date})`
         ),
         미읽음공지: noticeCount||0,
       }
@@ -179,17 +179,17 @@ export default function HomePage() {
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 1000,
-          system: \`당신은 회사 ERP 시스템의 AI 어시스턴트입니다. 
+          system: `당신은 회사 ERP 시스템의 AI 어시스턴트입니다. 
 주어진 업무 데이터를 바탕으로 오늘의 업무 브리핑을 친근하고 간결하게 한국어로 작성해주세요.
 형식: 
 - 인사말 없이 바로 핵심 내용
 - 이모지 활용해서 가독성 높이게
 - 3~5줄 이내로 간결하게
 - 없는 내용은 언급하지 말 것
-- 마지막에 한 마디 응원 멘트\`,
+- 마지막에 한 마디 응원 멘트`,
           messages: [{
             role: 'user',
-            content: \`오늘 업무 데이터:\n\${JSON.stringify(briefData, null, 2)}\`
+            content: `오늘 업무 데이터:\n\${JSON.stringify(briefData, null, 2)}`
           }]
         })
       })
