@@ -29,8 +29,26 @@ export default function AttendancePage() {
     const end   = `${selYear}-${String(selMonth).padStart(2,'0')}-31`
     const { data: recs } = await supabase.from('attendance')
       .select('*').eq('user_id', userId)
-      .gte('work_date',start).lte('work_date',end).order('work_date')
-    setRecords(recs||[])
+      .gte('work_date',start).lte('work_date',end).order('work_date').order('session_seq')
+    // 날짜별 세션 합산
+    const dateMap: Record<string,any> = {}
+    ;(recs||[]).forEach((r:any)=>{
+      const ds = r.work_date
+      if (!dateMap[ds]) {
+        dateMap[ds] = {...r, _sessionCount:1}
+      } else {
+        dateMap[ds].reg_hours    = (dateMap[ds].reg_hours||0)    + (r.reg_hours||0)
+        dateMap[ds].ext_hours    = (dateMap[ds].ext_hours||0)    + (r.ext_hours||0)
+        dateMap[ds].night_hours  = (dateMap[ds].night_hours||0)  + (r.night_hours||0)
+        dateMap[ds].hol_hours    = (dateMap[ds].hol_hours||0)    + (r.hol_hours||0)
+        dateMap[ds].hol_eve_hours  = (dateMap[ds].hol_eve_hours||0)  + (r.hol_eve_hours||0)
+        dateMap[ds].hol_night_hours = (dateMap[ds].hol_night_hours||0) + (r.hol_night_hours||0)
+        dateMap[ds].ignored_hours  = (dateMap[ds].ignored_hours||0)  + (r.ignored_hours||0)
+        dateMap[ds].check_out    = r.check_out || dateMap[ds].check_out
+        dateMap[ds]._sessionCount = (dateMap[ds]._sessionCount||1) + 1
+      }
+    })
+    setRecords(Object.values(dateMap))
   }, [selUser, selMonth, selYear])
 
   useEffect(() => { load() }, [load])
@@ -38,7 +56,7 @@ export default function AttendancePage() {
   const totals = records.reduce((a,r)=>({
     reg:a.reg+(r.reg_hours||0), ext:a.ext+(r.ext_hours||0),
     night:a.night+(r.night_hours||0), hReg:a.hReg+(r.hol_hours||0),
-    hEve:a.hExt+(r.hol_eve_hours||0), hNight:a.hNight+(r.hol_night_hours||0),
+    hEve:a.hEve+(r.hol_eve_hours||0), hNight:a.hNight+(r.hol_night_hours||0),
   }),{reg:0,ext:0,night:0,hReg:0,hEve:0,hNight:0})
 
   const days = Array.from({length:31},(_,i)=>{
