@@ -20,6 +20,7 @@ const NAV = [
     { href: '/dashboard/approval', label: '결재함', icon: '✅' },
   ]},
   { group: '소통', items: [
+    { href: '/dashboard/calendar', label: '일정', icon: '📅' },
     { href: '/dashboard/notice', label: '공지사항', icon: '📢' },
     { href: '/dashboard/chat', label: '메시지', icon: '💬' },
   ]},
