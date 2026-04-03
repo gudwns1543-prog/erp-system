@@ -89,10 +89,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         totalUnread += count||0
       }
       setUnreadChat(totalUnread)
-      // 공지 미읽음 (최근 7일 내 공지 수)
-      const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate()-7)
+      // 공지 미읽음 - 마지막 읽은 시간 이후 새 공지 수
+      const lastReadNotice = typeof window !== 'undefined'
+        ? localStorage.getItem(`notice_read_${session.user.id}`) || '2000-01-01'
+        : '2000-01-01'
       const { count: nc } = await supabase.from('notices')
-        .select('*',{count:'exact',head:true}).gte('created_at', weekAgo.toISOString())
+        .select('*',{count:'exact',head:true}).gt('created_at', lastReadNotice)
       setUnreadNotice(nc||0)
       // 일정 초대 미응답
       const { count: ic } = await supabase.from('event_attendees')
@@ -202,12 +204,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   // 페이지 이동 시 해당 뱃지 클리어
   useEffect(() => {
-    if (pathname === '/dashboard/notice') setUnreadNotice(0)
+    if (pathname === '/dashboard/notice') {
+      setUnreadNotice(0)
+      if (typeof window !== 'undefined' && profile?.id) {
+        localStorage.setItem(`notice_read_${profile.id}`, new Date().toISOString())
+      }
+    }
     if (pathname === '/dashboard/chat') setUnreadChat(0)
     if (pathname === '/dashboard/calendar') setPendingInvite(0)
     if (pathname === '/dashboard/approval' || pathname === '/dashboard/leave') {
-      setPendingCount(0)
-      if (profile?.role !== 'director') setPendingLeave(0)
+      // 실제 DB에서 재조회해서 정확한 값 설정
+      const supabase = createClient()
+      supabase.auth.getSession().then(async ({ data: { session } }) => {
+        if (!session || !profile) return
+        if (profile.role === 'director') {
+          const { count } = await supabase.from('approvals')
+            .select('*',{count:'exact',head:true})
+            .eq('approver_id', session.user.id).eq('status','pending')
+          setPendingCount(count||0)
+        } else {
+          const { count } = await supabase.from('approvals')
+            .select('*',{count:'exact',head:true})
+            .eq('requester_id', session.user.id).eq('status','pending')
+          setPendingLeave(count||0)
+          setPendingCount(0)
+        }
+      })
     }
     if (pathname === '/dashboard/signup') setPendingLeave(0)
   }, [pathname, profile])
