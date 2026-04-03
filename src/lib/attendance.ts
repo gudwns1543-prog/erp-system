@@ -143,6 +143,6 @@ export const GRADE_ORDER: Record<string,number> = {
   '대표':1,'회장':1,'사장':2,'부사장':3,'전무':4,'상무':5,
   '이사':6,'부장':7,'차장':8,'과장':9,'대리':10,'주임':11,'사원':12,'인턴':13
 }
-export function sortByGrade<T extends {grade?: string}>(arr: T[]): T[] {
+export function sortByGrade<T extends Record<string, any>>(arr: T[]): T[] {
   return [...arr].sort((a,b)=>(GRADE_ORDER[a.grade||'']||99)-(GRADE_ORDER[b.grade||'']||99))
 }

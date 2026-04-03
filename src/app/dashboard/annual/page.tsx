@@ -21,7 +21,7 @@ export default function AnnualPage() {
     setProfile(p)
 
     if (p?.role === 'director') {
-      const { data: sl } = await supabase.from('profiles').select('id,name,annual_leave,join_date,avatar_url,color,tc').eq('status','active')
+      const { data: sl } = await supabase.from('profiles').select('id,name,grade,annual_leave,join_date,avatar_url,color,tc').eq('status','active')
       setStaffList(sortByGrade(sl||[]))
       if (!selUserId && sl?.[0]) setSelUserId(sl[0].id)
 
