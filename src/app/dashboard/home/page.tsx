@@ -1,7 +1,9 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { Logo } from '@/components/Logo'
 import { createClient } from '@/lib/supabase'
+import { classifyWork, minutesToHours, isHoliday } from '@/lib/attendance'
 
 const DAYS = ['일','월','화','수','목','금','토']
 
@@ -17,6 +19,63 @@ export default function HomePage() {
   const [pendingApprovals, setPendingApprovals] = useState<any[]>([])
   const [recentNotices, setRecentNotices] = useState<any[]>([])
   const [teamStatus, setTeamStatus] = useState<any[]>([])
+
+  function nowStr() {
+    const n = new Date()
+    return String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0')
+  }
+
+  async function handleCheckIn() {
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return
+    const ds = todayStr(); const inTime = nowStr()
+    await supabase.from('attendance').upsert({
+      user_id: session.user.id, work_date: ds, check_in: inTime, is_holiday: isHoliday(ds),
+    }, { onConflict: 'user_id,work_date' })
+    load()
+  }
+
+  async function handleCheckOut() {
+    if (!today?.check_in) return
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return
+    const outTime = nowStr(); const ds = todayStr()
+    const r = classifyWork(ds, today.check_in, outTime)
+    await supabase.from('attendance').update({
+      check_out: outTime,
+      reg_hours: minutesToHours(r.reg), ext_hours: minutesToHours(r.ext),
+      night_hours: minutesToHours(r.night), hol_hours: minutesToHours(r.hReg),
+      hol_eve_hours: minutesToHours(r.hEve), hol_night_hours: minutesToHours(r.hNight),
+      ignored_hours: minutesToHours(r.ignored),
+    }).eq('user_id', session.user.id).eq('work_date', ds)
+    load()
+  }
+
+  async function handleStatusChange(newStatus: 'checkin'|'checkout') {
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return
+    const ds = todayStr(); const nowTime = nowStr()
+    if (newStatus === 'checkin') {
+      await supabase.from('attendance').upsert({
+        user_id: session.user.id, work_date: ds, check_in: nowTime,
+        check_out: null, is_holiday: isHoliday(ds),
+      }, { onConflict: 'user_id,work_date' })
+    } else {
+      if (!today?.check_in) return
+      const r = classifyWork(ds, today.check_in, nowTime)
+      await supabase.from('attendance').update({
+        check_out: nowTime,
+        reg_hours: minutesToHours(r.reg), ext_hours: minutesToHours(r.ext),
+        night_hours: minutesToHours(r.night), hol_hours: minutesToHours(r.hReg),
+        hol_eve_hours: minutesToHours(r.hEve), hol_night_hours: minutesToHours(r.hNight),
+        ignored_hours: minutesToHours(r.ignored),
+      }).eq('user_id', session.user.id).eq('work_date', ds)
+    }
+    load()
+  }
 
   const load = useCallback(async () => {
     const supabase = createClient()
@@ -121,17 +180,44 @@ export default function HomePage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      {/* 인사말 */}
+      {/* 인사말 + 출퇴근 버튼 */}
       <div className="mb-5">
         <div className="flex items-center justify-between">
-          <div>
-            <div className="text-xl font-semibold text-gray-800">
-              안녕하세요, {profile?.name} {profile?.grade}님 👋
+          <div className="flex items-center gap-3">
+            <Logo size={36} />
+            <div>
+              <div className="text-xl font-semibold text-gray-800">
+                안녕하세요, {profile?.name} {profile?.grade}님 👋
+              </div>
+              <div className="text-sm text-gray-400 mt-0.5">{dateStr}</div>
             </div>
-            <div className="text-sm text-gray-400 mt-1">{dateStr}</div>
           </div>
-          <div className="text-2xl font-bold text-gray-700 tabular-nums">{time}</div>
+          <div className="flex items-center gap-3">
+            <div className="text-xl font-bold text-gray-700 tabular-nums">{time}</div>
+            <div className="flex gap-2">
+              <button onClick={handleCheckIn} disabled={!!today?.check_in && !today?.check_out === false}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-colors
+                  bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                <span style={{fontSize:18}}>🔴</span> 출근
+              </button>
+              <button onClick={handleCheckOut} disabled={!today?.check_in || !!today?.check_out}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-colors
+                  bg-gray-600 text-white hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                <span style={{fontSize:18}}>🔴</span> 퇴근
+              </button>
+            </div>
+          </div>
         </div>
+        {/* 근무상태 변경 (퇴근 후 복귀 가능) */}
+        {today?.check_out && (
+          <div className="mt-3 p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-center justify-between">
+            <div className="text-xs text-amber-700">퇴근 처리됨 · 업무에 복귀하시겠습니까?</div>
+            <button onClick={()=>handleStatusChange('checkin')}
+              className="text-xs bg-amber-600 text-white px-3 py-1.5 rounded-lg hover:bg-amber-700">
+              🔄 근무 복귀
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 요약 카드 4개 */}

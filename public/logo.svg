@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60" width="120" height="60">
+  <!-- 왼쪽 진한 파란 박스 -->
+  <rect x="2" y="2" width="54" height="54" rx="6" fill="#2E7FA3"/>
+  <!-- 왼쪽 눈 왼 -->
+  <rect x="16" y="14" width="7" height="10" rx="3.5" fill="white"/>
+  <!-- 왼쪽 눈 오 -->
+  <rect x="35" y="14" width="7" height="10" rx="3.5" fill="white"/>
+  <!-- 왼쪽 웃음 -->
+  <path d="M14 34 Q29 48 44 34" stroke="white" stroke-width="4" fill="none" stroke-linecap="round"/>
+
+  <!-- 오른쪽 연한 파란 박스 -->
+  <rect x="64" y="2" width="54" height="54" rx="6" fill="#A8D4E8"/>
+  <!-- 오른쪽 눈 왼 -->
+  <rect x="78" y="14" width="7" height="10" rx="3.5" fill="white"/>
+  <!-- 오른쪽 눈 오 -->
+  <rect x="97" y="14" width="7" height="10" rx="3.5" fill="white"/>
+  <!-- 오른쪽 웃음 -->
+  <path d="M76 34 Q91 48 106 34" stroke="white" stroke-width="4" fill="none" stroke-linecap="round"/>
+</svg>

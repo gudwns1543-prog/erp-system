@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import { Logo } from '@/components/Logo'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
