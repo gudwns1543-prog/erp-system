@@ -3,9 +3,11 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { GRADE_ORDER, sortByGrade } from '@/lib/attendance'
 
-const CARD_COLORS = [
+// 부서별 고유 색상 (최대 12개 부서)
+const DEPT_COLORS = [
   '#534AB7','#185FA5','#0F6E56','#A32D2D',
-  '#854F0B','#2E7FA3','#6B3FA0','#1A6B45',
+  '#854F0B','#2E7FA3','#6B3FA0','#B5451B',
+  '#1A6B45','#7B3F6E','#2C5F8A','#5C6B1A',
 ]
 
 export default function OrgPage() {
@@ -33,10 +35,12 @@ export default function OrgPage() {
   })
   const deptEntries = Object.entries(byDept)
 
-  const getColor = (u: any) => {
-    const idx = u.name ? u.name.charCodeAt(0) % CARD_COLORS.length : 0
-    return CARD_COLORS[idx]
-  }
+  // 부서별 색상 맵 생성
+  const deptColorMap: Record<string,string> = {}
+  const allDepts = [...new Set(staff.map(u => u.dept||'기타'))]
+  allDepts.forEach((d, i) => { deptColorMap[d] = DEPT_COLORS[i % DEPT_COLORS.length] })
+
+  const getColor = (u: any) => deptColorMap[u.dept||'기타'] || DEPT_COLORS[0]
 
   const Card = ({u, large=false}: {u:any, large?:boolean}) => {
     const color = getColor(u)
@@ -47,7 +51,7 @@ export default function OrgPage() {
         <div className={`${large?'h-32':'h-24'} flex items-center justify-center overflow-hidden`}
           style={{background:`${color}12`}}>
           {u.avatar_url
-            ? <img src={u.avatar_url} alt={u.name} className="w-full h-full object-contain" />
+            ? <img src={u.avatar_url} alt={u.name} className="w-full h-full object-cover object-top" />
             : <div className="w-full h-full flex items-center justify-center text-2xl font-bold"
                 style={{background:color,color:'#fff'}}>{u.name?.[0]}</div>
           }

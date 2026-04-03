@@ -60,11 +60,14 @@ export default function HrmPage() {
     setTimeout(()=>setAlert(''), 3000)
   }
 
-  const Avatar = ({u,size=10}:{u:any,size?:number}) => (
+  const Avatar = ({u,size=32}:{u:any,size?:number}) => (
     u?.avatar_url
-      ? <img src={u.avatar_url} alt="" className={`w-${size} h-${size} rounded-full object-cover flex-shrink-0`} />
-      : <div className={`w-${size} h-${size} rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0`}
-          style={{background:u?.color||'#EEEDFE',color:u?.tc||'#3C3489'}}>{u?.name?.[0]}</div>
+      ? <img src={u.avatar_url} alt="" className="rounded-full object-cover flex-shrink-0"
+          style={{width:size,height:size}} />
+      : <div className="rounded-full flex items-center justify-center font-bold flex-shrink-0"
+          style={{width:size,height:size,background:u?.color||'#EEEDFE',color:u?.tc||'#3C3489',fontSize:size*0.35}}>
+          {u?.name?.[0]}
+        </div>
   )
 
   return (
@@ -96,7 +99,7 @@ export default function HrmPage() {
                 <tr key={u.id}
                   onClick={()=>setViewing(u)}
                   className="border-b border-gray-50 hover:bg-purple-50 cursor-pointer transition-colors">
-                  <td className="py-2 pr-3"><Avatar u={u} size={8} /></td>
+                  <td className="py-2 pr-3"><Avatar u={u} size={36} /></td>
                   <td className="py-2 pr-3 font-medium">{u.name}</td>
                   <td className="py-2 pr-3 text-gray-500 text-xs">{u.dept}</td>
                   <td className="py-2 pr-3">{u.grade}</td>
@@ -309,7 +312,7 @@ function SalaryRow({u, sal, rate, onSave, Avatar}: any) {
   })
   return (
     <tr className="border-b border-gray-50 hover:bg-gray-50">
-      <td className="py-2 pr-3"><Avatar u={u} size={8} /></td>
+      <td className="py-2 pr-3"><Avatar u={u} size={36} /></td>
       <td className="py-2 pr-3 font-medium">{u.name}</td>
       <td className="py-2 pr-3 text-gray-500">{u.grade}</td>
       {editing ? (
