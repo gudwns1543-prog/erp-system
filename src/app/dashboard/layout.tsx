@@ -15,6 +15,7 @@ const NAV = [
   ]},
   { group: '결재', items: [
     { href: '/dashboard/leave', label: '휴가·출장 신청', icon: '📝' },
+    { href: '/dashboard/annual', label: '연차 관리', icon: '📅' },
     { href: '/dashboard/approval', label: '결재함', icon: '✅' },
   ]},
   { group: '소통', items: [
@@ -75,10 +76,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="p-4 border-b border-gray-100">
           <div className="text-base font-bold text-purple-600">📊 근태 ERP</div>
           <div className="flex items-center gap-2 mt-3">
-            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-              style={{ background: profile.color || '#EEEDFE', color: profile.tc || '#3C3489' }}>
-              {profile.name?.[0]}
-            </div>
+            {profile.avatar_url
+              ? <img src={profile.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0 border border-gray-100" />
+              : <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                  style={{ background: profile.color || '#EEEDFE', color: profile.tc || '#3C3489' }}>
+                  {profile.name?.[0]}
+                </div>}
             <div>
               <div className="text-xs font-medium text-gray-800">{profile.name}</div>
               <div className="text-xs text-gray-400">{profile.role === 'director' ? '권한관리자' : '일반직원'}</div>
