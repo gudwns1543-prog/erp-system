@@ -111,7 +111,7 @@ export default function DashboardPage() {
   })
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <div className="p-6 max-w-5xl mx-auto">
       <h1 className="text-lg font-semibold text-gray-800 mb-5">출퇴근</h1>
       {alert && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{alert}</div>}
       <div className="card mb-4 text-center py-6">
@@ -145,24 +145,29 @@ export default function DashboardPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead><tr className="border-b border-gray-100">
-              {['날짜','요일','출근','퇴근','정규','시간외','야간','휴일'].map(h=>(
-                <th key={h} className="pb-2 text-left font-medium text-gray-400 pr-3">{h}</th>
+              {['날짜','요일','출근','퇴근','평일정규','평일시간외','평일야간','휴일정규','휴일시간외','휴일야간','미인정'].map(h=>(
+                <th key={h} className="pb-2 text-left font-medium text-gray-400 pr-3 whitespace-nowrap text-xs">{h}</th>
               ))}
             </tr></thead>
             <tbody>
               {weekDays.map(({dt,ds,rec})=>{
                 const isToday = ds===todayStr()
-                const isWeekend = dt.getDay()===0||dt.getDay()===6
+                const isSun = dt.getDay()===0
+                const isSat = dt.getDay()===6
                 return (
-                  <tr key={ds} className={`border-b border-gray-50 ${isToday?'bg-purple-50':isWeekend?'bg-gray-50':''}`}>
-                    <td className="py-1.5 pr-3">{dt.getMonth()+1}/{dt.getDate()}</td>
-                    <td className={`py-1.5 pr-3 ${isWeekend?'text-red-400':''}`}>{DAYS[dt.getDay()]}</td>
-                    <td className="py-1.5 pr-3">{rec?.check_in?.slice(0,5)||'--'}</td>
-                    <td className="py-1.5 pr-3">{rec?.check_out?.slice(0,5)||'--'}</td>
-                    <td className="py-1.5 pr-3 text-purple-600">{rec?.reg_hours>0?rec.reg_hours+'h':'--'}</td>
-                    <td className="py-1.5 pr-3 text-blue-600">{rec?.ext_hours>0?rec.ext_hours+'h':'-'}</td>
-                    <td className="py-1.5 pr-3 text-red-600">{rec?.night_hours>0?rec.night_hours+'h':'-'}</td>
-                    <td className="py-1.5 pr-3 text-teal-600">{rec?.hol_hours>0?rec.hol_hours+'h':'-'}</td>
+                  <tr key={ds} className={`border-b border-gray-50
+                    ${isToday?'bg-purple-50':isSun?'bg-rose-50/50':isSat?'bg-blue-50/50':''}`}>
+                    <td className="py-1.5 pr-3 text-xs">{dt.getMonth()+1}/{dt.getDate()}</td>
+                    <td className={`py-1.5 pr-3 text-xs font-medium ${isSun||isSat?'text-red-400':''}`}>{DAYS[dt.getDay()]}</td>
+                    <td className="py-1.5 pr-3 text-xs">{rec?.check_in?.slice(0,5)||'--'}</td>
+                    <td className="py-1.5 pr-3 text-xs">{rec?.check_out?.slice(0,5)||'--'}</td>
+                    <td className="py-1.5 pr-3 text-xs text-purple-600 font-medium">{rec?.reg_hours>0?rec.reg_hours+'h':'-'}</td>
+                    <td className="py-1.5 pr-3 text-xs text-blue-600">{rec?.ext_hours>0?rec.ext_hours+'h':'-'}</td>
+                    <td className="py-1.5 pr-3 text-xs text-red-600">{rec?.night_hours>0?rec.night_hours+'h':'-'}</td>
+                    <td className="py-1.5 pr-3 text-xs text-teal-600">{rec?.hol_hours>0?rec.hol_hours+'h':'-'}</td>
+                    <td className="py-1.5 pr-3 text-xs text-amber-600">{rec?.hol_eve_hours>0?rec.hol_eve_hours+'h':'-'}</td>
+                    <td className="py-1.5 pr-3 text-xs text-rose-600">{rec?.hol_night_hours>0?rec.hol_night_hours+'h':'-'}</td>
+                    <td className="py-1.5 pr-3 text-xs text-gray-400">{rec?.ignored_hours>0?rec.ignored_hours+'h':'-'}</td>
                   </tr>
                 )
               })}
