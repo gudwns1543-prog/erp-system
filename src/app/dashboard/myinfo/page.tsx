@@ -7,6 +7,7 @@ export default function MyInfoPage() {
   const [profile, setProfile] = useState<any>(null)
   const [salary, setSalary] = useState<any>(null)
   const [tab, setTab] = useState<'info'|'password'>('info')
+  const [showPhoto, setShowPhoto] = useState(false)
   const [pwForm, setPwForm] = useState({current:'', next:'', confirm:''})
   const [pwAlert, setPwAlert] = useState('')
   const [pwError, setPwError] = useState('')
@@ -85,11 +86,15 @@ export default function MyInfoPage() {
       {tab==='info' && (
         <div className="grid grid-cols-3 gap-4 items-start">
           <div className="card text-center py-6">
-            {profile.avatar_url
-              ? <img src={profile.avatar_url} alt={profile.name} className="w-32 h-32 rounded-full object-cover mx-auto mb-3 border-4 border-gray-100" />
-              : <div className="w-32 h-32 rounded-full mx-auto mb-3 flex items-center justify-center text-4xl font-bold"
-                  style={{background:profile.color||'#EEEDFE',color:profile.tc||'#3C3489'}}>{profile.name?.[0]}</div>
-            }
+            <div onClick={()=>profile.avatar_url&&setShowPhoto(true)}
+              className={profile.avatar_url?"cursor-zoom-in":""}>
+              {profile.avatar_url
+                ? <img src={profile.avatar_url} alt={profile.name}
+                    className="w-32 h-32 rounded-full object-cover mx-auto mb-3 border-4 border-gray-100 hover:opacity-90 transition-opacity" />
+                : <div className="w-32 h-32 rounded-full mx-auto mb-3 flex items-center justify-center text-4xl font-bold"
+                    style={{background:profile.color||'#EEEDFE',color:profile.tc||'#3C3489'}}>{profile.name?.[0]}</div>
+              }
+            </div>
             <div className="text-base font-semibold text-gray-800">{profile.name}</div>
             <div className="text-xs text-gray-400 mt-1">{profile.grade} · {profile.dept}</div>
             <div className="mt-4 pt-4 border-t border-gray-100">
@@ -176,6 +181,15 @@ export default function MyInfoPage() {
               <div>• 영문, 숫자, 특수문자 조합을 권장합니다</div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 사진 확대 모달 */}
+      {showPhoto && profile?.avatar_url && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 cursor-zoom-out"
+          onClick={()=>setShowPhoto(false)}>
+          <img src={profile.avatar_url} alt={profile.name}
+            className="max-w-full max-h-[80vh] rounded-2xl object-contain shadow-2xl" />
         </div>
       )}
     </div>

@@ -26,8 +26,16 @@ export default function OrgPage() {
     byDept[d].sort((a,b) => (GRADE_ORDER[a.grade]||99) - (GRADE_ORDER[b.grade]||99))
   })
 
-  // 관리자(director)는 최상단
+  // 관리자(director)는 최상단에만 표시 (부서에서 제외)
   const directors = staff.filter(u => u.role === 'director')
+  // director를 부서 목록에서 제거
+  directors.forEach(dir => {
+    const d = dir.dept || '기타'
+    if (byDept[d]) {
+      byDept[d] = byDept[d].filter(u => u.id !== dir.id)
+      if (byDept[d].length === 0) delete byDept[d]
+    }
+  })
   const deptEntries = Object.entries(byDept)
 
   // 카드 컴포넌트 - 기존 사원증 스타일 유지
@@ -39,8 +47,9 @@ export default function OrgPage() {
       {bg:'#854F0B',tc:'#FFFFFF'},{bg:'#2E7FA3',tc:'#FFFFFF'},
     ]
     const colorIdx = u.name ? u.name.charCodeAt(0) % colors.length : 0
-    const cardColor = u.color || colors[colorIdx].bg
-    const textColor = u.tc || colors[colorIdx].tc
+    // DB에 저장된 color가 있으면 사용, 없으면 다채로운 기본 색상
+    const cardColor = colors[colorIdx].bg  // 항상 다채로운 색상 사용
+    const textColor = colors[colorIdx].tc
 
     return (
       <div onClick={()=>setSelected(u)}
