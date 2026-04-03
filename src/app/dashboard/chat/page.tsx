@@ -9,22 +9,24 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<any[]>([])
   const [members, setMembers] = useState<any[]>([])
   const [allUsers, setAllUsers] = useState<any[]>([])
+  const [unreadCounts, setUnreadCounts] = useState<Record<string,number>>({})
   const [input, setInput] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [showInvite, setShowInvite] = useState(false)
   const [newRoomName, setNewRoomName] = useState('')
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
+  const [uploading, setUploading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
 
   const loadProfile = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
+    if (!session) return null
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
-    const { data: users } = await supabase.from('profiles').select('id,name,color,tc').eq('status','active')
-    setAllUsers(users || [])
+    const { data: users } = await supabase.from('profiles').select('id,name,color,tc,avatar_url').eq('status','active')
+    setAllUsers(users||[])
     return session.user.id
   }, [])
 
@@ -33,16 +35,36 @@ export default function ChatPage() {
     if (!memberRooms?.length) { setRooms([]); return }
     const roomIds = memberRooms.map(m=>m.room_id)
     const { data } = await supabase.from('chat_rooms').select('*').in('id', roomIds).order('created_at')
-    setRooms(data || [])
+    setRooms(data||[])
+
+    // 읽지않음 수 계산
+    const { data: reads } = await supabase.from('chat_reads').select('*').eq('user_id', uid)
+    const counts: Record<string,number> = {}
+    for (const room of (data||[])) {
+      const lastRead = reads?.find(r=>r.room_id===room.id)?.last_read_at
+      const { count } = await supabase.from('chat_messages')
+        .select('*',{count:'exact',head:true}).eq('room_id',room.id).eq('is_system',false)
+        .gt('created_at', lastRead || '2000-01-01')
+      counts[room.id] = (count||0)
+    }
+    setUnreadCounts(counts)
   }, [])
 
   const loadMessages = useCallback(async (roomId: string) => {
     const { data } = await supabase.from('chat_messages')
-      .select('*, sender:sender_id(name,color,tc)').eq('room_id', roomId).order('created_at')
-    setMessages(data || [])
+      .select('*, sender:sender_id(name,color,tc,avatar_url)').eq('room_id', roomId).order('created_at')
+    setMessages(data||[])
     const { data: mems } = await supabase.from('chat_members')
-      .select('*, user:user_id(id,name,color,tc)').eq('room_id', roomId)
-    setMembers(mems || [])
+      .select('*, user:user_id(id,name,color,tc,avatar_url)').eq('room_id', roomId)
+    setMembers(mems||[])
+    // 읽음 처리
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session) {
+      await supabase.from('chat_reads').upsert(
+        {room_id:roomId, user_id:session.user.id, last_read_at:new Date().toISOString()},
+        {onConflict:'room_id,user_id'}
+      )
+    }
   }, [])
 
   useEffect(() => {
@@ -53,15 +75,46 @@ export default function ChatPage() {
     if (!activeRoom) return
     loadMessages(activeRoom.id)
     const ch = supabase.channel(`room:${activeRoom.id}`)
-      .on('postgres_changes', {event:'INSERT', schema:'public', table:'chat_messages', filter:`room_id=eq.${activeRoom.id}`},
-        () => loadMessages(activeRoom.id))
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_messages',filter:`room_id=eq.${activeRoom.id}`},
+        () => { loadMessages(activeRoom.id) })
       .subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [activeRoom, loadMessages])
 
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({behavior:'smooth'}) }, [messages])
+
+  // 브라우저 푸시 알림 요청
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({behavior:'smooth'})
-  }, [messages])
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission()
+    }
+  }, [])
+
+  // 실시간 새 메시지 알림 (전체 채팅방)
+  useEffect(() => {
+    if (!profile) return
+    const ch = supabase.channel('all-chat-notifications')
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_messages'},
+        async (payload: any) => {
+          const msg = payload.new
+          if (msg.sender_id === profile.id || msg.is_system) return
+          // 현재 보고 있는 방이 아닌 경우에만 알림
+          if (msg.room_id !== activeRoom?.id) {
+            const room = rooms.find(r=>r.id===msg.room_id)
+            if (room) {
+              setUnreadCounts(prev=>({...prev,[msg.room_id]:(prev[msg.room_id]||0)+1}))
+              if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification(`💬 ${room.name}`, {
+                  body: msg.content?.substring(0,50) || '파일을 보냈습니다',
+                  icon: '/favicon.ico'
+                })
+              }
+            }
+          }
+        })
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [profile, activeRoom, rooms])
 
   async function sendMessage() {
     if (!input.trim() || !activeRoom || !profile) return
@@ -71,78 +124,98 @@ export default function ChatPage() {
     setInput('')
   }
 
-  async function createRoom() {
-    if (!newRoomName.trim() || !profile) return
-    const { data: room } = await supabase.from('chat_rooms').insert({
-      name: newRoomName, created_by: profile.id
-    }).select().single()
-    if (!room) return
-    const memberInserts = [profile.id, ...selectedUsers].map(uid=>({room_id:room.id, user_id:uid}))
-    await supabase.from('chat_members').insert(memberInserts)
+  async function handleFileUpload(file: File) {
+    if (!activeRoom || !profile) return
+    setUploading(true)
+    const ext = file.name.split('.').pop()
+    const path = `${activeRoom.id}/${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from('chat-files').upload(path, file)
+    if (error) { setUploading(false); return }
+    const { data } = supabase.storage.from('chat-files').getPublicUrl(path)
+    const isImage = file.type.startsWith('image/')
+    const isVideo = file.type.startsWith('video/')
     await supabase.from('chat_messages').insert({
-      room_id: room.id, sender_id: profile.id,
-      content: `${profile.name}님이 채팅방을 만들었습니다.`, is_system: true
+      room_id: activeRoom.id, sender_id: profile.id,
+      content: isImage ? '📷 이미지' : isVideo ? '🎥 동영상' : `📎 ${file.name}`,
+      file_url: data.publicUrl, file_type: file.type, file_name: file.name,
     })
+    setUploading(false)
+  }
+
+  async function createRoom() {
+    if (!newRoomName.trim()||!profile) return
+    const { data: room } = await supabase.from('chat_rooms').insert({name:newRoomName,created_by:profile.id}).select().single()
+    if (!room) return
+    await supabase.from('chat_members').insert([profile.id,...selectedUsers].map(uid=>({room_id:room.id,user_id:uid})))
+    await supabase.from('chat_messages').insert({room_id:room.id,sender_id:profile.id,content:`${profile.name}님이 채팅방을 만들었습니다.`,is_system:true})
     setShowCreate(false); setNewRoomName(''); setSelectedUsers([])
-    loadRooms(profile.id)
-    setActiveRoom(room)
+    loadRooms(profile.id); setActiveRoom(room)
   }
 
   async function inviteMembers() {
-    if (!activeRoom || !selectedUsers.length) return
+    if (!activeRoom||!selectedUsers.length) return
     for (const uid of selectedUsers) {
-      await supabase.from('chat_members').upsert({room_id:activeRoom.id, user_id:uid})
+      await supabase.from('chat_members').upsert({room_id:activeRoom.id,user_id:uid})
       const u = allUsers.find(u=>u.id===uid)
-      await supabase.from('chat_messages').insert({
-        room_id: activeRoom.id, sender_id: profile.id,
-        content: `${u?.name}님이 초대되었습니다.`, is_system: true
-      })
+      await supabase.from('chat_messages').insert({room_id:activeRoom.id,sender_id:profile.id,content:`${u?.name}님이 초대되었습니다.`,is_system:true})
     }
-    setShowInvite(false); setSelectedUsers([])
-    loadMessages(activeRoom.id)
+    setShowInvite(false); setSelectedUsers([]); loadMessages(activeRoom.id)
   }
 
   async function leaveRoom() {
-    if (!activeRoom || !profile || !confirm(`"${activeRoom.name}" 채팅방에서 나가시겠습니까?`)) return
-    await supabase.from('chat_messages').insert({
-      room_id: activeRoom.id, sender_id: profile.id,
-      content: `${profile.name}님이 나갔습니다.`, is_system: true
-    })
-    await supabase.from('chat_members').delete().eq('room_id', activeRoom.id).eq('user_id', profile.id)
+    if (!activeRoom||!profile||!confirm(`"${activeRoom.name}" 에서 나가시겠습니까?`)) return
+    await supabase.from('chat_messages').insert({room_id:activeRoom.id,sender_id:profile.id,content:`${profile.name}님이 나갔습니다.`,is_system:true})
+    await supabase.from('chat_members').delete().eq('room_id',activeRoom.id).eq('user_id',profile.id)
     setActiveRoom(null); loadRooms(profile.id)
   }
 
   async function deleteRoom() {
-    if (!activeRoom || !confirm(`"${activeRoom.name}" 채팅방을 삭제하시겠습니까?`)) return
-    await supabase.from('chat_rooms').delete().eq('id', activeRoom.id)
+    if (!activeRoom||!confirm(`"${activeRoom.name}" 을 삭제하시겠습니까?`)) return
+    await supabase.from('chat_rooms').delete().eq('id',activeRoom.id)
     setActiveRoom(null); loadRooms(profile?.id)
   }
 
+  const Avatar = ({u,size=5}:{u:any,size?:number}) => (
+    u?.avatar_url
+      ? <img src={u.avatar_url} alt="" className={`w-${size} h-${size} rounded-full object-cover flex-shrink-0`} />
+      : <div className={`w-${size} h-${size} rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0`}
+          style={{background:u?.color||'#EEEDFE',color:u?.tc||'#3C3489'}}>{u?.name?.[0]}</div>
+  )
+
   const notInRoom = allUsers.filter(u=>!members.find(m=>(m.user as any)?.id===u.id))
+  const totalUnread = Object.values(unreadCounts).reduce((a,b)=>a+b,0)
 
   return (
-    <div className="p-6 h-[calc(100vh-0px)] flex flex-col">
-      <h1 className="text-lg font-semibold text-gray-800 mb-3 flex-shrink-0">메시지</h1>
+    <div className="p-6 h-[calc(100vh-48px)] flex flex-col">
+      <div className="flex items-center gap-2 mb-3 flex-shrink-0">
+        <h1 className="text-lg font-semibold text-gray-800">메시지</h1>
+        {totalUnread > 0 && (
+          <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">{totalUnread}</span>
+        )}
+      </div>
       <div className="flex-1 flex border border-gray-100 rounded-xl overflow-hidden bg-white shadow-sm min-h-0">
-
         {/* 채팅방 목록 */}
-        <div className="w-52 flex-shrink-0 border-r border-gray-100 flex flex-col">
+        <div className="w-56 flex-shrink-0 border-r border-gray-100 flex flex-col">
           <div className="p-3 border-b border-gray-100 flex items-center justify-between">
             <span className="text-xs font-semibold text-gray-500">채팅방</span>
             <button onClick={()=>{setShowCreate(true);setSelectedUsers([])}}
               className="text-xs bg-purple-50 text-purple-700 px-2 py-1 rounded-md hover:bg-purple-100">+ 새 채팅방</button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            {rooms.length === 0 && (
-              <div className="p-4 text-xs text-gray-300 text-center">참여 중인 채팅방이 없습니다</div>
-            )}
-            {rooms.map(r=>(
-              <div key={r.id} onClick={()=>setActiveRoom(r)}
-                className={`p-3 cursor-pointer border-b border-gray-50 transition-colors
-                  ${activeRoom?.id===r.id?'bg-purple-50 border-l-2 border-l-purple-600':'hover:bg-gray-50'}`}>
-                <div className="text-xs font-medium text-gray-800 truncate">{r.name}</div>
-              </div>
-            ))}
+            {rooms.length===0 && <div className="p-4 text-xs text-gray-300 text-center">채팅방이 없습니다</div>}
+            {rooms.map(r=>{
+              const unread = unreadCounts[r.id]||0
+              return (
+                <div key={r.id} onClick={()=>{setActiveRoom(r);setUnreadCounts(p=>({...p,[r.id]:0}))}}
+                  className={`p-3 cursor-pointer border-b border-gray-50 transition-colors flex items-center justify-between
+                    ${activeRoom?.id===r.id?'bg-purple-50 border-l-2 border-l-purple-600':'hover:bg-gray-50'}`}>
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-gray-800 truncate">{r.name}</div>
+                  </div>
+                  {unread>0 && <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full flex-shrink-0 ml-1">{unread}</span>}
+                </div>
+              )
+            })}
           </div>
         </div>
 
@@ -167,22 +240,38 @@ export default function ChatPage() {
             </div>
             <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2.5">
               {messages.map(m=>{
-                const isMe = m.sender_id === profile?.id
-                if (m.is_system) return (
-                  <div key={m.id} className="text-center text-xs text-gray-300 py-1">{m.content}</div>
-                )
+                const isMe = m.sender_id===profile?.id
+                if (m.is_system) return <div key={m.id} className="text-center text-xs text-gray-300 py-1">{m.content}</div>
                 const s = m.sender as any
                 return (
-                  <div key={m.id} className={`flex flex-col ${isMe?'items-end':'items-start'} max-w-[70%] ${isMe?'self-end':'self-start'}`}>
-                    {!isMe && <div className="flex items-center gap-1.5 mb-1">
-                      <div className="w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold"
-                        style={{background:s?.color,color:s?.tc}}>{s?.name?.[0]}</div>
-                      <span className="text-xs text-gray-400">{s?.name}</span>
-                    </div>}
-                    <div className={`px-3 py-2 rounded-xl text-sm leading-relaxed
-                      ${isMe?'bg-purple-600 text-white rounded-tr-sm':'bg-gray-100 text-gray-800 rounded-tl-sm'}`}>
-                      {m.content}
-                    </div>
+                  <div key={m.id} className={`flex flex-col ${isMe?'items-end self-end':'items-start self-start'} max-w-[70%]`}>
+                    {!isMe && (
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <Avatar u={s} size={4} />
+                        <span className="text-xs text-gray-400">{s?.name}</span>
+                      </div>
+                    )}
+                    {m.file_url ? (
+                      <div className={`rounded-xl px-3 py-2 ${isMe?'bg-purple-600 text-white rounded-tr-sm':'bg-gray-100 text-gray-800 rounded-tl-sm'}`}>
+                        {m.file_type?.startsWith('image/') ? (
+                          <a href={m.file_url} target="_blank" rel="noreferrer">
+                            <img src={m.file_url} alt={m.file_name} className="max-w-[200px] max-h-[200px] rounded-lg object-cover" />
+                          </a>
+                        ) : m.file_type?.startsWith('video/') ? (
+                          <video src={m.file_url} controls className="max-w-[240px] rounded-lg" />
+                        ) : (
+                          <a href={m.file_url} target="_blank" rel="noreferrer"
+                            className={`text-xs flex items-center gap-1 ${isMe?'text-white/90':'text-purple-600'}`}>
+                            📎 {m.file_name}
+                          </a>
+                        )}
+                      </div>
+                    ) : (
+                      <div className={`px-3 py-2 rounded-xl text-sm leading-relaxed
+                        ${isMe?'bg-purple-600 text-white rounded-tr-sm':'bg-gray-100 text-gray-800 rounded-tl-sm'}`}>
+                        {m.content}
+                      </div>
+                    )}
                     <div className="text-xs text-gray-300 mt-0.5">
                       {new Date(m.created_at).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}
                     </div>
@@ -192,6 +281,13 @@ export default function ChatPage() {
               <div ref={messagesEndRef} />
             </div>
             <div className="p-3 border-t border-gray-100 flex gap-2 flex-shrink-0">
+              <input type="file" ref={fileInputRef} className="hidden"
+                accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip"
+                onChange={e=>{ if(e.target.files?.[0]) handleFileUpload(e.target.files[0]) }} />
+              <button onClick={()=>fileInputRef.current?.click()} disabled={uploading}
+                className="btn-secondary px-2.5 text-sm flex-shrink-0" title="파일/이미지 첨부">
+                {uploading ? '⏳' : '📎'}
+              </button>
               <input className="input flex-1" placeholder="메시지를 입력하세요..." value={input}
                 onChange={e=>setInput(e.target.value)}
                 onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}}} />
@@ -213,8 +309,7 @@ export default function ChatPage() {
                 <label key={u.id} className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-gray-50 cursor-pointer">
                   <input type="checkbox" className="accent-purple-600" checked={selectedUsers.includes(u.id)}
                     onChange={e=>setSelectedUsers(s=>e.target.checked?[...s,u.id]:s.filter(x=>x!==u.id))} />
-                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
-                    style={{background:u.color,color:u.tc}}>{u.name[0]}</div>
+                  <Avatar u={u} size={6} />
                   <span className="text-sm text-gray-700">{u.name}</span>
                 </label>
               ))}
@@ -232,18 +327,15 @@ export default function ChatPage() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-5 w-80 shadow-xl">
             <div className="text-sm font-semibold text-gray-800 mb-3">멤버 초대</div>
-            <div className="text-xs font-medium text-gray-500 mb-1">현재 멤버</div>
             <div className="flex flex-wrap gap-1.5 mb-3">
               {members.map(m=>(
                 <span key={m.id} className="flex items-center gap-1 bg-gray-100 text-xs px-2 py-1 rounded-full text-gray-600">
-                  <span className="w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold"
-                    style={{background:(m.user as any)?.color,color:(m.user as any)?.tc}}>{(m.user as any)?.name?.[0]}</span>
-                  {(m.user as any)?.name}
+                  <Avatar u={m.user as any} size={4} />{(m.user as any)?.name}
                 </span>
               ))}
             </div>
             <div className="text-xs font-medium text-gray-500 mb-2">초대할 멤버</div>
-            {notInRoom.length === 0 ? (
+            {notInRoom.length===0 ? (
               <div className="text-xs text-gray-300 text-center py-4">초대 가능한 멤버가 없습니다</div>
             ) : (
               <div className="max-h-36 overflow-y-auto space-y-1 mb-4">
@@ -251,8 +343,7 @@ export default function ChatPage() {
                   <label key={u.id} className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-gray-50 cursor-pointer">
                     <input type="checkbox" className="accent-purple-600" checked={selectedUsers.includes(u.id)}
                       onChange={e=>setSelectedUsers(s=>e.target.checked?[...s,u.id]:s.filter(x=>x!==u.id))} />
-                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
-                      style={{background:u.color,color:u.tc}}>{u.name[0]}</div>
+                    <Avatar u={u} size={6} />
                     <span className="text-sm text-gray-700">{u.name}</span>
                   </label>
                 ))}
