@@ -19,6 +19,10 @@ export default function HrmPage() {
   const [tab, setTab] = useState<'info'|'salary'>('info')
   const [viewing, setViewing] = useState<any>(null)
   const [editing, setEditing] = useState<any>(null)
+  const [pwModal, setPwModal] = useState<any>(null)  // 비밀번호 변경 대상
+  const [newPw, setNewPw] = useState('')
+  const [pwAlert, setPwAlert] = useState('')
+  const [pwLoading, setPwLoading] = useState(false)
   const [alert, setAlert] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -50,6 +54,35 @@ export default function HrmPage() {
     setEditing(null)
     load()
     setTimeout(()=>setAlert(''), 3000)
+  }
+
+  async function adminChangePassword() {
+    if (!newPw || newPw.length < 8) { setPwAlert('8자 이상 입력해주세요.'); return }
+    setPwLoading(true); setPwAlert('')
+    try {
+      // Service Role Key로 다른 사용자 비밀번호 변경
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch('/api/admin-change-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + (session?.access_token || '')
+        },
+        body: JSON.stringify({ userId: pwModal.id, password: newPw })
+      })
+      const data = await res.json()
+      if (data.error) {
+        setPwAlert('오류: ' + data.error)
+      } else {
+        setPwAlert('✅ 비밀번호가 변경되었습니다!')
+        setNewPw('')
+        setTimeout(() => { setPwModal(null); setPwAlert('') }, 2000)
+      }
+    } catch (e) {
+      setPwAlert('변경 실패. 다시 시도해주세요.')
+    }
+    setPwLoading(false)
   }
 
   async function saveSalary(userId: string, data: any) {
@@ -180,7 +213,7 @@ export default function HrmPage() {
               {/* 전체 정보 */}
               <div className="space-y-2.5 border-t border-gray-100 pt-4">
                 {[
-                  ['이메일', viewing.email],
+                  ['로그인 이메일', viewing.email],
                   ['연락처', viewing.tel],
                   ['입사일', viewing.join_date],
                   ['생년월일', viewing.birth_date],
@@ -196,11 +229,48 @@ export default function HrmPage() {
                 ))}
               </div>
             </div>
-            <div className="px-5 pb-5 flex gap-2">
+            <div className="px-5 pb-5 flex gap-2 flex-wrap">
               <button onClick={()=>{setViewing(null);setEditing({...viewing})}}
-                className="btn-secondary flex-1 text-sm">수정</button>
+                className="btn-secondary flex-1 text-sm">정보 수정</button>
+              <button onClick={()=>{setPwModal(viewing);setViewing(null);setNewPw('')}}
+                className="btn-secondary flex-1 text-sm text-amber-700 border-amber-200 hover:bg-amber-50">🔑 비밀번호 변경</button>
               <button onClick={()=>setViewing(null)}
                 className="btn-primary flex-1 text-sm">닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 관리자 비밀번호 변경 모달 */}
+      {pwModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={()=>{setPwModal(null);setNewPw('');setPwAlert('')}}>
+          <div className="bg-white rounded-2xl shadow-2xl w-80 overflow-hidden"
+            onClick={e=>e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100">
+              <div className="text-base font-semibold text-gray-800">비밀번호 변경</div>
+              <div className="text-xs text-gray-400 mt-1">{pwModal.name} ({pwModal.email})</div>
+            </div>
+            <div className="p-5 space-y-3">
+              {pwAlert && (
+                <div className={`p-3 rounded-lg text-xs ${pwAlert.startsWith('✅')?'bg-green-50 text-green-700':'bg-red-50 text-red-700'}`}>
+                  {pwAlert}
+                </div>
+              )}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">새 비밀번호</label>
+                <input type="password" className="input" placeholder="8자 이상" value={newPw}
+                  onChange={e=>setNewPw(e.target.value)} />
+                <div className="text-xs text-gray-400 mt-1">영문+숫자+특수문자 조합 권장</div>
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={()=>{setPwModal(null);setNewPw('');setPwAlert('')}}
+                className="btn-secondary flex-1 text-sm">취소</button>
+              <button onClick={adminChangePassword} disabled={pwLoading}
+                className="btn-primary flex-1 text-sm">
+                {pwLoading?'변경 중...':'변경하기'}
+              </button>
             </div>
           </div>
         </div>
