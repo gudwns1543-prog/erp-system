@@ -83,8 +83,8 @@ export default function LeavePage() {
       {alert && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{alert}</div>}
 
       <div className="flex gap-1 border-b border-gray-200 mb-5">
-        {(['apply','mine', ...(profile?.role==='director'?['all']:[])] as const).map(t=>(
-          <button key={t} onClick={()=>setTab(t)}
+        {(['apply','mine', ...(profile?.role==='director'?['all']:[])]).map((t)=>(
+          <button key={t} onClick={()=>setTab(t as 'apply'|'mine'|'all')}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors
               ${tab===t?'border-purple-600 text-purple-700':'border-transparent text-gray-500 hover:text-gray-700'}`}>
             {t==='apply'?'신청':t==='mine'?'내 신청 현황':'전체 현황'}
