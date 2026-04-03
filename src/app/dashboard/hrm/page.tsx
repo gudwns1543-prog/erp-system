@@ -7,6 +7,7 @@ export default function HrmPage() {
   const [staff, setStaff] = useState<any[]>([])
   const [salaries, setSalaries] = useState<any[]>([])
   const [editing, setEditing] = useState<any>(null)
+  const [viewing, setViewing] = useState<any>(null)
   const [editSalary, setEditSalary] = useState<any>(null)
   const [alert, setAlert] = useState('')
   const [tab, setTab] = useState<'info'|'salary'>('info')
@@ -104,8 +105,9 @@ export default function HrmPage() {
               </tr></thead>
               <tbody>
                 {staff.map(u=>(
-                  <tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50">
-                    <td className="py-2 pr-3"><Avatar u={u} size={7} /></td>
+                  <tr key={u.id} onClick={()=>setViewing(u)}
+                    className="border-b border-gray-50 hover:bg-purple-50 cursor-pointer">
+                    <td className="py-2 pr-3"><Avatar u={u} size={10} /></td>
                     <td className="py-2 pr-3 font-medium">{u.name}</td>
                     <td className="py-2 pr-3 text-gray-500 text-xs">{u.dept}</td>
                     <td className="py-2 pr-3">{u.grade}</td>
@@ -121,13 +123,68 @@ export default function HrmPage() {
             </table>
           </div>
 
-          {editing && (
+          {/* 직원 조회 모달 */}
+      {viewing && !editing && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={()=>setViewing(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-80 overflow-hidden"
+            onClick={e=>e.stopPropagation()}>
+            <div className="h-64 bg-gray-50 flex items-center justify-center overflow-hidden">
+              {viewing.avatar_url
+                ? <img src={viewing.avatar_url} alt={viewing.name} className="w-full h-full object-cover object-top" />
+                : <div className="w-full h-full flex items-center justify-center text-7xl font-bold"
+                    style={{background:viewing.color||'#EEEDFE',color:viewing.tc||'#3C3489'}}>
+                    {viewing.name?.[0]}
+                  </div>
+              }
+            </div>
+            <div className="p-5">
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <div className="text-xl font-bold text-gray-800">{viewing.name}</div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-sm text-gray-500">{viewing.dept}</span>
+                    <span className="text-gray-300">·</span>
+                    <span className="text-sm font-medium text-purple-600">{viewing.grade}</span>
+                  </div>
+                </div>
+                <span className={`text-xs px-2 py-1 rounded-full ${viewing.role==='director'?'bg-purple-100 text-purple-700':'bg-gray-100 text-gray-500'}`}>
+                  {viewing.role==='director'?'관리자':'직원'}
+                </span>
+              </div>
+              <div className="space-y-2 border-t border-gray-100 pt-3">
+                {[
+                  ['이메일', viewing.email],
+                  ['연락처', viewing.tel],
+                  ['입사일', viewing.join_date],
+                  ['생년월일', viewing.birth_date],
+                  ['성별', viewing.gender],
+                  ['주소', viewing.address],
+                ].filter(([,v])=>v).map(([l,v])=>(
+                  <div key={String(l)} className="flex gap-3">
+                    <span className="text-gray-400 w-16 flex-shrink-0 text-xs">{l}</span>
+                    <span className="text-gray-700 text-xs flex-1">{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={()=>{setViewing(null);setEditing({...viewing})}}
+                className="btn-secondary flex-1 text-sm">수정</button>
+              <button onClick={()=>setViewing(null)}
+                className="btn-primary flex-1 text-sm">닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editing && (
             <div className="card">
               <div className="text-sm font-medium text-gray-700 mb-4">인사정보 수정 — {editing.name}</div>
               {/* 사진 */}
               <div className="flex items-center gap-4 mb-4 pb-4 border-b border-gray-100">
                 {editing._newFile
-                  ? <img src={URL.createObjectURL(editing._newFile)} className="w-16 h-16 rounded-full object-cover" alt="preview" />
+                  ? <img src={URL.createObjectURL(editing._newFile)} className="w-28 h-28 rounded-full object-cover" alt="preview" />
                   : <Avatar u={editing} size={16} />
                 }
                 <div>

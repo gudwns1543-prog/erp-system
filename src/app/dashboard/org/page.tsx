@@ -5,116 +5,138 @@ import { sortByGrade } from '@/lib/attendance'
 
 export default function OrgPage() {
   const [staff, setStaff] = useState<any[]>([])
+  const [selected, setSelected] = useState<any>(null)
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.from('profiles').select('*').eq('status','active')
-      .then(({data}) => setStaff(sortByGrade(data||[])))
+    supabase.from('profiles').select('*').eq('status','active').then(({ data }) => {
+      setStaff(sortByGrade(data||[]))
+    })
   }, [])
 
-  const executives = staff.filter(u => ['대표','회장','사장','부사장','전무','상무','이사'].includes(u.grade))
-  const others = staff.filter(u => !['대표','회장','사장','부사장','전무','상무','이사'].includes(u.grade))
+  const byDept: Record<string,any[]> = {}
+  staff.forEach(u => {
+    const d = u.dept || '기타'
+    if (!byDept[d]) byDept[d] = []
+    byDept[d].push(u)
+  })
 
-  const depts = others.reduce((acc:any, u:any) => {
-    const d = u.dept || '미배정'
-    if (!acc[d]) acc[d] = []
-    acc[d].push(u)
-    return acc
-  }, {})
-
-  const DEPT_COLORS: Record<string,{bg:string,border:string,text:string,header:string}> = {
-    '경영지원팀': {bg:'bg-blue-50',  border:'border-blue-200',  text:'text-blue-800',  header:'bg-blue-100'},
-    '영업팀':     {bg:'bg-green-50', border:'border-green-200', text:'text-green-800', header:'bg-green-100'},
-    '개발팀':     {bg:'bg-amber-50', border:'border-amber-200', text:'text-amber-800', header:'bg-amber-100'},
-    '운영팀':     {bg:'bg-rose-50',  border:'border-rose-200',  text:'text-rose-800',  header:'bg-rose-100'},
-    '미배정':     {bg:'bg-gray-50',  border:'border-gray-200',  text:'text-gray-600',  header:'bg-gray-100'},
-  }
-
-  // 사원증 스타일 카드
-  const IDCard = ({u, size='md'}:{u:any, size?:'lg'|'md'}) => {
-    const isLg = size === 'lg'
-    return (
-      <div className={`bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden
-        ${isLg ? 'w-28' : 'w-24'} flex-shrink-0`}>
-        {/* 사진 영역 */}
-        <div className={`${isLg?'h-28':'h-24'} bg-gray-100 flex items-center justify-center overflow-hidden`}>
-          {u.avatar_url
-            ? <img src={u.avatar_url} alt={u.name}
-                className="w-full h-full object-cover object-top" />
-            : <div className="w-full h-full flex items-center justify-center text-3xl font-bold"
-                style={{background:u.color||'#EEEDFE',color:u.tc||'#3C3489'}}>
-                {u.name?.[0]}
-              </div>
-          }
-        </div>
-        {/* 이름/직급 영역 */}
-        <div className="p-1.5 text-center border-t border-gray-100">
-          <div className={`font-semibold text-gray-800 truncate ${isLg?'text-sm':'text-xs'}`}>{u.name}</div>
-          <div className={`text-gray-400 mt-0.5 ${isLg?'text-xs':'text-xs'}`}>{u.grade}</div>
-        </div>
+  const Card = ({u, large=false}:{u:any, large?:boolean}) => (
+    <div onClick={()=>setSelected(u)}
+      className={`bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden cursor-pointer
+        hover:shadow-md hover:border-purple-200 transition-all group
+        ${large?'w-36':'w-28'}`}>
+      <div className={`${large?'h-36':'h-28'} bg-gray-50 flex items-center justify-center overflow-hidden`}>
+        {u.avatar_url
+          ? <img src={u.avatar_url} alt={u.name} className="w-full h-full object-cover object-top group-hover:scale-105 transition-transform" />
+          : <div className="w-full h-full flex items-center justify-center text-3xl font-bold"
+              style={{background:u.color||'#EEEDFE',color:u.tc||'#3C3489'}}>
+              {u.name?.[0]}
+            </div>
+        }
       </div>
-    )
-  }
+      <div className="p-2 text-center">
+        <div className={`font-semibold text-gray-800 ${large?'text-sm':'text-xs'}`}>{u.name}</div>
+        <div className={`text-gray-400 mt-0.5 ${large?'text-xs':'text-xs'}`}>{u.grade}</div>
+        {large && <div className="text-xs text-gray-300 mt-0.5">{u.dept}</div>}
+      </div>
+    </div>
+  )
+
+  const director = staff.find(u => u.role === 'director')
+  const others = staff.filter(u => u.role !== 'director')
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <h1 className="text-lg font-semibold text-gray-800 mb-8">조직도</h1>
+      <h1 className="text-lg font-semibold text-gray-800 mb-6">조직도</h1>
 
-      {/* 임원진 */}
-      {executives.length > 0 && (
-        <div className="flex flex-col items-center mb-2">
-          <div className="flex gap-5 justify-center flex-wrap">
-            {executives.map(u => (
-              <div key={u.id} className="flex flex-col items-center">
-                <IDCard u={u} size="lg" />
-                {u.dept && u.dept !== '미배정' && (
-                  <div className="mt-1.5 text-xs text-purple-500 font-medium">{u.dept}</div>
-                )}
-              </div>
-            ))}
-          </div>
+      {/* 대표/임원 */}
+      {director && (
+        <div className="flex flex-col items-center mb-8">
+          <Card u={director} large />
+          <div className="w-px h-8 bg-gray-200 mt-2"></div>
         </div>
       )}
 
-      {/* 연결선 */}
-      {Object.keys(depts).length > 0 && executives.length > 0 && (
-        <>
-          <div className="flex justify-center my-1">
-            <div className="w-px h-8 bg-gray-300"></div>
-          </div>
-          <div className="flex justify-center">
-            <div className="h-px bg-gray-300"
-              style={{width:`${Math.min(Object.keys(depts).length * 200, 780)}px`}}></div>
-          </div>
-        </>
-      )}
-
       {/* 부서별 */}
-      <div className="flex gap-5 justify-center flex-wrap items-start mt-1">
-        {Object.entries(depts).map(([dept, members]: [string, any]) => {
-          const color = DEPT_COLORS[dept] || DEPT_COLORS['미배정']
+      <div className="space-y-8">
+        {Object.entries(byDept).filter(([dept]) => {
+          const deptDirector = staff.find(u => u.dept === dept && u.role === 'director')
+          return !deptDirector || others.some(u => u.dept === dept)
+        }).map(([dept, members]) => {
+          const deptMembers = members.filter(u => u.role !== 'director')
+          if (!deptMembers.length) return null
           return (
-            <div key={dept} className="flex flex-col items-center">
-              <div className="w-px h-6 bg-gray-300"></div>
-              <div className={`rounded-xl border ${color.border} overflow-hidden min-w-[140px]`}>
-                {/* 부서 헤더 */}
-                <div className={`${color.header} px-3 py-2 text-center`}>
-                  <span className={`text-xs font-bold ${color.text}`}>{dept}</span>
-                  <span className={`text-xs ml-1 ${color.text} opacity-60`}>{members.length}명</span>
-                </div>
-                {/* 직원 카드 목록 */}
-                <div className={`${color.bg} p-3 flex flex-wrap gap-2 justify-center`}>
-                  {sortByGrade(members).map((u:any) => (
-                    <IDCard key={u.id} u={u} size="md" />
-                  ))}
-                </div>
+            <div key={dept}>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="text-xs font-semibold text-gray-500 bg-gray-100 px-3 py-1 rounded-full">{dept}</div>
+                <div className="flex-1 h-px bg-gray-100"></div>
+                <div className="text-xs text-gray-300">{deptMembers.length}명</div>
+              </div>
+              <div className="flex flex-wrap gap-3 pl-4">
+                {deptMembers.map(u => <Card key={u.id} u={u} />)}
               </div>
             </div>
           )
         })}
       </div>
 
-      <div className="mt-8 text-center text-xs text-gray-400">총 {staff.length}명 재직 중</div>
+      {/* 직원 상세 모달 */}
+      {selected && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={()=>setSelected(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-72 overflow-hidden"
+            onClick={e=>e.stopPropagation()}>
+            {/* 사진 - 크게 */}
+            <div className="h-64 bg-gray-50 flex items-center justify-center overflow-hidden">
+              {selected.avatar_url
+                ? <img src={selected.avatar_url} alt={selected.name}
+                    className="w-full h-full object-cover object-top" />
+                : <div className="w-full h-full flex items-center justify-center text-6xl font-bold"
+                    style={{background:selected.color||'#EEEDFE',color:selected.tc||'#3C3489'}}>
+                    {selected.name?.[0]}
+                  </div>
+              }
+            </div>
+            {/* 정보 */}
+            <div className="p-5">
+              <div className="text-xl font-bold text-gray-800 mb-1">{selected.name}</div>
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-sm text-gray-500">{selected.dept}</span>
+                <span className="text-gray-300">·</span>
+                <span className="text-sm font-medium text-purple-600">{selected.grade}</span>
+                {selected.role === 'director' && (
+                  <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">관리자</span>
+                )}
+              </div>
+              <div className="space-y-2 text-sm border-t border-gray-100 pt-3">
+                {selected.email && (
+                  <div className="flex gap-2">
+                    <span className="text-gray-400 w-14 flex-shrink-0">이메일</span>
+                    <span className="text-gray-700 text-xs break-all">{selected.email}</span>
+                  </div>
+                )}
+                {selected.tel && (
+                  <div className="flex gap-2">
+                    <span className="text-gray-400 w-14 flex-shrink-0">연락처</span>
+                    <span className="text-gray-700">{selected.tel}</span>
+                  </div>
+                )}
+                {selected.join_date && (
+                  <div className="flex gap-2">
+                    <span className="text-gray-400 w-14 flex-shrink-0">입사일</span>
+                    <span className="text-gray-700">{selected.join_date}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="px-5 pb-5">
+              <button onClick={()=>setSelected(null)}
+                className="btn-secondary w-full text-sm">닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
