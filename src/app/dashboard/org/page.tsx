@@ -37,7 +37,7 @@ export default function OrgPage() {
 
   // 부서별 색상 맵 생성
   const deptColorMap: Record<string,string> = {}
-  const allDepts = [...new Set(staff.map(u => u.dept||'기타'))]
+  const allDepts = staff.map(u => u.dept||'기타').filter((d,i,arr) => arr.indexOf(d) === i)
   allDepts.forEach((d, i) => { deptColorMap[d] = DEPT_COLORS[i % DEPT_COLORS.length] })
 
   const getColor = (u: any) => deptColorMap[u.dept||'기타'] || DEPT_COLORS[0]
