@@ -322,14 +322,14 @@ export default function HomePage() {
                 <button onClick={()=>router.push('/dashboard/attendance')} className="text-xs text-purple-600">전체 →</button>
               </div>
               {teamStatus.map((u:any)=>(
-                <div key={u.id} className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0">
-                  <div className="flex items-center gap-2">
-                    <Avatar u={u} size={5} />
-                    <div className="text-xs font-medium text-gray-800">{u.name}</div>
-                  </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium
+                <div key={u.id} className="flex items-center gap-2 py-1.5 border-b border-gray-50 last:border-0">
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0
+                    ${u.status==='working'?'bg-green-400':u.status==='done'?'bg-purple-400':'bg-gray-300'}`} />
+                  <span className="text-xs font-medium text-gray-800 flex-1">{u.name}</span>
+                  <span className="text-xs text-gray-400">{u.dept}</span>
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full flex-shrink-0
                     ${u.status==='working'?'bg-green-50 text-green-700':u.status==='done'?'bg-purple-50 text-purple-700':'bg-gray-100 text-gray-500'}`}>
-                    {u.status==='working'?'근무중':u.status==='done'?'퇴근':'미출근'}
+                    {u.checkIn?u.checkIn.slice(0,5):''} {u.status==='working'?'근무중':u.status==='done'?'퇴근':'미출근'}
                   </span>
                 </div>
               ))}

@@ -236,7 +236,7 @@ export default function CalendarPage() {
             <div className="grid grid-cols-7 border-b border-gray-200">
               {DAYS.map((d,i)=>(
                 <div key={d} className={`text-center text-xs font-semibold py-2.5
-                  ${i===0?'text-red-500 bg-red-50':i===6?'text-blue-500 bg-blue-50':'text-gray-600 bg-gray-50'}`}>{d}</div>
+                  ${i===0?'text-red-500 bg-red-50':i===6?'text-sky-600 bg-sky-100':'text-gray-600 bg-gray-50'}`}>{d}</div>
               ))}
             </div>
             {/* 날짜 */}

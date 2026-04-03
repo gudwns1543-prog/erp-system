@@ -299,6 +299,36 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div className="flex-1 overflow-y-auto">
         {children}
       </div>
+
+      {/* 전역 채팅 토스트 알림 */}
+      {chatToast && (
+        <div
+          onClick={()=>{router.push('/dashboard/chat');setChatToast(null)}}
+          className="fixed bottom-6 right-6 z-[9999] cursor-pointer w-72 rounded-2xl shadow-2xl overflow-hidden border border-gray-100"
+          style={{animation:'slideUpToast .3s ease'}}>
+          <div className="bg-purple-600 px-4 py-2 flex items-center justify-between">
+            <span className="text-xs font-semibold text-white truncate">&#128172; {chatToast.room}</span>
+            <button onClick={e=>{e.stopPropagation();setChatToast(null)}}
+              className="text-white/60 hover:text-white text-sm ml-2 flex-shrink-0">x</button>
+          </div>
+          <div className="bg-white p-3 flex items-start gap-3">
+            {chatToast.avatar
+              ? <img src={chatToast.avatar} className="w-9 h-9 rounded-full object-cover flex-shrink-0" alt="" />
+              : <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+                  style={{background:chatToast.color,color:chatToast.tc}}>{chatToast.name[0]}</div>
+            }
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-semibold text-gray-800 mb-0.5">{chatToast.name}</div>
+              <div className="text-xs text-gray-500 leading-relaxed"
+                style={{overflow:'hidden',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>
+                {chatToast.text}
+              </div>
+            </div>
+            <div className="text-xs text-gray-300 flex-shrink-0">지금</div>
+          </div>
+        </div>
+      )}
+      <style>{`@keyframes slideUpToast{from{transform:translateY(24px);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
     </div>
   )
 }
