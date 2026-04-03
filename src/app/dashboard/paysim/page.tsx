@@ -128,15 +128,76 @@ export default function PaySimPage() {
           <span className="text-sm font-semibold text-gray-700">현재 근무 기준 예상 수령액</span>
         </div>
         {actualResult && (
-          <div className="rounded-xl p-4 flex justify-between items-center bg-purple-600">
-            <div>
-              <div className="text-white/80 text-sm font-medium">예상 수령액 ①</div>
-              <div className="text-white/60 text-xs mt-0.5">
-                지급 {formatWon(actualResult.grossTotal)} - 공제 {formatWon(actualResult.totalDeduct)}
+          <>
+            {/* 지급/공제 상세 (읽기전용) */}
+            <div className="card mb-3 border-purple-100">
+              <div className="grid grid-cols-2 gap-0 divide-x divide-gray-100">
+                <div className="pr-4">
+                  <div className="text-xs font-semibold text-gray-400 mb-2">지급 항목</div>
+                  {([
+                    ['기본급 (정규 통상임금)', actualResult.base],
+                    actualResult.payExt>0      && [`평일 시간외 ${actualWork?.extH}h ×1.5`, actualResult.payExt],
+                    actualResult.payNight>0    && [`평일 야간 ${actualWork?.nightH}h ×2.0`, actualResult.payNight],
+                    actualResult.payHol>0      && [`휴일 정규 ${actualWork?.holH}h ×1.5`, actualResult.payHol],
+                    actualResult.payHolExt>0   && [`휴일 시간외 ${actualWork?.holExtH}h ×2.0`, actualResult.payHolExt],
+                    actualResult.payHolNight>0 && [`휴일 야간 ${actualWork?.holNightH}h ×2.5`, actualResult.payHolNight],
+                    salary?.meal>0      && ['식대 (비과세)', salary.meal],
+                    salary?.transport>0 && ['교통비 (비과세)', salary.transport],
+                    salary?.comm>0      && ['통신비 (비과세)', salary.comm],
+                  ] as any[]).filter(Boolean).map((item:any,i:number)=>(
+                    <div key={i} className="flex justify-between py-1 border-b border-gray-50 last:border-0 text-xs">
+                      <span className="text-gray-500">{item[0]}</span>
+                      <span className="text-purple-600 font-medium">{formatWon(item[1])}</span>
+                    </div>
+                  ))}
+                  <div className="flex justify-between pt-1.5 text-xs font-semibold">
+                    <span>지급 합계</span><span className="text-purple-600">{formatWon(actualResult.grossTotal)}</span>
+                  </div>
+                </div>
+                <div className="pl-4">
+                  <div className="text-xs font-semibold text-gray-400 mb-2">공제 항목</div>
+                  {[
+                    ['국민연금 (4.5%)', actualResult.pension],
+                    ['건강보험 (3.545%)', actualResult.health],
+                    ['장기요양보험', actualResult.ltc],
+                    ['고용보험 (0.9%)', actualResult.employ],
+                    [`소득세 (${salary?.dependents}인)`, actualResult.incomeTax],
+                    ['지방소득세', actualResult.localTax],
+                  ].map(([l,v],i)=>(
+                    <div key={i} className="flex justify-between py-1 border-b border-gray-50 last:border-0 text-xs">
+                      <span className="text-gray-500">{l}</span>
+                      <span className="text-red-500 font-medium">-{formatWon(v as number)}</span>
+                    </div>
+                  ))}
+                  <div className="flex justify-between pt-1.5 text-xs font-semibold">
+                    <span>공제 합계</span><span className="text-red-500">-{formatWon(actualResult.totalDeduct)}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <div className="text-xs font-semibold text-gray-400 mb-1.5">📐 계산 기준 (수정 불가)</div>
+                <div className="text-xs text-gray-400">
+                  <div>기본 시간단가: {salary ? Math.round(salary.annual/12/209).toLocaleString() : '-'}원/h</div>
+                  <div className="grid grid-cols-3 gap-x-3 mt-1">
+                    <div>평일 시간외 <span className="text-blue-500 font-medium">×1.5</span></div>
+                    <div>평일 야간 <span className="text-red-500 font-medium">×2.0</span></div>
+                    <div>휴일 정규 <span className="text-teal-500 font-medium">×1.5</span></div>
+                    <div>휴일 시간외 <span className="text-amber-500 font-medium">×2.0</span></div>
+                    <div>휴일 야간 <span className="text-rose-500 font-medium">×2.5</span></div>
+                  </div>
+                </div>
               </div>
             </div>
-            <div className="text-white text-2xl font-bold">{formatWon(actualResult.netPay)}</div>
-          </div>
+            <div className="rounded-xl p-4 flex justify-between items-center bg-purple-600">
+              <div>
+                <div className="text-white/80 text-sm font-medium">예상 수령액 ①</div>
+                <div className="text-white/60 text-xs mt-0.5">
+                  지급 {formatWon(actualResult.grossTotal)} - 공제 {formatWon(actualResult.totalDeduct)}
+                </div>
+              </div>
+              <div className="text-white text-2xl font-bold">{formatWon(actualResult.netPay)}</div>
+            </div>
+          </>
         )}
       </div>
 
