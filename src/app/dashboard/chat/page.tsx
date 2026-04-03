@@ -16,6 +16,7 @@ export default function ChatPage() {
   const [newRoomName, setNewRoomName] = useState('')
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
+  const [toast, setToast] = useState<{room:string,sender:string,text:string}|null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
@@ -98,7 +99,7 @@ export default function ChatPage() {
     }
   }, [])
 
-  // 실시간 새 메시지 알림 (전체 채팅방)
+  // 실시간 새 메시지 알림
   useEffect(() => {
     if (!profile) return
     const ch = supabase.channel('all-chat-notifications')
@@ -106,23 +107,32 @@ export default function ChatPage() {
         async (payload: any) => {
           const msg = payload.new
           if (msg.sender_id === profile.id || msg.is_system) return
-          // 현재 보고 있는 방이 아닌 경우에만 알림
+          const room = rooms.find(r=>r.id===msg.room_id)
+          if (!room) return
+          // 현재 보고 있는 방이 아닌 경우 알림
           if (msg.room_id !== activeRoom?.id) {
-            const room = rooms.find(r=>r.id===msg.room_id)
-            if (room) {
-              setUnreadCounts(prev=>({...prev,[msg.room_id]:(prev[msg.room_id]||0)+1}))
-              if ('Notification' in window && Notification.permission === 'granted') {
-                new Notification(`💬 ${room.name}`, {
-                  body: msg.content?.substring(0,50) || '파일을 보냈습니다',
-                  icon: '/favicon.ico'
-                })
-              }
+            setUnreadCounts(prev=>({...prev,[msg.room_id]:(prev[msg.room_id]||0)+1}))
+            // 발신자 이름 조회
+            const { data: sender } = await supabase.from('profiles').select('name').eq('id', msg.sender_id).single()
+            const senderName = sender?.name || '누군가'
+            // 토스트 팝업
+            setToast({room: room.name, sender: senderName, text: msg.content?.substring(0,40) || '파일을 보냈습니다'})
+            setTimeout(() => setToast(null), 4000)
+            // 브라우저 푸시 알림
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification(`💬 ${room.name} - ${senderName}`, {
+                body: msg.content?.substring(0,60) || '파일을 보냈습니다',
+                icon: '/favicon.ico'
+              })
             }
+          } else {
+            // 현재 보고 있는 방이면 읽음 처리
+            loadMessages(activeRoom.id)
           }
         })
       .subscribe()
     return () => { supabase.removeChannel(ch) }
-  }, [profile, activeRoom, rooms])
+  }, [profile, activeRoom, rooms, loadMessages])
 
   async function sendMessage() {
     if (!input.trim() || !activeRoom || !profile) return
@@ -377,5 +387,29 @@ export default function ChatPage() {
         </div>
       )}
     </div>
+
+      {/* 채팅 토스트 알림 */}
+      {toast && (
+        <div
+          onClick={()=>{
+            const room = rooms.find(r=>r.name===toast.room)
+            if (room) { setActiveRoom(room); setUnreadCounts(p=>({...p,[room.id]:0})) }
+            setToast(null)
+          }}
+          style={{position:'fixed',bottom:'24px',right:'24px',zIndex:9999,cursor:'pointer',
+            background:'white',border:'1px solid #e5e7eb',borderRadius:'12px',
+            padding:'12px 16px',boxShadow:'0 4px 12px rgba(0,0,0,0.15)',
+            maxWidth:'280px',animation:'slideIn .2s ease'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'8px',marginBottom:'4px'}}>
+            <span style={{fontSize:'14px'}}>💬</span>
+            <span style={{fontSize:'12px',fontWeight:'600',color:'#534AB7'}}>{toast.room}</span>
+            <span style={{fontSize:'11px',color:'#9ca3af',marginLeft:'auto'}}>지금</span>
+          </div>
+          <div style={{fontSize:'12px',fontWeight:'500',color:'#374151'}}>{toast.sender}</div>
+          <div style={{fontSize:'12px',color:'#6b7280',marginTop:'2px',overflow:'hidden',
+            textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{toast.text}</div>
+        </div>
+      )}
+      <style>{`@keyframes slideIn{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
   )
 }

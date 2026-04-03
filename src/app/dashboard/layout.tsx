@@ -104,6 +104,66 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     router.replace('/login')
   }
 
+  // 실시간 채팅 알림 구독
+  useEffect(() => {
+    if (!profile) return
+    const supabase = createClient()
+    const ch = supabase.channel('layout-chat-notify')
+      .on('postgres_changes', {event:'INSERT', schema:'public', table:'chat_messages'},
+        async (payload: any) => {
+          const msg = payload.new
+          if (msg.sender_id === profile.id || msg.is_system) return
+          // 내가 속한 방인지 확인 후 카운트 증가
+          const { data: membership } = await supabase.from('chat_members')
+            .select('room_id').eq('user_id', profile.id).eq('room_id', msg.room_id).maybeSingle()
+          if (membership) {
+            setUnreadChat(prev => prev + 1)
+          }
+        })
+      .on('postgres_changes', {event:'INSERT', schema:'public', table:'approvals'},
+        (payload: any) => {
+          if (profile.role === 'director') setPendingCount(prev => prev + 1)
+        })
+      .on('postgres_changes', {event:'UPDATE', schema:'public', table:'approvals'},
+        async () => {
+          // 결재 상태 변경 시 재계산
+          const supabase2 = createClient()
+          const { data: { session } } = await supabase2.auth.getSession()
+          if (!session) return
+          if (profile.role === 'director') {
+            const { count } = await supabase2.from('approvals').select('*',{count:'exact',head:true})
+              .eq('approver_id', session.user.id).eq('status','pending')
+            setPendingCount(count||0)
+          } else {
+            const { count } = await supabase2.from('approvals').select('*',{count:'exact',head:true})
+              .eq('requester_id', session.user.id).eq('status','pending')
+            setPendingLeave(count||0)
+          }
+        })
+      .on('postgres_changes', {event:'INSERT', schema:'public', table:'notices'},
+        () => { setUnreadNotice(prev => prev + 1) })
+      .on('postgres_changes', {event:'INSERT', schema:'public', table:'event_attendees'},
+        async (payload: any) => {
+          if (payload.new.user_id === profile.id && payload.new.status === 'pending') {
+            setPendingInvite(prev => prev + 1)
+          }
+        })
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [profile])
+
+  // 페이지 이동 시 해당 뱃지 클리어
+  useEffect(() => {
+    if (pathname === '/dashboard/notice') setUnreadNotice(0)
+    if (pathname === '/dashboard/chat') setUnreadChat(0)
+    if (pathname === '/dashboard/calendar') setPendingInvite(0)
+    if (pathname === '/dashboard/approval' || pathname === '/dashboard/leave') {
+      setPendingCount(0)
+      if (profile?.role !== 'director') setPendingLeave(0)
+    }
+    if (pathname === '/dashboard/signup') setPendingLeave(0)
+  }, [pathname, profile])
+
   if (!profile) return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="text-gray-400 text-sm">로딩 중...</div>
@@ -155,7 +215,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     {item.href === '/dashboard/chat' && unreadChat > 0 && (
                         <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{unreadChat}</span>
                       )}
-                    {item.href === '/dashboard/notice' && unreadNotice > 0 && (
+                    {item.href === '/dashboard/notice' && unreadNotice > 0 && pathname !== '/dashboard/notice' && (
                         <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{unreadNotice}</span>
                       )}
                     {item.href === '/dashboard/calendar' && pendingInvite > 0 && (

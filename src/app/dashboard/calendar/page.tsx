@@ -272,9 +272,13 @@ export default function CalendarPage() {
                 const isWeekend = dow===0||dow===6
                 return (
                   <div key={day}
-                    className={`min-h-[90px] border-b border-r border-gray-50 p-1 cursor-pointer transition-colors
-                      ${isWeekend?'bg-gray-50/50':''}
-                      hover:bg-purple-50/30`}
+                    className={`min-h-[90px] border-b border-r p-1 cursor-pointer transition-colors
+                      ${isHoliday(dateStr)
+                        ? 'bg-red-50 border-red-100'
+                        : isWeekend
+                        ? 'bg-slate-100 border-slate-200'
+                        : 'bg-white border-gray-100'}
+                      hover:bg-purple-50/50`}
                     onClick={()=>openCreate(dateStr)}>
                     <div className="flex items-center gap-1 mb-1">
                       <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium flex-shrink-0
@@ -374,15 +378,18 @@ export default function CalendarPage() {
                 <label className="block text-xs font-medium text-gray-500 mb-2">참석자 초대</label>
                 <div className="space-y-1 max-h-36 overflow-y-auto">
                   {allUsers.filter(u=>u.id!==profile?.id).map(u=>(
-                    <label key={u.id} className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-gray-50 cursor-pointer">
-                      <input type="checkbox" className="accent-purple-600"
+                    <label key={u.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0">
+                      <input type="checkbox" className="accent-purple-600 flex-shrink-0"
                         checked={form.attendeeIds.includes(u.id)}
                         onChange={e=>setForm(f=>({...f,
                           attendeeIds:e.target.checked?[...f.attendeeIds,u.id]:f.attendeeIds.filter(x=>x!==u.id)
                         }))} />
-                      <Avatar u={u} />
-                      <span className="text-sm text-gray-700">{u.name}</span>
-                      <span className="text-xs text-gray-400">{u.grade}</span>
+                      <span className="text-sm text-gray-800 font-medium w-16 flex-shrink-0">{u.name}</span>
+                      <span className="text-xs text-gray-400 flex-shrink-0">{u.grade}</span>
+                      <span className="text-xs text-gray-300 truncate">{u.dept}</span>
+                      {form.attendeeIds.includes(u.id) && (
+                        <span className="ml-auto text-xs text-purple-600 flex-shrink-0">✓</span>
+                      )}
                     </label>
                   ))}
                 </div>
