@@ -12,11 +12,9 @@ export default function PayrollPage() {
   const [month, setMonth] = useState(new Date().getMonth()+1)
   const [workData, setWorkData] = useState<any>(null)
   const [result, setResult] = useState<any>(null)
-  // 수기 입력 항목
   const [bonus, setBonus] = useState(0)
   const [celebration, setCelebration] = useState(0)
   const [extraItems, setExtraItems] = useState<{label:string,amount:number}[]>([])
-  // 계약연봉 수정
   const [editingAnnual, setEditingAnnual] = useState(false)
   const [newAnnual, setNewAnnual] = useState(0)
 
@@ -25,15 +23,13 @@ export default function PayrollPage() {
   const load = useCallback(async () => {
     const supabase = createClient()
     const { data: s } = await supabase.from('profiles').select('id,name,grade,dept').eq('status','active')
-    const sorted = sortByGrade(s||[])
-    setStaffList(sorted)
+    setStaffList(sortByGrade(s||[]))
     const { data: sal } = await supabase.from('salary_info').select('*')
     setSalaryList(sal||[])
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  // 직원 선택 시 근태 로드
   useEffect(() => {
     if (!staffList[selIdx]) return
     const loadWork = async () => {
@@ -44,41 +40,35 @@ export default function PayrollPage() {
       const { data: recs } = await supabase.from('attendance').select('*')
         .eq('user_id', uid).gte('work_date', start).lte('work_date', end)
       if (recs?.length) {
-        const w = recs.reduce((a:any,r:any)=>({
+        setWorkData(recs.reduce((a:any,r:any)=>({
           regH:      a.regH      + (r.reg_hours||0),
           extH:      a.extH      + (r.ext_hours||0),
           nightH:    a.nightH    + (r.night_hours||0),
           holH:      a.holH      + (r.hol_hours||0),
           holExtH:   a.holExtH   + (r.hol_eve_hours||0),
           holNightH: a.holNightH + (r.hol_night_hours||0),
-        }),{regH:0,extH:0,nightH:0,holH:0,holExtH:0,holNightH:0})
-        setWorkData(w)
+        }),{regH:0,extH:0,nightH:0,holH:0,holExtH:0,holNightH:0}))
       } else {
         setWorkData(null)
       }
-      // 수기항목 초기화
       setBonus(0); setCelebration(0); setExtraItems([])
       setEditingAnnual(false)
     }
     loadWork()
   }, [selIdx, selYear, month, staffList])
 
-  // 급여 계산
   useEffect(() => {
     const sal = salaryList.find(s=>s.user_id===staffList[selIdx]?.id)
-    if (!sal || !workData) { setResult(null); return }
+    if (!sal) { setResult(null); return }
+    const w = workData || {regH:0,extH:0,nightH:0,holH:0,holExtH:0,holNightH:0}
     const base = calcSalary({
       annual:sal.annual, dependents:sal.dependents,
-      meal:sal.meal, transport:sal.transport, comm:sal.comm,
-      ...workData
+      meal:sal.meal, transport:sal.transport, comm:sal.comm, ...w
     })
-    // 특별수당 합산 (비과세 처리)
     const specialTotal = bonus + celebration + extraItems.reduce((a,x)=>a+(x.amount||0),0)
-    setResult({...base, specialTotal,
-      finalPay: base.netPay + specialTotal
-    })
+    setResult({...base, specialTotal, finalPay: base.netPay + specialTotal})
     setNewAnnual(sal.annual)
-  }, [workData, salaryList, selIdx, staffList, bonus, celebration, other])
+  }, [workData, salaryList, selIdx, staffList, bonus, celebration, extraItems])
 
   async function saveAnnual() {
     if (!staffList[selIdx]) return
@@ -93,13 +83,22 @@ export default function PayrollPage() {
   const selStaff = staffList[selIdx]
   const selSalary = salaryList.find(s=>s.user_id===selStaff?.id)
   const rate = selSalary ? Math.round(selSalary.annual/12/209) : 0
+  const specialTotal = bonus + celebration + extraItems.reduce((a,x)=>a+(x.amount||0),0)
+
+  const WORK_ITEMS = [
+    {l:'평일 정규',   key:'regH',     c:'text-purple-600', rate:'×1.0', pct:'통상임금 100%'},
+    {l:'평일 시간외', key:'extH',     c:'text-blue-600',   rate:'×1.5', pct:'가산임금 150%'},
+    {l:'평일 야간',   key:'nightH',   c:'text-red-600',    rate:'×2.0', pct:'야간가산 200%'},
+    {l:'휴일 정규',   key:'holH',     c:'text-teal-600',   rate:'×1.5', pct:'휴일가산 150%'},
+    {l:'휴일 시간외', key:'holExtH',  c:'text-amber-600',  rate:'×2.0', pct:'휴일+가산 200%'},
+    {l:'휴일 야간',   key:'holNightH',c:'text-rose-600',   rate:'×2.5', pct:'휴일+야간 250%'},
+  ]
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <h1 className="text-lg font-semibold text-gray-800 mb-5">급여 일괄계산</h1>
       {alert && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{alert}</div>}
 
-      {/* 조회 옵션 */}
       <div className="flex gap-3 mb-5 flex-wrap">
         <select className="input w-auto text-sm" value={selIdx} onChange={e=>setSelIdx(+e.target.value)}>
           {staffList.map((s,i)=><option key={s.id} value={i}>{s.name} ({s.grade})</option>)}
@@ -114,9 +113,8 @@ export default function PayrollPage() {
 
       {selSalary ? (
         <div className="grid grid-cols-2 gap-4">
-          {/* 왼쪽: 계약정보 + 근태 */}
           <div className="space-y-4">
-            {/* 계약연봉 */}
+            {/* 계약 정보 */}
             <div className="card">
               <div className="flex items-center justify-between mb-3">
                 <div className="text-sm font-semibold text-gray-700">💼 계약 정보</div>
@@ -154,51 +152,40 @@ export default function PayrollPage() {
               </div>
             </div>
 
-            {/* 근태 실적 (RAW - 읽기전용) */}
+            {/* 근태 실적 */}
             <div className="card">
               <div className="flex items-center gap-2 mb-3">
                 <div className="text-sm font-semibold text-gray-700">📋 {selYear}년 {month}월 근태 실적</div>
                 <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">읽기 전용</span>
               </div>
               <div className="space-y-1.5">
-                {[
-                  {l:'평일 정규',    key:'regH',     c:'text-purple-600', rate:'×1.0', pct:'통상임금 100%'},
-                  {l:'평일 시간외',  key:'extH',     c:'text-blue-600',   rate:'×1.5', pct:'가산임금 150%'},
-                  {l:'평일 야간',    key:'nightH',   c:'text-red-600',    rate:'×2.0', pct:'야간가산 200%'},
-                  {l:'휴일 정규',    key:'holH',     c:'text-teal-600',   rate:'×1.5', pct:'휴일가산 150%'},
-                  {l:'휴일 시간외',  key:'holExtH',  c:'text-amber-600',  rate:'×2.0', pct:'휴일+가산 200%'},
-                  {l:'휴일 야간',    key:'holNightH',c:'text-rose-600',   rate:'×2.5', pct:'휴일+야간 250%'},
-                ].map(x=>{
+                {WORK_ITEMS.map(x=>{
                   const v = workData?.[x.key] || 0
                   return (
                     <div key={x.l} className="flex justify-between items-center py-1.5 border-b border-gray-50 last:border-0">
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-gray-600 font-medium">{x.l}</span>
-                          <span className={`text-xs ${x.c} font-semibold`}>{x.rate}</span>
+                          <span className={`text-xs font-semibold ${x.c}`}>{x.rate}</span>
                         </div>
                         <div className="text-xs text-gray-400">{x.pct}</div>
                       </div>
-                      <div className="text-right">
-                        <span className={`text-sm font-bold ${v>0?x.c:'text-gray-300'}`}>{v}h</span>
-                        {!workData && <div className="text-xs text-gray-300">데이터 없음</div>}
-                      </div>
+                      <span className={`text-sm font-bold ${v>0?x.c:'text-gray-300'}`}>{v}h</span>
                     </div>
                   )
                 })}
                 {!workData && (
                   <div className="mt-2 p-2 bg-gray-50 rounded-lg text-xs text-gray-400 text-center">
-                    해당 월 근태 기록이 없습니다 (수기 입력 항목만 계산됩니다)
+                    해당 월 근태 기록 없음 · 수기 입력 항목만 계산됩니다
                   </div>
                 )}
               </div>
             </div>
 
-            {/* 수기 입력 항목 */}
+            {/* 수기 입력 */}
             <div className="card">
               <div className="text-sm font-semibold text-gray-700 mb-3">✏️ 수기 입력 항목</div>
               <div className="space-y-2.5">
-                {/* 고정 항목 */}
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">상여금 (원)</label>
                   <input type="number" className="input text-sm" value={bonus||0}
@@ -209,7 +196,6 @@ export default function PayrollPage() {
                   <input type="number" className="input text-sm" value={celebration||0}
                     onChange={e=>setCelebration(+e.target.value)} placeholder="0" />
                 </div>
-                {/* 동적 기타 항목 */}
                 {extraItems.map((item,idx)=>(
                   <div key={idx} className="flex gap-2 items-start">
                     <div className="flex-1 space-y-1">
@@ -226,15 +212,14 @@ export default function PayrollPage() {
                     </button>
                   </div>
                 ))}
-                {/* 항목 추가 버튼 */}
                 <button onClick={()=>setExtraItems(prev=>[...prev,{label:'',amount:0}])}
                   className="w-full py-2 border border-dashed border-gray-200 rounded-lg text-xs text-gray-400 hover:border-purple-300 hover:text-purple-600 transition-colors">
                   + 항목 추가 (기타수당, 특별수당 등)
                 </button>
               </div>
-              {(bonus+celebration+extraItems.reduce((a,x)=>a+(x.amount||0),0)) > 0 && (
+              {specialTotal > 0 && (
                 <div className="mt-3 p-2 bg-amber-50 rounded-lg text-xs text-amber-700">
-                  수기 합계: {formatWon(bonus+celebration+extraItems.reduce((a,x)=>a+(x.amount||0),0))}
+                  수기 합계: {formatWon(specialTotal)}
                 </div>
               )}
             </div>
@@ -244,10 +229,9 @@ export default function PayrollPage() {
           <div className="space-y-4">
             {result ? (
               <>
-                {/* 요약 */}
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    {l:'총 지급액', v:formatWon(result.grossTotal+(result.specialTotal||0)), c:'text-purple-600'},
+                    {l:'총 지급액', v:formatWon(result.grossTotal+specialTotal), c:'text-purple-600'},
                     {l:'총 공제액', v:'-'+formatWon(result.totalDeduct), c:'text-red-600'},
                   ].map(x=>(
                     <div key={x.l} className="card text-center py-3">
@@ -257,23 +241,22 @@ export default function PayrollPage() {
                   ))}
                 </div>
 
-                {/* 지급 상세 */}
                 <div className="card">
                   <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">지급 항목</div>
-                  {[
+                  {([
                     ['기본급', result.base],
-                    result.payExt>0      && [`평일 시간외 (${workData.extH}h × 1.5)`, result.payExt],
-                    result.payNight>0    && [`평일 야간 (${workData.nightH}h × 2.0)`, result.payNight],
-                    result.payHol>0      && [`휴일 정규 (${workData.holH}h × 1.5)`, result.payHol],
-                    result.payHolExt>0   && [`휴일 시간외 (${workData.holExtH}h × 2.0)`, result.payHolExt],
-                    result.payHolNight>0 && [`휴일 야간 (${workData.holNightH}h × 2.5)`, result.payHolNight],
+                    result.payExt>0      && [`평일 시간외 (×1.5)`, result.payExt],
+                    result.payNight>0    && [`평일 야간 (×2.0)`, result.payNight],
+                    result.payHol>0      && [`휴일 정규 (×1.5)`, result.payHol],
+                    result.payHolExt>0   && [`휴일 시간외 (×2.0)`, result.payHolExt],
+                    result.payHolNight>0 && [`휴일 야간 (×2.5)`, result.payHolNight],
                     selSalary?.meal>0      && ['식대 (비과세)', selSalary.meal],
                     selSalary?.transport>0 && ['교통비 (비과세)', selSalary.transport],
                     selSalary?.comm>0      && ['통신비 (비과세)', selSalary.comm],
                     bonus>0        && ['상여금', bonus],
                     celebration>0  && ['경조사비', celebration],
-                    ...extraItems.filter(x=>x.amount>0).map(x=>[x.label||'기타수당', x.amount]),
-                  ].filter(Boolean).map((item:any,i)=>(
+                    ...extraItems.filter(x=>x.amount>0).map(x=>[x.label||'기타수당', x.amount] as [string,number]),
+                  ] as any[]).filter(Boolean).map((item:any,i:number)=>(
                     <div key={i} className="flex justify-between py-1.5 border-b border-gray-50 text-xs">
                       <span className="text-gray-500">{item[0]}</span>
                       <span className="text-purple-600 font-medium">{formatWon(item[1])}</span>
@@ -281,11 +264,10 @@ export default function PayrollPage() {
                   ))}
                   <div className="flex justify-between pt-2 text-sm font-semibold">
                     <span>합계</span>
-                    <span className="text-purple-600">{formatWon(result.grossTotal+(result.specialTotal||0))}</span>
+                    <span className="text-purple-600">{formatWon(result.grossTotal+specialTotal)}</span>
                   </div>
                 </div>
 
-                {/* 공제 상세 */}
                 <div className="card">
                   <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">공제 항목</div>
                   {[
@@ -307,10 +289,9 @@ export default function PayrollPage() {
                   </div>
                 </div>
 
-                {/* 계산식 */}
                 <div className="card bg-gray-50 border-gray-100">
                   <div className="text-xs font-semibold text-gray-500 mb-2">📐 계산 기준</div>
-                  <div className="space-y-1 text-xs text-gray-400">
+                  <div className="text-xs text-gray-400 space-y-1">
                     <div>기본 시간단가: {formatWon(selSalary?.annual)} ÷ 12 ÷ 209h = <span className="text-purple-600 font-medium">{rate.toLocaleString()}원/h</span></div>
                     <div className="grid grid-cols-2 gap-x-4 mt-1">
                       <div>평일 시간외 <span className="text-blue-500 font-medium">×1.5배</span></div>
@@ -322,17 +303,14 @@ export default function PayrollPage() {
                   </div>
                 </div>
 
-                {/* 최종 수령액 */}
                 <div className="rounded-xl p-5 flex justify-between items-center"
                   style={{background:'linear-gradient(135deg,#534AB7,#6c63d4)'}}>
                   <div>
                     <div className="text-white/80 text-sm font-medium">최종 실 수령액</div>
-                    <div className="text-white/60 text-xs mt-0.5">
-                      {selYear}년 {month}월 · {selStaff?.name}
-                    </div>
-                    {result.specialTotal>0 && (
+                    <div className="text-white/60 text-xs mt-0.5">{selYear}년 {month}월 · {selStaff?.name}</div>
+                    {specialTotal>0 && (
                       <div className="text-white/50 text-xs mt-0.5">
-                        (근태급여 {formatWon(result.netPay)} + 수기항목 {formatWon(result.specialTotal)})
+                        근태급여 {formatWon(result.netPay)} + 수기 {formatWon(specialTotal)}
                       </div>
                     )}
                   </div>
@@ -342,7 +320,7 @@ export default function PayrollPage() {
             ) : (
               <div className="card py-16 text-center">
                 <div className="text-3xl mb-3">📭</div>
-                <div className="text-gray-400 text-sm">{selYear}년 {month}월 근태 데이터가 없습니다</div>
+                <div className="text-gray-400 text-sm">급여 정보를 확인 중입니다</div>
               </div>
             )}
           </div>
