@@ -7,21 +7,17 @@ const DAYS = ['일','월','화','수','목','금','토']
 const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
 
 const HOLIDAY_NAMES: Record<string,string> = {
-  '2026-01-01':'신정', '2026-02-16':'설날연휴', '2026-02-17':'설날',
-  '2026-02-18':'설날연휴', '2026-03-01':'삼일절', '2026-05-05':'어린이날',
-  '2026-05-25':'부처님오신날', '2026-06-03':'현충일',
-  '2026-08-17':'광복절대체', '2026-09-24':'추석연휴', '2026-09-25':'추석',
-  '2026-09-26':'추석연휴', '2026-10-05':'개천절대체', '2026-10-09':'한글날',
-  '2026-12-25':'성탄절',
+  '2026-01-01':'신정','2026-02-16':'설날연휴','2026-02-17':'설날',
+  '2026-02-18':'설날연휴','2026-03-01':'삼일절','2026-05-05':'어린이날',
+  '2026-05-25':'부처님오신날','2026-06-03':'현충일',
+  '2026-08-17':'광복절대체','2026-09-24':'추석연휴','2026-09-25':'추석',
+  '2026-09-26':'추석연휴','2026-10-05':'개천절대체','2026-10-09':'한글날','2026-12-25':'성탄절',
 }
 
 const EVENT_COLORS = [
-  {label:'보라', value:'#534AB7'},
-  {label:'파랑', value:'#185FA5'},
-  {label:'초록', value:'#0F6E56'},
-  {label:'빨강', value:'#A32D2D'},
-  {label:'주황', value:'#854F0B'},
-  {label:'분홍', value:'#993556'},
+  {label:'보라', value:'#534AB7'},{label:'파랑', value:'#185FA5'},
+  {label:'초록', value:'#0F6E56'},{label:'빨강', value:'#A32D2D'},
+  {label:'주황', value:'#854F0B'},{label:'분홍', value:'#993556'},
 ]
 
 function toLocalDateStr(date: Date) {
@@ -41,7 +37,6 @@ export default function CalendarPage() {
   const [editMode, setEditMode] = useState(false)
   const [myInvites, setMyInvites] = useState<any[]>([])
   const [tab, setTab] = useState<'calendar'|'invites'>('calendar')
-
   const [form, setForm] = useState({
     title:'', description:'', start_date:'', start_time:'09:00',
     end_date:'', end_time:'18:00', all_day:false,
@@ -54,19 +49,18 @@ export default function CalendarPage() {
     if (!session) return
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
-    const { data: users } = await supabase.from('profiles').select('id,name,grade,color,tc,avatar_url').eq('status','active')
+    const { data: users } = await supabase.from('profiles').select('id,name,grade,dept,color,tc,avatar_url').eq('status','active')
     setAllUsers(users||[])
-    // 내가 만들었거나 초대받은 이벤트
     const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
-    const attEventIds = (myAtt||[]).map(a=>a.event_id)
-    const { data: evs } = await supabase.from('events').select('*, creator:creator_id(name,grade,color,tc)')
+    const attEventIds = (myAtt||[]).map((a:any)=>a.event_id)
+    const { data: evs } = await supabase.from('events')
+      .select('*, creator:creator_id(name,grade,color,tc)')
       .or(`creator_id.eq.${session.user.id}${attEventIds.length?`,id.in.(${attEventIds.join(',')})`:''}`).order('start_at')
     setEvents(evs||[])
     const { data: atts } = await supabase.from('event_attendees')
       .select('*, user:user_id(id,name,grade,color,tc,avatar_url)')
-      .in('event_id', (evs||[]).map(e=>e.id))
+      .in('event_id', (evs||[]).map((e:any)=>e.id))
     setAttendees(atts||[])
-    // 내게 온 초대 (pending)
     const { data: inv } = await supabase.from('event_attendees')
       .select('*, event:event_id(title,start_at,end_at,creator:creator_id(name))')
       .eq('user_id', session.user.id).eq('status','pending')
@@ -75,26 +69,20 @@ export default function CalendarPage() {
 
   useEffect(() => { load() }, [load])
 
-  // 달력 날짜 계산
   const firstDay = new Date(curYear, curMonth, 1).getDay()
   const daysInMonth = new Date(curYear, curMonth+1, 0).getDate()
   const today = toLocalDateStr(new Date())
 
   function getEventsForDate(dateStr: string) {
-    return events.filter(e => {
-      const s = e.start_at.slice(0,10)
-      const en = e.end_at.slice(0,10)
-      return s <= dateStr && dateStr <= en
-    })
+    return events.filter(e => e.start_at.slice(0,10) <= dateStr && dateStr <= e.end_at.slice(0,10))
   }
 
   function canDelete(event: any) {
     if (!profile) return false
-    if (event.creator_id === profile.id) return true
-    if (profile.role === 'director') return true
+    if (event.creator_id === profile.id || profile.role === 'director') return true
     const creatorGrade = GRADE_ORDER[(event.creator as any)?.grade||''] || 99
     const myGrade = GRADE_ORDER[profile.grade||''] || 99
-    return myGrade < creatorGrade // 내 직급이 높으면 삭제 가능
+    return myGrade < creatorGrade
   }
 
   function canEdit(event: any) {
@@ -106,14 +94,11 @@ export default function CalendarPage() {
     const supabase = createClient()
     const startAt = form.all_day ? `${form.start_date}T00:00:00` : `${form.start_date}T${form.start_time}:00`
     const endAt   = form.all_day ? `${form.end_date||form.start_date}T23:59:59` : `${form.end_date||form.start_date}T${form.end_time}:00`
-
     if (editMode && showDetail) {
       await supabase.from('events').update({
-        title:form.title, description:form.description,
-        start_at:startAt, end_at:endAt, all_day:form.all_day,
-        location:form.location, color:form.color,
+        title:form.title, description:form.description, start_at:startAt, end_at:endAt,
+        all_day:form.all_day, location:form.location, color:form.color,
       }).eq('id', showDetail.id)
-      // 참석자 업데이트
       await supabase.from('event_attendees').delete().eq('event_id', showDetail.id).neq('user_id', profile.id)
       if (form.attendeeIds.length) {
         await supabase.from('event_attendees').upsert(
@@ -123,9 +108,8 @@ export default function CalendarPage() {
       }
     } else {
       const { data: ev } = await supabase.from('events').insert({
-        title:form.title, description:form.description,
-        start_at:startAt, end_at:endAt, all_day:form.all_day,
-        location:form.location, color:form.color, creator_id:profile.id,
+        title:form.title, description:form.description, start_at:startAt, end_at:endAt,
+        all_day:form.all_day, location:form.location, color:form.color, creator_id:profile.id,
       }).select().single()
       if (ev && form.attendeeIds.length) {
         await supabase.from('event_attendees').insert(
@@ -133,8 +117,7 @@ export default function CalendarPage() {
         )
       }
     }
-    setShowForm(false); setEditMode(false); setShowDetail(null)
-    resetForm(); load()
+    setShowForm(false); setEditMode(false); setShowDetail(null); resetForm(); load()
   }
 
   async function handleDelete(eventId: string) {
@@ -167,8 +150,7 @@ export default function CalendarPage() {
       title:ev.title, description:ev.description||'',
       start_date:ev.start_at.slice(0,10), start_time:ev.start_at.slice(11,16),
       end_date:ev.end_at.slice(0,10), end_time:ev.end_at.slice(11,16),
-      all_day:ev.all_day||false, location:ev.location||'', color:ev.color||'#534AB7',
-      attendeeIds:atts
+      all_day:ev.all_day||false, location:ev.location||'', color:ev.color||'#534AB7', attendeeIds:atts
     })
     setEditMode(true); setShowDetail(null); setShowForm(true)
   }
@@ -187,7 +169,7 @@ export default function CalendarPage() {
         <div className="flex gap-2 items-center">
           {myInvites.length > 0 && (
             <button onClick={()=>setTab('invites')}
-              className="flex items-center gap-1.5 btn-secondary text-sm relative">
+              className="flex items-center gap-1.5 btn-secondary text-sm">
               📬 초대 응답
               <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{myInvites.length}</span>
             </button>
@@ -207,8 +189,7 @@ export default function CalendarPage() {
               <div>
                 <div className="text-sm font-medium text-gray-800">{(inv.event as any)?.title}</div>
                 <div className="text-xs text-gray-400 mt-0.5">
-                  {(inv.event as any)?.start_at?.slice(0,16).replace('T',' ')} ~
-                  {(inv.event as any)?.end_at?.slice(11,16)}
+                  {(inv.event as any)?.start_at?.slice(0,16).replace('T',' ')} ~ {(inv.event as any)?.end_at?.slice(11,16)}
                 </div>
                 <div className="text-xs text-gray-400">주최: {(inv.event as any)?.creator?.name}</div>
               </div>
@@ -252,16 +233,16 @@ export default function CalendarPage() {
 
           <div className="card overflow-hidden">
             {/* 요일 헤더 */}
-            <div className="grid grid-cols-7 border-b border-gray-100">
+            <div className="grid grid-cols-7 border-b border-gray-200">
               {DAYS.map((d,i)=>(
                 <div key={d} className={`text-center text-xs font-semibold py-2.5
-                  ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-500'}`}>{d}</div>
+                  ${i===0?'text-red-500 bg-red-50':i===6?'text-blue-500 bg-blue-50':'text-gray-600 bg-gray-50'}`}>{d}</div>
               ))}
             </div>
             {/* 날짜 */}
             <div className="grid grid-cols-7">
               {Array.from({length: firstDay}).map((_,i)=>(
-                <div key={`empty-${i}`} className="min-h-[90px] border-b border-r border-gray-50 bg-gray-50/50" />
+                <div key={`e-${i}`} className="min-h-[90px] border-b border-r border-gray-100 bg-gray-50" />
               ))}
               {Array.from({length: daysInMonth}).map((_,i)=>{
                 const day = i+1
@@ -269,24 +250,27 @@ export default function CalendarPage() {
                 const dayEvents = getEventsForDate(dateStr)
                 const isToday = dateStr === today
                 const dow = (firstDay + i) % 7
-                const isWeekend = dow===0||dow===6
+                const isHol = isHoliday(dateStr)
+                const isSun = dow === 0
+                const isSat = dow === 6
                 return (
                   <div key={day}
                     className={`min-h-[90px] border-b border-r p-1 cursor-pointer transition-colors
-                      ${isHoliday(dateStr)
-                        ? 'bg-red-50 border-red-100'
-                        : isWeekend
-                        ? 'bg-slate-100 border-slate-200'
-                        : 'bg-white border-gray-100'}
-                      hover:bg-purple-50/50`}
+                      ${isHol ? 'bg-red-50 border-red-100 hover:bg-red-100'
+                        : isSun ? 'bg-rose-50 border-rose-100 hover:bg-rose-100'
+                        : isSat ? 'bg-blue-50 border-blue-100 hover:bg-blue-100'
+                        : 'bg-white border-gray-100 hover:bg-purple-50'}`}
                     onClick={()=>openCreate(dateStr)}>
                     <div className="flex items-center gap-1 mb-1">
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium flex-shrink-0
-                        ${isToday?'bg-purple-600 text-white':isHoliday(dateStr)||dow===0?'text-red-400':dow===6?'text-blue-400':'text-gray-600'}`}>
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0
+                        ${isToday ? 'bg-purple-600 text-white'
+                          : isHol||isSun ? 'text-red-500'
+                          : isSat ? 'text-blue-500'
+                          : 'text-gray-700'}`}>
                         {day}
                       </div>
                       {HOLIDAY_NAMES[dateStr] && (
-                        <span className="text-red-400 text-xs truncate">{HOLIDAY_NAMES[dateStr]}</span>
+                        <span className="text-red-400 text-xs truncate font-medium">{HOLIDAY_NAMES[dateStr]}</span>
                       )}
                     </div>
                     <div className="space-y-0.5">
@@ -298,9 +282,7 @@ export default function CalendarPage() {
                           {ev.title}
                         </div>
                       ))}
-                      {dayEvents.length>3 && (
-                        <div className="text-xs text-gray-400 pl-1">+{dayEvents.length-3}개</div>
-                      )}
+                      {dayEvents.length>3 && <div className="text-xs text-gray-400 pl-1">+{dayEvents.length-3}개</div>}
                     </div>
                   </div>
                 )
@@ -375,20 +357,24 @@ export default function CalendarPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-2">참석자 초대</label>
-                <div className="space-y-1 max-h-36 overflow-y-auto">
+                <label className="block text-xs font-medium text-gray-500 mb-2">
+                  참석자 초대 {form.attendeeIds.length>0 && <span className="text-purple-600">({form.attendeeIds.length}명 선택)</span>}
+                </label>
+                <div className="border border-gray-200 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
                   {allUsers.filter(u=>u.id!==profile?.id).map(u=>(
-                    <label key={u.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0">
+                    <label key={u.id}
+                      className={`flex items-center gap-3 px-3 py-2 cursor-pointer border-b border-gray-50 last:border-0 transition-colors
+                        ${form.attendeeIds.includes(u.id)?'bg-purple-50':'hover:bg-gray-50'}`}>
                       <input type="checkbox" className="accent-purple-600 flex-shrink-0"
                         checked={form.attendeeIds.includes(u.id)}
                         onChange={e=>setForm(f=>({...f,
                           attendeeIds:e.target.checked?[...f.attendeeIds,u.id]:f.attendeeIds.filter(x=>x!==u.id)
                         }))} />
-                      <span className="text-sm text-gray-800 font-medium w-16 flex-shrink-0">{u.name}</span>
-                      <span className="text-xs text-gray-400 flex-shrink-0">{u.grade}</span>
-                      <span className="text-xs text-gray-300 truncate">{u.dept}</span>
+                      <span className="text-sm font-medium text-gray-800 w-16 flex-shrink-0">{u.name}</span>
+                      <span className="text-xs text-gray-500 flex-shrink-0">{u.grade}</span>
+                      <span className="text-xs text-gray-300 truncate flex-1">{u.dept}</span>
                       {form.attendeeIds.includes(u.id) && (
-                        <span className="ml-auto text-xs text-purple-600 flex-shrink-0">✓</span>
+                        <span className="text-xs text-purple-600 font-medium flex-shrink-0">✓ 선택됨</span>
                       )}
                     </label>
                   ))}
