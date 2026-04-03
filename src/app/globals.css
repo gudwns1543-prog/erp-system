@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --purple: #534AB7;
+  --purple-light: #EEEDFE;
+}
+
+body {
+  font-family: 'Apple SD Gothic Neo', -apple-system, BlinkMacSystemFont,
+    'Malgun Gothic', sans-serif;
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium
+           hover:bg-purple-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium
+           hover:bg-gray-50 transition-colors;
+  }
+  .btn-danger {
+    @apply bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-lg text-sm font-medium
+           hover:bg-red-100 transition-colors;
+  }
+  .card {
+    @apply bg-white border border-gray-100 rounded-xl p-4 shadow-sm;
+  }
+  .input {
+    @apply w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
+           focus:outline-none focus:border-purple-600 transition-colors bg-white;
+  }
+  .badge-work     { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700; }
+  .badge-holiday  { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700; }
+  .badge-pending  { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700; }
+  .badge-approved { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700; }
+  .badge-rejected { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700; }
+}
