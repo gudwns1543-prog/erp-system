@@ -10,8 +10,8 @@ const NAV = [
     { href: '/dashboard/attendance', label: '근태 기록', icon: '📋' },
   ]},
   { group: '급여', items: [
-    { href: '/dashboard/myslip', label: '내 급여명세서', icon: '📄' },
-    { href: '/dashboard/payroll', label: '급여 계산', icon: '💰', adminOnly: true },
+    { href: '/dashboard/myslip', label: '급여 조회', icon: '💰' },
+    { href: '/dashboard/payroll', label: '급여 일괄계산', icon: '📊', adminOnly: true },
   ]},
   { group: '결재', items: [
     { href: '/dashboard/leave', label: '휴가·출장 신청', icon: '📝' },

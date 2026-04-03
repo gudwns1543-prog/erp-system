@@ -234,11 +234,29 @@ export default function HrmPage() {
                 계약연봉 — {staff.find(u=>u.id===editSalary.user_id)?.name}
               </div>
               <div className="grid grid-cols-3 gap-3">
-                {[{l:'계약연봉(원)',k:'annual'},{l:'부양가족',k:'dependents'},{l:'식대(원)',k:'meal'},{l:'교통비(원)',k:'transport'},{l:'통신비(원)',k:'comm'}].map(f=>(
+                {[
+                  {l:'계약연봉(원)',k:'annual',comma:true},
+                  {l:'부양가족 수',k:'dependents',comma:false},
+                  {l:'식대(원)',k:'meal',comma:true},
+                  {l:'교통비(원)',k:'transport',comma:true},
+                  {l:'통신비(원)',k:'comm',comma:true},
+                ].map(f=>(
                   <div key={f.k}>
                     <label className="block text-xs font-medium text-gray-500 mb-1">{f.l}</label>
-                    <input type="number" className="input" value={editSalary[f.k]||0}
-                      onChange={e=>setEditSalary((p:any)=>({...p,[f.k]:e.target.value}))} />
+                    {f.comma ? (
+                      <div className="relative">
+                        <input type="text" className="input pr-6"
+                          value={Number(editSalary[f.k]||0).toLocaleString('ko-KR')}
+                          onChange={e=>{
+                            const raw = e.target.value.replace(/,/g,'')
+                            if(/^[0-9]*$/.test(raw)) setEditSalary((p:any)=>({...p,[f.k]:raw?Number(raw):0}))
+                          }} />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">원</span>
+                      </div>
+                    ) : (
+                      <input type="number" className="input" value={editSalary[f.k]||0}
+                        onChange={e=>setEditSalary((p:any)=>({...p,[f.k]:e.target.value}))} />
+                    )}
                   </div>
                 ))}
                 <div className="flex items-end pb-1">
