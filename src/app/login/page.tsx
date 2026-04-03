@@ -30,7 +30,7 @@ export default function LoginPage() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="text-3xl font-bold text-purple-600 tracking-tight">📊 근태 ERP</div>
+          <div className="text-3xl font-bold text-purple-600 tracking-tight">📊 (주)솔루션 ERP</div>
           <div className="text-sm text-gray-500 mt-1">인사·급여 통합 관리 시스템</div>
         </div>
 

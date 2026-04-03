@@ -40,6 +40,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname()
   const [profile, setProfile] = useState<any>(null)
   const [pendingCount, setPendingCount] = useState(0)
+  const [unreadChat, setUnreadChat] = useState(0)
+  const [unreadNotice, setUnreadNotice] = useState(0)
+  const [pendingInvite, setPendingInvite] = useState(0)
+  const [pendingLeave, setPendingLeave] = useState(0)
 
   useEffect(() => {
     const supabase = createClient()
@@ -53,12 +57,44 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         return
       }
       setProfile(data)
+      // 결재 대기
       if (data.role === 'director') {
         const { count } = await supabase
           .from('approvals').select('*', { count: 'exact', head: true })
-          .eq('status', 'pending')
+          .eq('approver_id', session.user.id).eq('status', 'pending')
         setPendingCount(count || 0)
+        // 가입 승인 대기
+        const { count: lc } = await supabase
+          .from('signup_requests').select('*', { count: 'exact', head: true }).eq('status','pending')
+        setPendingLeave(lc || 0)
+      } else {
+        const { count: myLeave } = await supabase
+          .from('approvals').select('*', { count: 'exact', head: true })
+          .eq('requester_id', session.user.id).eq('status','pending')
+        setPendingLeave(myLeave || 0)
       }
+      // 채팅 미읽음
+      const { data: myRooms } = await supabase.from('chat_members').select('room_id').eq('user_id', session.user.id)
+      const roomIds = (myRooms||[]).map((r:any)=>r.room_id)
+      const { data: reads } = await supabase.from('chat_reads').select('*').eq('user_id', session.user.id)
+      let totalUnread = 0
+      for (const roomId of roomIds) {
+        const lastRead = reads?.find((r:any)=>r.room_id===roomId)?.last_read_at
+        const { count } = await supabase.from('chat_messages')
+          .select('*',{count:'exact',head:true}).eq('room_id',roomId).eq('is_system',false)
+          .gt('created_at', lastRead||'2000-01-01').neq('sender_id', session.user.id)
+        totalUnread += count||0
+      }
+      setUnreadChat(totalUnread)
+      // 공지 미읽음 (최근 7일 내 공지 수)
+      const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate()-7)
+      const { count: nc } = await supabase.from('notices')
+        .select('*',{count:'exact',head:true}).gte('created_at', weekAgo.toISOString())
+      setUnreadNotice(nc||0)
+      // 일정 초대 미응답
+      const { count: ic } = await supabase.from('event_attendees')
+        .select('*',{count:'exact',head:true}).eq('user_id', session.user.id).eq('status','pending')
+      setPendingInvite(ic||0)
     })
   }, [router])
 
@@ -79,7 +115,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* 사이드바 */}
       <div className="w-52 flex-shrink-0 bg-white border-r border-gray-100 flex flex-col">
         <div className="p-4 border-b border-gray-100">
-          <div className="text-base font-bold text-purple-600">📊 근태 ERP</div>
+          <div className="text-base font-bold text-purple-600">📊 (주)솔루션 ERP</div>
           <div className="flex items-center gap-2 mt-3">
             {profile.avatar_url
               ? <img src={profile.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0 border border-gray-100" />
@@ -114,9 +150,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       <span className="text-sm w-4 text-center">{item.icon}</span>
                       <span className="flex-1">{item.label}</span>
                       {item.href === '/dashboard/approval' && pendingCount > 0 && (
-                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">
-                          {pendingCount}
-                        </span>
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingCount}</span>
+                      )}
+                    {item.href === '/dashboard/chat' && unreadChat > 0 && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{unreadChat}</span>
+                      )}
+                    {item.href === '/dashboard/notice' && unreadNotice > 0 && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{unreadNotice}</span>
+                      )}
+                    {item.href === '/dashboard/calendar' && pendingInvite > 0 && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingInvite}</span>
+                      )}
+                    {item.href === '/dashboard/leave' && pendingLeave > 0 && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingLeave}</span>
+                      )}
+                    {item.href === '/dashboard/signup' && pendingLeave > 0 && profile?.role==='director' && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingLeave}</span>
                       )}
                     </Link>
                   )

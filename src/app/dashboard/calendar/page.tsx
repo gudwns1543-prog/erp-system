@@ -1,10 +1,19 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
-import { GRADE_ORDER } from '@/lib/attendance'
+import { GRADE_ORDER, isHoliday } from '@/lib/attendance'
 
 const DAYS = ['일','월','화','수','목','금','토']
 const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
+
+const HOLIDAY_NAMES: Record<string,string> = {
+  '2026-01-01':'신정', '2026-02-16':'설날연휴', '2026-02-17':'설날',
+  '2026-02-18':'설날연휴', '2026-03-01':'삼일절', '2026-05-05':'어린이날',
+  '2026-05-25':'부처님오신날', '2026-06-03':'현충일',
+  '2026-08-17':'광복절대체', '2026-09-24':'추석연휴', '2026-09-25':'추석',
+  '2026-09-26':'추석연휴', '2026-10-05':'개천절대체', '2026-10-09':'한글날',
+  '2026-12-25':'성탄절',
+}
 
 const EVENT_COLORS = [
   {label:'보라', value:'#534AB7'},
@@ -267,9 +276,14 @@ export default function CalendarPage() {
                       ${isWeekend?'bg-gray-50/50':''}
                       hover:bg-purple-50/30`}
                     onClick={()=>openCreate(dateStr)}>
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium mb-1
-                      ${isToday?'bg-purple-600 text-white':dow===0?'text-red-400':dow===6?'text-blue-400':'text-gray-600'}`}>
-                      {day}
+                    <div className="flex items-center gap-1 mb-1">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium flex-shrink-0
+                        ${isToday?'bg-purple-600 text-white':isHoliday(dateStr)||dow===0?'text-red-400':dow===6?'text-blue-400':'text-gray-600'}`}>
+                        {day}
+                      </div>
+                      {HOLIDAY_NAMES[dateStr] && (
+                        <span className="text-red-400 text-xs truncate">{HOLIDAY_NAMES[dateStr]}</span>
+                      )}
                     </div>
                     <div className="space-y-0.5">
                       {dayEvents.slice(0,3).map(ev=>(

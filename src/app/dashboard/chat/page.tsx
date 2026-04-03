@@ -35,7 +35,15 @@ export default function ChatPage() {
     if (!memberRooms?.length) { setRooms([]); return }
     const roomIds = memberRooms.map(m=>m.room_id)
     const { data } = await supabase.from('chat_rooms').select('*').in('id', roomIds).order('created_at')
-    setRooms(data||[])
+    // 각 방의 멤버 이름 로드
+    const { data: allMembers } = await supabase.from('chat_members')
+      .select('room_id, user:user_id(name)').in('room_id', roomIds)
+    const roomsWithMembers = (data||[]).map(r=>{
+      const roomMems = (allMembers||[]).filter((m:any)=>m.room_id===r.id)
+      const names = roomMems.map((m:any)=>(m.user as any)?.name).filter(Boolean).join(', ')
+      return {...r, _members: names}
+    })
+    setRooms(roomsWithMembers)
 
     // 읽지않음 수 계산
     const { data: reads } = await supabase.from('chat_reads').select('*').eq('user_id', uid)
@@ -205,14 +213,26 @@ export default function ChatPage() {
             {rooms.length===0 && <div className="p-4 text-xs text-gray-300 text-center">채팅방이 없습니다</div>}
             {rooms.map(r=>{
               const unread = unreadCounts[r.id]||0
+              const roomMembers = allUsers.filter(u=>
+                members.filter(m=>m.event_id===r.id||true).length > 0
+                ? true : true
+              )
+              // 해당 방 멤버 이름 (간단히)
+              const [roomMemberNames, setRoomMemberNames] = [r._memberNames||'', ()=>{}]
               return (
-                <div key={r.id} onClick={()=>{setActiveRoom(r);setUnreadCounts(p=>({...p,[r.id]:0}))}}
-                  className={`p-3 cursor-pointer border-b border-gray-50 transition-colors flex items-center justify-between
+                <div key={r.id} onClick={async ()=>{
+                    setActiveRoom(r)
+                    setUnreadCounts(p=>({...p,[r.id]:0}))
+                  }}
+                  className={`p-3 cursor-pointer border-b border-gray-50 transition-colors
                     ${activeRoom?.id===r.id?'bg-purple-50 border-l-2 border-l-purple-600':'hover:bg-gray-50'}`}>
-                  <div className="min-w-0">
-                    <div className="text-xs font-medium text-gray-800 truncate">{r.name}</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-medium text-gray-800 truncate flex-1 mr-1">{r.name}</div>
+                    {unread>0 && <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full flex-shrink-0">{unread}</span>}
                   </div>
-                  {unread>0 && <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full flex-shrink-0 ml-1">{unread}</span>}
+                  {r._members && (
+                    <div className="text-xs text-gray-300 truncate mt-0.5">{r._members}</div>
+                  )}
                 </div>
               )
             })}
