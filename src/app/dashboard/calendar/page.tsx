@@ -217,13 +217,28 @@ export default function CalendarPage() {
       {/* 캘린더 탭 */}
       {tab==='calendar' && (
         <>
-          {/* 월 이동 */}
+          {/* 연/월 이동 */}
           <div className="flex items-center justify-between mb-4">
-            <button onClick={()=>{if(curMonth===0){setCurMonth(11);setCurYear(y=>y-1)}else setCurMonth(m=>m-1)}}
-              className="btn-secondary px-3 py-1.5 text-sm">‹</button>
-            <div className="text-base font-semibold text-gray-800">{curYear}년 {MONTHS[curMonth]}</div>
-            <button onClick={()=>{if(curMonth===11){setCurMonth(0);setCurYear(y=>y+1)}else setCurMonth(m=>m+1)}}
-              className="btn-secondary px-3 py-1.5 text-sm">›</button>
+            <div className="flex items-center gap-1">
+              <button onClick={()=>setCurYear(y=>y-1)} className="btn-secondary px-2 py-1.5 text-xs">‹</button>
+              <select className="input w-auto text-sm font-medium" value={curYear} onChange={e=>setCurYear(+e.target.value)}>
+                {Array.from({length:10},(_,i)=>new Date().getFullYear()-3+i).map(y=>(
+                  <option key={y} value={y}>{y}년</option>
+                ))}
+              </select>
+              <button onClick={()=>setCurYear(y=>y+1)} className="btn-secondary px-2 py-1.5 text-xs">›</button>
+            </div>
+            <div className="flex items-center gap-1">
+              <button onClick={()=>{if(curMonth===0){setCurMonth(11);setCurYear(y=>y-1)}else setCurMonth(m=>m-1)}}
+                className="btn-secondary px-2 py-1.5 text-xs">‹</button>
+              <select className="input w-auto text-sm font-medium" value={curMonth} onChange={e=>setCurMonth(+e.target.value)}>
+                {MONTHS.map((m,i)=><option key={i} value={i}>{m}</option>)}
+              </select>
+              <button onClick={()=>{if(curMonth===11){setCurMonth(0);setCurYear(y=>y+1)}else setCurMonth(m=>m+1)}}
+                className="btn-secondary px-2 py-1.5 text-xs">›</button>
+            </div>
+            <button onClick={()=>{setCurYear(new Date().getFullYear());setCurMonth(new Date().getMonth())}}
+              className="btn-secondary px-3 py-1.5 text-sm text-purple-600">오늘</button>
           </div>
 
           <div className="card overflow-hidden">
