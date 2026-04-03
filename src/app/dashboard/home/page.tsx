@@ -21,6 +21,8 @@ export default function HomePage() {
   const [teamStatus, setTeamStatus] = useState<any[]>([])
   const [calYear, setCalYear] = useState(new Date().getFullYear())
   const [calMonth, setCalMonth] = useState(new Date().getMonth())
+  const [briefing, setBriefing] = useState('')
+  const [briefingLoading, setBriefingLoading] = useState(false)
 
   function nowStr() {
     const n = new Date()
@@ -113,6 +115,94 @@ export default function HomePage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  async function loadBriefing() {
+    setBriefingLoading(true)
+    setBriefing('')
+    try {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      // 오늘 날짜
+      const today = todayStr()
+      const todayDate = new Date()
+
+      // 다가오는 일정 (7일 이내)
+      const next7 = new Date(todayDate); next7.setDate(todayDate.getDate()+7)
+      const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
+      const attIds = (myAtt||[]).map((a:any) => a.event_id)
+      const { data: events } = await supabase.from('events')
+        .select('title,start_at,end_at,location').order('start_at')
+        .gte('start_at', today).lte('start_at', next7.toISOString().slice(0,10)+'T23:59:59')
+        .or(\`creator_id.eq.\${session.user.id}\${attIds.length?\`,id.in.(\${attIds.join(',')})\`:''}\`)
+
+      // 대기 결재
+      const { data: p } = await supabase.from('profiles').select('role,name,grade,dept').eq('id', session.user.id).single()
+      const { data: pendingApprovals } = await supabase.from('approvals')
+        .select('type,start_date,requester:requester_id(name)')
+        .eq(p?.role==='director'?'approver_id':'requester_id', session.user.id)
+        .eq('status','pending').limit(5)
+
+      // 오늘 출퇴근 상태
+      const { data: todayAtt } = await supabase.from('attendance')
+        .select('check_in,check_out,reg_hours').eq('user_id', session.user.id).eq('work_date', today)
+
+      // 미읽음 공지
+      const lastRead = localStorage.getItem(\`notice_read_\${session.user.id}\`) || '2000-01-01'
+      const { count: noticeCount } = await supabase.from('notices')
+        .select('*',{count:'exact',head:true}).gt('created_at', lastRead)
+
+      // AI에게 보낼 데이터 구성
+      const days = ['일','월','화','수','목','금','토']
+      const todayDay = days[todayDate.getDay()]
+      const briefData = {
+        오늘날짜: \`\${todayDate.getMonth()+1}월 \${todayDate.getDate()}일 \${todayDay}요일\`,
+        직원정보: \`\${p?.name} \${p?.grade} (\${p?.dept})\`,
+        출퇴근상태: todayAtt?.[0]?.check_in
+          ? \`출근 \${todayAtt[0].check_in?.slice(0,5)}\${todayAtt[0].check_out ? ' / 퇴근 '+todayAtt[0].check_out.slice(0,5) : ' (근무중)'}\`
+          : '미출근',
+        다가오는일정: (events||[]).map((e:any) =>
+          \`\${e.start_at.slice(5,10).replace('-','/')} \${e.start_at.slice(11,16)} \${e.title}\${e.location?' ('\+e.location+')':''}\`
+        ),
+        대기결재: (pendingApprovals||[]).map((a:any) =>
+          p?.role==='director'
+            ? \`\${(a.requester as any)?.name}님의 \${a.type} (\${a.start_date})\`
+            : \`\${a.type} 신청 대기중 (\${a.start_date})\`
+        ),
+        미읽음공지: noticeCount||0,
+      }
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          system: \`당신은 회사 ERP 시스템의 AI 어시스턴트입니다. 
+주어진 업무 데이터를 바탕으로 오늘의 업무 브리핑을 친근하고 간결하게 한국어로 작성해주세요.
+형식: 
+- 인사말 없이 바로 핵심 내용
+- 이모지 활용해서 가독성 높이게
+- 3~5줄 이내로 간결하게
+- 없는 내용은 언급하지 말 것
+- 마지막에 한 마디 응원 멘트\`,
+          messages: [{
+            role: 'user',
+            content: \`오늘 업무 데이터:\n\${JSON.stringify(briefData, null, 2)}\`
+          }]
+        })
+      })
+      const data = await response.json()
+      const text = data.content?.[0]?.text || '브리핑을 불러올 수 없습니다.'
+      setBriefing(text)
+    } catch (e) {
+      setBriefing('브리핑 로딩 실패. 잠시 후 다시 시도해주세요.')
+    }
+    setBriefingLoading(false)
+  }
+
+  useEffect(() => { loadBriefing() }, [])
   useEffect(() => {
     const id = setInterval(() => {
       const n = new Date()
@@ -183,6 +273,35 @@ export default function HomePage() {
             <span className="text-xs text-amber-700">퇴근 처리됨 · 업무에 복귀하시겠습니까?</span>
             <button onClick={handleResumeWork} className="text-xs bg-amber-600 text-white px-3 py-1.5 rounded-lg hover:bg-amber-700">🔄 근무 복귀</button>
           </div>
+        )}
+      </div>
+
+      {/* AI 업무 브리핑 */}
+      <div className="card mb-5 border-purple-100 bg-gradient-to-r from-purple-50 to-white">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-full bg-purple-600 flex items-center justify-center text-sm">✨</div>
+            <span className="text-sm font-semibold text-gray-800">AI 업무 브리핑</span>
+            <span className="text-xs text-gray-400">오늘의 일정과 할 일을 정리했어요</span>
+          </div>
+          <button onClick={loadBriefing} disabled={briefingLoading}
+            className="text-xs text-purple-600 hover:text-purple-800 disabled:text-gray-400 flex items-center gap-1">
+            {briefingLoading ? '⏳' : '🔄'} {briefingLoading ? '분석 중...' : '새로고침'}
+          </button>
+        </div>
+        {briefingLoading ? (
+          <div className="flex items-center gap-3 py-2">
+            <div className="flex gap-1">
+              <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'0ms'}}/>
+              <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'150ms'}}/>
+              <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'300ms'}}/>
+            </div>
+            <span className="text-xs text-gray-400">AI가 오늘의 업무를 분석하고 있어요...</span>
+          </div>
+        ) : briefing ? (
+          <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{briefing}</div>
+        ) : (
+          <div className="text-sm text-gray-400 py-1">브리핑을 불러오는 중...</div>
         )}
       </div>
 

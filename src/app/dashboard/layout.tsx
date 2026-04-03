@@ -45,6 +45,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [unreadNotice, setUnreadNotice] = useState(0)
   const [pendingInvite, setPendingInvite] = useState(0)
   const [pendingLeave, setPendingLeave] = useState(0)
+  const [showProfilePhoto, setShowProfilePhoto] = useState(false)
   const [chatToast, setChatToast] = useState<{name:string,avatar:string|null,color:string,tc:string,room:string,text:string,roomId:string}|null>(null)
   const [toastTimer, setToastTimer] = useState<any>(null)
 
@@ -351,6 +352,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
             <div className="text-xs text-gray-300 flex-shrink-0">지금</div>
           </div>
+        </div>
+      )}
+      {/* 프로필 사진 확대 모달 */}
+      {showProfilePhoto && profile?.avatar_url && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] cursor-zoom-out"
+          onClick={()=>setShowProfilePhoto(false)}>
+          <img src={profile.avatar_url} alt={profile.name}
+            className="max-w-xs max-h-[80vh] rounded-2xl object-contain shadow-2xl" />
         </div>
       )}
       <style>{`@keyframes slideUpToast{from{transform:translateY(24px);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
