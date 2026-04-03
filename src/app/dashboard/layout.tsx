@@ -107,6 +107,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     router.replace('/login')
   }
 
+  // Service Worker 등록 + 알림 권한 요청
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    // 알림 권한 요청
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission()
+    }
+
+    // Service Worker 등록
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js')
+        .then(reg => console.log('SW registered'))
+        .catch(err => console.log('SW error:', err))
+    }
+  }, [])
+
   // 실시간 채팅 알림 구독
   useEffect(() => {
     if (!profile) return
