@@ -153,8 +153,23 @@ export default function PaySlipPage() {
             </div>
             <div className="text-white text-2xl font-bold">{formatWon(result.netPay)}</div>
           </div>
-          <div className="mt-3 p-3 bg-gray-50 rounded-lg text-xs text-gray-400">
-            📌 연봉 {formatWon(salary?.annual)} ÷ 12 ÷ 209h = {Math.round(result.rate).toLocaleString()}원/h · 부양가족 {salary?.dependents}명
+          {/* 급여 계산식 */}
+          <div className="mt-3 p-4 bg-gray-50 rounded-xl text-xs space-y-1.5">
+            <div className="font-semibold text-gray-600 mb-2">📐 급여 계산 기준</div>
+            <div className="text-gray-500">
+              기본 시간단가: 연봉 {formatWon(salary?.annual)} ÷ 12 ÷ 209h = <span className="font-semibold text-purple-600">{Math.round(result.rate).toLocaleString()}원/h</span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-2 text-gray-400">
+              <div>✅ 평일 정규: 기본단가 × 1.0 (통상임금)</div>
+              <div>✅ 평일 시간외: 기본단가 × <span className="text-blue-600 font-medium">1.5배</span></div>
+              <div>✅ 평일 야간: 기본단가 × <span className="text-red-600 font-medium">2.0배</span></div>
+              <div>✅ 휴일 정규: 기본단가 × <span className="text-teal-600 font-medium">1.5배</span></div>
+              <div>✅ 휴일 시간외: 기본단가 × <span className="text-amber-600 font-medium">2.0배</span></div>
+              <div>✅ 휴일 야간: 기본단가 × <span className="text-rose-600 font-medium">2.5배</span></div>
+            </div>
+            <div className="pt-1.5 border-t border-gray-200 text-gray-400">
+              부양가족 {salary?.dependents}명 기준 간이세액 적용 · 4대보험 공제 포함
+            </div>
           </div>
         </div>
       )}

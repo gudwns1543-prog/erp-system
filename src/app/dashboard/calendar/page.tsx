@@ -258,14 +258,14 @@ export default function CalendarPage() {
                     className={`min-h-[90px] border-b border-r p-1 cursor-pointer transition-colors
                       ${isHol ? 'bg-red-50 border-red-100 hover:bg-red-100'
                         : isSun ? 'bg-rose-50 border-rose-100 hover:bg-rose-100'
-                        : isSat ? 'bg-blue-50 border-blue-100 hover:bg-blue-100'
+                        : isSat ? 'bg-sky-100 border-sky-200 hover:bg-sky-200'
                         : 'bg-white border-gray-100 hover:bg-purple-50'}`}
                     onClick={()=>openCreate(dateStr)}>
                     <div className="flex items-center gap-1 mb-1">
                       <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0
                         ${isToday ? 'bg-purple-600 text-white'
                           : isHol||isSun ? 'text-red-500'
-                          : isSat ? 'text-blue-600'
+                          : isSat ? 'text-sky-600'
                           : 'text-gray-700'}`}>
                         {day}
                       </div>
