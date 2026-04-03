@@ -143,7 +143,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               setToastTimer(t)
               // 브라우저 푸시 알림
               if ('Notification' in window && Notification.permission === 'granted') {
-                new Notification(\`💬 \${room.name} - \${sender.name}\`, {
+                new Notification('💬 ' + room.name + ' - ' + sender.name, {
                   body: msg.content?.substring(0,80) || '파일을 보냈습니다',
                   icon: '/favicon.svg'
                 })
