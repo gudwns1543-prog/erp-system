@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
-import { formatWon } from '@/lib/attendance'
+import { formatWon, sortByGrade } from '@/lib/attendance'
 
 export default function HrmPage() {
   const [staff, setStaff] = useState<any[]>([])
@@ -15,8 +15,8 @@ export default function HrmPage() {
 
   const load = useCallback(async () => {
     const supabase = createClient()
-    const { data: p } = await supabase.from('profiles').select('*').order('join_date')
-    setStaff(p||[])
+    const { data: p } = await supabase.from('profiles').select('*')
+    setStaff(sortByGrade(p||[]))
     const { data: s } = await supabase.from('salary_info').select('*')
     setSalaries(s||[])
   }, [])
@@ -43,14 +43,19 @@ export default function HrmPage() {
       if (url) avatarUrl = url
     }
     const supabase = createClient()
-    await supabase.from('profiles').update({
+    const { error: updateError } = await supabase.from('profiles').update({
       name: editing.name, dept: editing.dept, grade: editing.grade,
       join_date: editing.join_date, email: editing.email, tel: editing.tel,
       role: editing.role, status: editing.status, annual_leave: Number(editing.annual_leave),
       address: editing.address, gender: editing.gender, birth_date: editing.birth_date || null,
       avatar_url: avatarUrl,
     }).eq('id', editing.id)
-    setEditing(null); setAlert('저장되었습니다.'); load(); setTimeout(()=>setAlert(''),3000)
+    if (updateError) {
+      setAlert('저장 실패: ' + updateError.message)
+    } else {
+      setEditing(null); setAlert('저장되었습니다.'); load();
+    }
+    setTimeout(()=>setAlert(''),5000)
   }
 
   async function saveSalary() {

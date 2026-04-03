@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
-import { calcSalary, formatWon } from '@/lib/attendance'
+import { calcSalary, formatWon, sortByGrade } from '@/lib/attendance'
 
 export default function PayrollPage() {
   const [staffList, setStaffList] = useState<any[]>([])
@@ -16,8 +16,8 @@ export default function PayrollPage() {
 
   const load = useCallback(async () => {
     const supabase = createClient()
-    const { data: s } = await supabase.from('profiles').select('id,name,grade').eq('status','active').order('join_date')
-    setStaffList(s||[])
+    const { data: s } = await supabase.from('profiles').select('id,name,grade').eq('status','active')
+    setStaffList(sortByGrade(s||[]))
     const { data: sal } = await supabase.from('salary_info').select('*')
     setSalaryList(sal||[])
   }, [])

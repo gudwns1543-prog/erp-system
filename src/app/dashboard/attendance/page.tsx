@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
-import { isHoliday } from '@/lib/attendance'
+import { isHoliday, sortByGrade } from '@/lib/attendance'
 
 const DAYS = ['일','월','화','수','목','금','토']
 
@@ -20,8 +20,8 @@ export default function AttendancePage() {
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
     if (p?.role === 'director') {
-      const { data: s } = await supabase.from('profiles').select('id,name').eq('status','active')
-      setStaff(s||[])
+      const { data: s } = await supabase.from('profiles').select('id,name,grade').eq('status','active')
+      setStaff(sortByGrade(s||[]))
       if (!selUser) setSelUser(session.user.id)
     }
     const userId = selUser || session.user.id

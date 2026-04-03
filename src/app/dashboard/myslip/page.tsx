@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
-import { calcSalary, formatWon } from '@/lib/attendance'
+import { calcSalary, formatWon, sortByGrade } from '@/lib/attendance'
 
 export default function MySlipPage() {
   const [profile, setProfile] = useState<any>(null)
@@ -24,8 +24,8 @@ export default function MySlipPage() {
     setProfile(p)
     const targetId = (p?.role==='director'&&selStaffId) ? selStaffId : session.user.id
     if (p?.role==='director') {
-      const { data: sl } = await supabase.from('profiles').select('id,name').eq('status','active')
-      setStaffList(sl||[])
+      const { data: sl } = await supabase.from('profiles').select('id,name,grade').eq('status','active')
+      setStaffList(sortByGrade(sl||[]))
       if (!selStaffId && sl?.[0]) setSelStaffId(sl[0].id)
     }
     const { data: sal } = await supabase.from('salary_info').select('*').eq('user_id', targetId).maybeSingle()
