@@ -5,6 +5,9 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
 
 const NAV = [
+  { group: '홈', items: [
+    { href: '/dashboard/home', label: '홈', icon: '🏠' },
+  ]},
   { group: '근태', items: [
     { href: '/dashboard', label: '출퇴근', icon: '⏱' },
     { href: '/dashboard/attendance', label: '근태 기록', icon: '📋' },
