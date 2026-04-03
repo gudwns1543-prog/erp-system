@@ -89,7 +89,7 @@ export default function DashboardPage() {
       check_out: outTime,
       reg_hours: minutesToHours(r.reg), ext_hours: minutesToHours(r.ext),
       night_hours: minutesToHours(r.night), hol_hours: minutesToHours(r.hReg),
-      hol_eve_hours: minutesToHours(r.hEve), hol_night_hours: minutesToHours(r.hNight),
+      hol_eve_hours: minutesToHours(r.hExt), hol_night_hours: minutesToHours(r.hNight),
       ignored_hours: minutesToHours(r.ignored),
     }).eq('user_id', session.user.id).eq('work_date', ds)
     setAlert(`퇴근 완료! 정규 ${minutesToHours(r.reg)}h / 시간외 ${minutesToHours(r.ext)}h`)

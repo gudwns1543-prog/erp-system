@@ -9,6 +9,7 @@ export default function PayrollPage() {
   const [editing, setEditing] = useState<any>(null)
   const [alert, setAlert] = useState('')
   const [selIdx, setSelIdx] = useState(0)
+  const [selYear, setSelYear] = useState(new Date().getFullYear())
   const [month, setMonth] = useState(new Date().getMonth()+1)
   const [work, setWork] = useState({regH:0,extH:0,nightH:0,holH:0,holExtH:0,holNightH:0})
   const [result, setResult] = useState<any>(null)
@@ -25,8 +26,8 @@ export default function PayrollPage() {
 
   async function loadWork(userId: string) {
     const supabase = createClient()
-    const start = `2026-${String(month).padStart(2,'0')}-01`
-    const end   = `2026-${String(month).padStart(2,'0')}-31`
+    const start = `${selYear}-${String(month).padStart(2,'0')}-01`
+    const end   = `${selYear}-${String(month).padStart(2,'0')}-31`
     const { data } = await supabase.from('attendance').select('*')
       .eq('user_id', userId).gte('work_date',start).lte('work_date',end)
     if (data?.length) {
@@ -46,7 +47,7 @@ export default function PayrollPage() {
     if (!staffList[selIdx]) return
     const uid = staffList[selIdx].id
     loadWork(uid)
-  },[selIdx, month, staffList])
+  },[selIdx, month, selYear, staffList])
 
   useEffect(()=>{
     const uid = staffList[selIdx]?.id
@@ -78,6 +79,9 @@ export default function PayrollPage() {
             <div className="flex gap-2 mb-3">
               <select className="input flex-1 text-sm" value={selIdx} onChange={e=>setSelIdx(+e.target.value)}>
                 {staffList.map((s,i)=><option key={s.id} value={i}>{s.name} ({s.grade})</option>)}
+              </select>
+              <select className="input w-24 text-sm" value={selYear} onChange={e=>setSelYear(+e.target.value)}>
+                {Array.from({length:5},(_,i)=><option key={i} value={new Date().getFullYear()-i}>{new Date().getFullYear()-i}년</option>)}
               </select>
               <select className="input w-20 text-sm" value={month} onChange={e=>setMonth(+e.target.value)}>
                 {Array.from({length:12},(_,i)=><option key={i+1} value={i+1}>{i+1}월</option>)}
