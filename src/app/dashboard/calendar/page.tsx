@@ -265,7 +265,7 @@ export default function CalendarPage() {
                       <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0
                         ${isToday ? 'bg-purple-600 text-white'
                           : isHol||isSun ? 'text-red-500'
-                          : isSat ? 'text-blue-500'
+                          : isSat ? 'text-blue-600'
                           : 'text-gray-700'}`}>
                         {day}
                       </div>

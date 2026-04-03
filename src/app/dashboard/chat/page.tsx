@@ -35,7 +35,7 @@ export default function ChatPage() {
     const { data: memberRooms } = await supabase.from('chat_members').select('room_id').eq('user_id', uid)
     if (!memberRooms?.length) { setRooms([]); return }
     const roomIds = memberRooms.map((m:any) => m.room_id)
-    const { data } = await supabase.from('chat_rooms').select('*').in('id', roomIds).order('created_at')
+    const { data } = await supabase.from('chat_rooms').select('*').in('id', roomIds).order('updated_at',{ascending:false})
     const { data: allMembers } = await supabase.from('chat_members')
       .select('room_id, user:user_id(name)').in('room_id', roomIds)
     const roomsWithMembers = (data||[]).map(r => {
@@ -211,7 +211,12 @@ export default function ChatPage() {
           </div>
           <div className="flex-1 overflow-y-auto">
             {rooms.length===0 && <div className="p-4 text-xs text-gray-300 text-center">채팅방이 없습니다</div>}
-            {rooms.map(r => {
+            {[...rooms].sort((a,b)=>{
+              const ua = unreadCounts[a.id]||0
+              const ub = unreadCounts[b.id]||0
+              if (ua!==ub) return ub-ua
+              return 0
+            }).map(r => {
               const unread = unreadCounts[r.id]||0
               return (
                 <div key={r.id} onClick={()=>{setActiveRoom(r);setUnreadCounts(p=>({...p,[r.id]:0}))}}

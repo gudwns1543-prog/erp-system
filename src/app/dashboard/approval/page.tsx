@@ -4,9 +4,10 @@ import { createClient } from '@/lib/supabase'
 
 export default function ApprovalPage() {
   const [profile, setProfile] = useState<any>(null)
+  const [all, setAll] = useState<any[]>([])
   const [inbox, setInbox] = useState<any[]>([])
   const [sent, setSent] = useState<any[]>([])
-  const [tab, setTab] = useState<'inbox'|'sent'>('inbox')
+  const [tab, setTab] = useState<'all'|'inbox'|'sent'>('inbox')
   const [alert, setAlert] = useState('')
   const [showDetail, setShowDetail] = useState<any>(null)
 
@@ -16,17 +17,26 @@ export default function ApprovalPage() {
     if (!session) return
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
-    if (p?.role === 'director') {
-      const { data } = await supabase.from('approvals')
-        .select('*, requester:requester_id(name,dept,color,tc)')
-        .eq('approver_id', session.user.id).eq('status','pending')
-        .order('created_at',{ascending:false})
-      setInbox(data||[])
-    }
+    // 보낸 결재
     const { data: s } = await supabase.from('approvals')
-      .select('*, approver:approver_id(name)')
+      .select('*, requester:requester_id(name,dept,color,tc), approver:approver_id(name)')
       .eq('requester_id', session.user.id).order('created_at',{ascending:false})
     setSent(s||[])
+    if (p?.role === 'director') {
+      // 받은 결재 (대기)
+      const { data: ib } = await supabase.from('approvals')
+        .select('*, requester:requester_id(name,dept,color,tc), approver:approver_id(name)')
+        .eq('approver_id', session.user.id).eq('status','pending').order('created_at',{ascending:false})
+      setInbox(ib||[])
+      // 전체 결재
+      const { data: a } = await supabase.from('approvals')
+        .select('*, requester:requester_id(name,dept,color,tc), approver:approver_id(name)')
+        .order('created_at',{ascending:false})
+      setAll(a||[])
+      setTab('inbox')
+    } else {
+      setTab('sent')
+    }
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -45,89 +55,68 @@ export default function ApprovalPage() {
     </span>
   )
 
+  const ApprovalTable = ({data, showRequester=false}: {data:any[], showRequester?:boolean}) => (
+    <div className="card overflow-x-auto">
+      {data.length===0 ? (
+        <div className="py-12 text-center text-gray-300 text-sm">내역이 없습니다</div>
+      ) : (
+        <table className="w-full text-sm">
+          <thead><tr className="border-b border-gray-100">
+            {[showRequester?'신청자':'', '유형','기간','사유','결재자','상태',''].filter(Boolean).map(h=>(
+              <th key={h} className="pb-2 text-left font-medium text-gray-400 pr-4 text-xs whitespace-nowrap">{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {data.map(r=>(
+              <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50">
+                {showRequester && <td className="py-2 pr-4 font-medium text-sm">{(r.requester as any)?.name}</td>}
+                <td className="py-2 pr-4 text-xs">{r.type}</td>
+                <td className="py-2 pr-4 text-xs whitespace-nowrap">{r.start_date}{r.end_date!==r.start_date?' ~ '+r.end_date:''}</td>
+                <td className="py-2 pr-4 text-xs text-gray-500 max-w-[160px] truncate">{r.reason||'-'}</td>
+                <td className="py-2 pr-4 text-xs">{(r.approver as any)?.name}</td>
+                <td className="py-2 pr-4"><Badge s={r.status} /></td>
+                <td className="py-2">
+                  <div className="flex gap-1">
+                    <button onClick={()=>setShowDetail(r)} className="btn-secondary text-xs px-2 py-1">문서 열기</button>
+                    {profile?.role==='director' && r.status==='pending' && (
+                      <>
+                        <button onClick={()=>handle(r.id,'approved')} className="btn-secondary text-xs px-2 py-1 text-green-700 border-green-200 hover:bg-green-50">승인</button>
+                        <button onClick={()=>handle(r.id,'rejected')} className="btn-danger text-xs px-2 py-1">반려</button>
+                      </>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+
+  const tabs = profile?.role==='director'
+    ? [{key:'inbox',label:'받은 결재',count:inbox.length},{key:'sent',label:'보낸 결재',count:0},{key:'all',label:'전체 결재',count:0}]
+    : [{key:'sent',label:'내 결재 현황',count:0}]
+
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6 max-w-5xl mx-auto">
       <h1 className="text-lg font-semibold text-gray-800 mb-5">결재함</h1>
       {alert && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{alert}</div>}
 
       <div className="flex gap-1 border-b border-gray-200 mb-5">
-        {(['inbox','sent'] as const).map(t=>(
-          <button key={t} onClick={()=>setTab(t)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors relative
-              ${tab===t?'border-purple-600 text-purple-700':'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            {t==='inbox'?'받은 결재':'보낸 결재'}
-            {t==='inbox' && inbox.length>0 && (
-              <span className="ml-1.5 bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{inbox.length}</span>
-            )}
+        {tabs.map(t=>(
+          <button key={t.key} onClick={()=>setTab(t.key as any)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5
+              ${tab===t.key?'border-purple-600 text-purple-700':'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            {t.label}
+            {t.count>0 && <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{t.count}</span>}
           </button>
         ))}
       </div>
 
-      {tab === 'inbox' && (
-        <div className="card overflow-x-auto">
-          {profile?.role !== 'director' ? (
-            <div className="py-12 text-center text-gray-300 text-sm">결재 권한이 없습니다</div>
-          ) : inbox.length === 0 ? (
-            <div className="py-12 text-center text-gray-300 text-sm">대기 중인 결재가 없습니다</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead><tr className="border-b border-gray-100">
-                {['신청자','부서','유형','기간','신청일',''].map(h=>(
-                  <th key={h} className="pb-2 text-left font-medium text-gray-400 pr-4 text-xs">{h}</th>
-                ))}
-              </tr></thead>
-              <tbody>
-                {inbox.map(r=>(
-                  <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50">
-                    <td className="py-2 pr-4 font-medium">{(r.requester as any)?.name}</td>
-                    <td className="py-2 pr-4 text-xs text-gray-500">{(r.requester as any)?.dept}</td>
-                    <td className="py-2 pr-4">{r.type}</td>
-                    <td className="py-2 pr-4 text-xs">{r.start_date}{r.end_date!==r.start_date?' ~ '+r.end_date:''}</td>
-                    <td className="py-2 pr-4 text-xs text-gray-400">{r.created_at?.slice(0,10)}</td>
-                    <td className="py-2">
-                      <div className="flex gap-1">
-                        <button onClick={()=>setShowDetail(r)} className="btn-secondary text-xs px-2 py-1">문서 열기</button>
-                        <button onClick={()=>handle(r.id,'approved')} className="btn-secondary text-xs px-2 py-1 text-green-700 border-green-200 hover:bg-green-50">승인</button>
-                        <button onClick={()=>handle(r.id,'rejected')} className="btn-danger text-xs px-2 py-1">반려</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
-
-      {tab === 'sent' && (
-        <div className="card overflow-x-auto">
-          {sent.length === 0 ? (
-            <div className="py-12 text-center text-gray-300 text-sm">상신 내역이 없습니다</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead><tr className="border-b border-gray-100">
-                {['신청일','유형','기간','결재자','상태',''].map(h=>(
-                  <th key={h} className="pb-2 text-left font-medium text-gray-400 pr-4 text-xs">{h}</th>
-                ))}
-              </tr></thead>
-              <tbody>
-                {sent.map(r=>(
-                  <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50">
-                    <td className="py-2 pr-4 text-xs text-gray-500">{r.created_at?.slice(0,10)}</td>
-                    <td className="py-2 pr-4">{r.type}</td>
-                    <td className="py-2 pr-4 text-xs">{r.start_date}{r.end_date!==r.start_date?' ~ '+r.end_date:''}</td>
-                    <td className="py-2 pr-4 text-xs">{(r.approver as any)?.name}</td>
-                    <td className="py-2 pr-4"><Badge s={r.status} /></td>
-                    <td className="py-2">
-                      <button onClick={()=>setShowDetail(r)} className="btn-secondary text-xs px-2 py-1">문서 열기</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
+      {tab==='inbox' && <ApprovalTable data={inbox} showRequester />}
+      {tab==='sent'  && <ApprovalTable data={sent} />}
+      {tab==='all'   && <ApprovalTable data={all} showRequester />}
 
       {/* 결재 문서 상세 모달 */}
       {showDetail && (
