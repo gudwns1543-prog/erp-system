@@ -13,10 +13,9 @@ export default function PayrollPage() {
   const [workData, setWorkData] = useState<any>(null)
   const [result, setResult] = useState<any>(null)
   // 수기 입력 항목
-  const [bonus, setBonus] = useState(0)        // 상여금
-  const [celebration, setCelebration] = useState(0) // 경조사비
-  const [other, setOther] = useState(0)        // 기타수당
-  const [otherLabel, setOtherLabel] = useState('기타수당')
+  const [bonus, setBonus] = useState(0)
+  const [celebration, setCelebration] = useState(0)
+  const [extraItems, setExtraItems] = useState<{label:string,amount:number}[]>([])
   // 계약연봉 수정
   const [editingAnnual, setEditingAnnual] = useState(false)
   const [newAnnual, setNewAnnual] = useState(0)
@@ -58,7 +57,7 @@ export default function PayrollPage() {
         setWorkData(null)
       }
       // 수기항목 초기화
-      setBonus(0); setCelebration(0); setOther(0); setOtherLabel('기타수당')
+      setBonus(0); setCelebration(0); setExtraItems([])
       setEditingAnnual(false)
     }
     loadWork()
@@ -74,7 +73,7 @@ export default function PayrollPage() {
       ...workData
     })
     // 특별수당 합산 (비과세 처리)
-    const specialTotal = bonus + celebration + other
+    const specialTotal = bonus + celebration + extraItems.reduce((a,x)=>a+(x.amount||0),0)
     setResult({...base, specialTotal,
       finalPay: base.netPay + specialTotal
     })
@@ -161,34 +160,45 @@ export default function PayrollPage() {
                 <div className="text-sm font-semibold text-gray-700">📋 {selYear}년 {month}월 근태 실적</div>
                 <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">읽기 전용</span>
               </div>
-              {!workData ? (
-                <div className="py-4 text-center text-gray-300 text-xs">근태 데이터 없음</div>
-              ) : (
-                <div className="space-y-1.5">
-                  {[
-                    {l:'평일 정규', v:workData.regH, c:'text-purple-600', rate:'×1.0'},
-                    {l:'평일 시간외', v:workData.extH, c:'text-blue-600', rate:'×1.5'},
-                    {l:'평일 야간', v:workData.nightH, c:'text-red-600', rate:'×2.0'},
-                    {l:'휴일 정규', v:workData.holH, c:'text-teal-600', rate:'×1.5'},
-                    {l:'휴일 시간외', v:workData.holExtH, c:'text-amber-600', rate:'×2.0'},
-                    {l:'휴일 야간', v:workData.holNightH, c:'text-rose-600', rate:'×2.5'},
-                  ].map(x=>(
-                    <div key={x.l} className="flex justify-between items-center py-1 border-b border-gray-50 last:border-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-500">{x.l}</span>
-                        <span className={`text-xs font-medium ${x.c}`}>{x.rate}</span>
+              <div className="space-y-1.5">
+                {[
+                  {l:'평일 정규',    key:'regH',     c:'text-purple-600', rate:'×1.0', pct:'통상임금 100%'},
+                  {l:'평일 시간외',  key:'extH',     c:'text-blue-600',   rate:'×1.5', pct:'가산임금 150%'},
+                  {l:'평일 야간',    key:'nightH',   c:'text-red-600',    rate:'×2.0', pct:'야간가산 200%'},
+                  {l:'휴일 정규',    key:'holH',     c:'text-teal-600',   rate:'×1.5', pct:'휴일가산 150%'},
+                  {l:'휴일 시간외',  key:'holExtH',  c:'text-amber-600',  rate:'×2.0', pct:'휴일+가산 200%'},
+                  {l:'휴일 야간',    key:'holNightH',c:'text-rose-600',   rate:'×2.5', pct:'휴일+야간 250%'},
+                ].map(x=>{
+                  const v = workData?.[x.key] || 0
+                  return (
+                    <div key={x.l} className="flex justify-between items-center py-1.5 border-b border-gray-50 last:border-0">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-600 font-medium">{x.l}</span>
+                          <span className={`text-xs ${x.c} font-semibold`}>{x.rate}</span>
+                        </div>
+                        <div className="text-xs text-gray-400">{x.pct}</div>
                       </div>
-                      <span className={`text-sm font-semibold ${x.c}`}>{x.v}h</span>
+                      <div className="text-right">
+                        <span className={`text-sm font-bold ${v>0?x.c:'text-gray-300'}`}>{v}h</span>
+                        {!workData && <div className="text-xs text-gray-300">데이터 없음</div>}
+                      </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  )
+                })}
+                {!workData && (
+                  <div className="mt-2 p-2 bg-gray-50 rounded-lg text-xs text-gray-400 text-center">
+                    해당 월 근태 기록이 없습니다 (수기 입력 항목만 계산됩니다)
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* 수기 입력 항목 */}
             <div className="card">
               <div className="text-sm font-semibold text-gray-700 mb-3">✏️ 수기 입력 항목</div>
-              <div className="space-y-3">
+              <div className="space-y-2.5">
+                {/* 고정 항목 */}
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">상여금 (원)</label>
                   <input type="number" className="input text-sm" value={bonus||0}
@@ -199,19 +209,32 @@ export default function PayrollPage() {
                   <input type="number" className="input text-sm" value={celebration||0}
                     onChange={e=>setCelebration(+e.target.value)} placeholder="0" />
                 </div>
-                <div>
-                  <div className="flex gap-2 mb-1">
-                    <input type="text" className="input text-xs flex-1" value={otherLabel}
-                      onChange={e=>setOtherLabel(e.target.value)} placeholder="항목명" />
-                    <span className="text-xs text-gray-400 self-center">(원)</span>
+                {/* 동적 기타 항목 */}
+                {extraItems.map((item,idx)=>(
+                  <div key={idx} className="flex gap-2 items-start">
+                    <div className="flex-1 space-y-1">
+                      <input type="text" className="input text-xs" value={item.label}
+                        placeholder="항목명 (예: 특별수당)"
+                        onChange={e=>setExtraItems(prev=>prev.map((x,i)=>i===idx?{...x,label:e.target.value}:x))} />
+                      <input type="number" className="input text-sm" value={item.amount||0}
+                        placeholder="금액 (원)"
+                        onChange={e=>setExtraItems(prev=>prev.map((x,i)=>i===idx?{...x,amount:+e.target.value}:x))} />
+                    </div>
+                    <button onClick={()=>setExtraItems(prev=>prev.filter((_,i)=>i!==idx))}
+                      className="mt-1 w-7 h-7 flex items-center justify-center rounded-full bg-red-50 text-red-500 hover:bg-red-100 text-sm flex-shrink-0">
+                      −
+                    </button>
                   </div>
-                  <input type="number" className="input text-sm" value={other||0}
-                    onChange={e=>setOther(+e.target.value)} placeholder="0" />
-                </div>
+                ))}
+                {/* 항목 추가 버튼 */}
+                <button onClick={()=>setExtraItems(prev=>[...prev,{label:'',amount:0}])}
+                  className="w-full py-2 border border-dashed border-gray-200 rounded-lg text-xs text-gray-400 hover:border-purple-300 hover:text-purple-600 transition-colors">
+                  + 항목 추가 (기타수당, 특별수당 등)
+                </button>
               </div>
-              {(bonus+celebration+other) > 0 && (
+              {(bonus+celebration+extraItems.reduce((a,x)=>a+(x.amount||0),0)) > 0 && (
                 <div className="mt-3 p-2 bg-amber-50 rounded-lg text-xs text-amber-700">
-                  수기 입력 합계: {formatWon(bonus+celebration+other)}
+                  수기 합계: {formatWon(bonus+celebration+extraItems.reduce((a,x)=>a+(x.amount||0),0))}
                 </div>
               )}
             </div>
@@ -249,7 +272,7 @@ export default function PayrollPage() {
                     selSalary?.comm>0      && ['통신비 (비과세)', selSalary.comm],
                     bonus>0        && ['상여금', bonus],
                     celebration>0  && ['경조사비', celebration],
-                    other>0        && [otherLabel, other],
+                    ...extraItems.filter(x=>x.amount>0).map(x=>[x.label||'기타수당', x.amount]),
                   ].filter(Boolean).map((item:any,i)=>(
                     <div key={i} className="flex justify-between py-1.5 border-b border-gray-50 text-xs">
                       <span className="text-gray-500">{item[0]}</span>
