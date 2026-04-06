@@ -93,7 +93,7 @@ export default function CalendarPage() {
     const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
     const attEventIds = (myAtt||[]).map((a:any)=>a.event_id)
     const { data: evs } = await supabase.from('events')
-      .select('*, creator:creator_id(name,grade,color,tc)')
+      .select('*, creator:creator_id(name,grade,color,tc,avatar_url)')
       .or(`calendar_type.eq.company,creator_id.eq.${session.user.id}${attEventIds.length?`,id.in.(${attEventIds.join(',')})`:''}`).order('start_at')
     setEvents(evs||[])
     if (typeof window !== 'undefined' && p?.id) {
@@ -164,10 +164,17 @@ export default function CalendarPage() {
         all_day:form.all_day, location:form.location, color:form.color,
         creator_id:profile.id, calendar_type:form.calendar_type,
       }).select().single()
-      if (ev && form.attendeeIds.length) {
-        await supabase.from('event_attendees').insert(
-          form.attendeeIds.map(uid=>({event_id:ev.id, user_id:uid, status:'pending'}))
-        )
+      if (ev) {
+        // 수동 선택 초대 + 카테고리 멤버 자동 초대 합산
+        const cat = categories.find(c=>c.id===form.calendar_type)
+        const catMemberIds: string[] = cat?.members || []
+        const allInviteIds = Array.from(new Set([...form.attendeeIds, ...catMemberIds]))
+          .filter(uid => uid !== profile.id)
+        if (allInviteIds.length) {
+          await supabase.from('event_attendees').insert(
+            allInviteIds.map(uid=>({event_id:ev.id, user_id:uid, status:'pending'}))
+          )
+        }
       }
     }
     setShowForm(false); setEditMode(false); setEditingEventId(null); setShowDetail(null); resetForm(); load()
@@ -268,48 +275,90 @@ export default function CalendarPage() {
       {tab==='settings' && (
         <div className="card">
           <div className="text-sm font-semibold text-gray-800 mb-4">📁 저장 위치 관리</div>
-          <div className="space-y-2 mb-5">
-            {categories.map(cat=>(
-              <div key={cat.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
-                <span className="text-lg w-8 text-center flex-shrink-0">{cat.icon}</span>
-                {editingCat===cat.id ? (
-                  <div className="flex-1 flex flex-wrap items-center gap-2">
-                    <input className="input text-sm w-36" value={cat.name}
-                      onChange={e=>updateCategory(cat.id,'name',e.target.value)} />
-                    <select className="input text-sm w-auto" value={cat.scope}
-                      onChange={e=>updateCategory(cat.id,'scope',e.target.value)}>
-                      <option value="personal">개인 (나만 보기)</option>
-                      <option value="company">공유 (전직원 공개)</option>
-                    </select>
-                    <div className="flex gap-1 flex-wrap">
-                      {CAT_ICONS.map(ic=>(
-                        <button key={ic} onClick={()=>updateCategory(cat.id,'icon',ic)}
-                          className={`w-7 h-7 rounded-lg text-sm border transition-all
-                            ${cat.icon===ic?'border-purple-500 bg-purple-50':'border-transparent hover:border-gray-300'}`}>
-                          {ic}
-                        </button>
-                      ))}
+          <div className="space-y-3 mb-5">
+            {categories.map(cat=>{
+              const catMembers: string[] = cat.members || []
+              return (
+                <div key={cat.id} className="border border-gray-100 rounded-xl overflow-hidden">
+                  {/* 카테고리 헤더 */}
+                  <div className="flex items-center gap-3 p-3 bg-gray-50">
+                    <span className="text-lg w-8 text-center flex-shrink-0">{cat.icon}</span>
+                    {editingCat===cat.id ? (
+                      <div className="flex-1 flex flex-wrap items-center gap-2">
+                        <input className="input text-sm w-36" value={cat.name}
+                          onChange={e=>updateCategory(cat.id,'name',e.target.value)} />
+                        <select className="input text-sm w-auto" value={cat.scope}
+                          onChange={e=>updateCategory(cat.id,'scope',e.target.value)}>
+                          <option value="personal">개인 (나만 보기)</option>
+                          <option value="company">공유 (전직원 공개)</option>
+                        </select>
+                        <div className="flex gap-1 flex-wrap">
+                          {CAT_ICONS.map(ic=>(
+                            <button key={ic} onClick={()=>updateCategory(cat.id,'icon',ic)}
+                              className={`w-7 h-7 rounded-lg text-sm border transition-all
+                                ${cat.icon===ic?'border-purple-500 bg-purple-50':'border-transparent hover:border-gray-300'}`}>
+                              {ic}
+                            </button>
+                          ))}
+                        </div>
+                        <button onClick={()=>setEditingCat(null)} className="btn-primary text-xs px-3 py-1.5">완료</button>
+                      </div>
+                    ) : (
+                      <div className="flex-1 flex items-center gap-2">
+                        <span className="text-sm font-medium text-gray-800">{cat.name}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0
+                          ${cat.scope==='company'?'bg-blue-50 text-blue-600':'bg-purple-50 text-purple-600'}`}>
+                          {cat.scope==='company'?'전직원 공개':'개인'}
+                        </span>
+                        {catMembers.length > 0 && (
+                          <span className="text-xs text-gray-400">멤버 {catMembers.length}명</span>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex gap-1.5 flex-shrink-0">
+                      <button onClick={()=>setEditingCat(editingCat===cat.id?null:cat.id)}
+                        className="btn-secondary text-xs px-2 py-1">수정</button>
+                      {!['personal','company'].includes(cat.id) && (
+                        <button onClick={()=>deleteCategory(cat.id)} className="btn-danger text-xs px-2 py-1">삭제</button>
+                      )}
                     </div>
-                    <button onClick={()=>setEditingCat(null)} className="btn-primary text-xs px-3 py-1.5">완료</button>
                   </div>
-                ) : (
-                  <div className="flex-1 flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-800">{cat.name}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0
-                      ${cat.scope==='company'?'bg-blue-50 text-blue-600':'bg-purple-50 text-purple-600'}`}>
-                      {cat.scope==='company'?'전직원 공개':'개인'}
-                    </span>
-                  </div>
-                )}
-                <div className="flex gap-1.5 flex-shrink-0">
-                  <button onClick={()=>setEditingCat(editingCat===cat.id?null:cat.id)}
-                    className="btn-secondary text-xs px-2 py-1">수정</button>
-                  {!['personal','company'].includes(cat.id) && (
-                    <button onClick={()=>deleteCategory(cat.id)} className="btn-danger text-xs px-2 py-1">삭제</button>
+
+                  {/* 멤버 지정 (개인 카테고리이거나 팀 카테고리일 때) */}
+                  {cat.id !== 'personal' && (
+                    <div className="p-3 border-t border-gray-100 bg-white">
+                      <div className="text-xs font-medium text-gray-500 mb-2">
+                        👥 소속 멤버 지정
+                        <span className="text-gray-300 font-normal ml-1">(일정 등록 시 자동 초대됩니다)</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {allUsers.map(u=>{
+                          const isMember = catMembers.includes(u.id)
+                          return (
+                            <button key={u.id}
+                              onClick={()=>{
+                                const newMembers = isMember
+                                  ? catMembers.filter(id=>id!==u.id)
+                                  : [...catMembers, u.id]
+                                updateCategory(cat.id, 'members', newMembers as any)
+                              }}
+                              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border transition-all
+                                ${isMember?'bg-purple-50 border-purple-300 text-purple-700':'bg-white border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                              <div className="w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                                style={{background:u.color||'#EEEDFE',color:u.tc||'#3C3489',fontSize:'9px'}}>
+                                {u.name?.[0]}
+                              </div>
+                              {u.name}
+                              {isMember && <span className="text-purple-400">✓</span>}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
                   )}
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
           <div className="border-t border-gray-100 pt-4">
             <div className="text-xs font-semibold text-gray-500 mb-3">+ 새 저장 위치 추가</div>
@@ -344,7 +393,8 @@ export default function CalendarPage() {
           </div>
           <div className="mt-4 p-3 bg-amber-50 rounded-xl border border-amber-100">
             <div className="text-xs text-amber-700">
-              💡 <strong>내 일정</strong>과 <strong>솔루션 공유일정</strong>은 기본 카테고리로 삭제할 수 없습니다. 팀별 일정(예: 개발팀, 영업팀)을 추가해서 사용하세요.
+              💡 <strong>내 일정</strong>과 <strong>솔루션 공유일정</strong>은 기본 카테고리로 삭제할 수 없습니다.
+              팀별 일정(예: 개발팀, 영업팀)을 추가하고 소속 멤버를 지정하면 일정 등록 시 자동으로 초대됩니다.
             </div>
           </div>
         </div>

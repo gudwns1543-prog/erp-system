@@ -57,37 +57,40 @@ export default function ChatPage() {
   }, [])
 
   const loadMessages = useCallback(async (roomId: string) => {
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+
     const { data } = await supabase.from('chat_messages')
       .select('*, sender:sender_id(name,color,tc,avatar_url)').eq('room_id', roomId).order('created_at')
     const msgs = data || []
     setMessages(msgs)
+
     const { data: mems } = await supabase.from('chat_members')
       .select('*, user:user_id(id,name,color,tc,avatar_url)').eq('room_id', roomId)
     setMembers(mems||[])
-    const { data: { session } } = await supabase.auth.getSession()
+
+    // 본인 읽음 시간 먼저 upsert
     if (session) {
       await supabase.from('chat_reads').upsert(
         {room_id:roomId, user_id:session.user.id, last_read_at:new Date().toISOString()},
         {onConflict:'room_id,user_id'}
       )
     }
-    // 메시지 로드 완료 후 읽음 데이터 로드 (최신 msgs 직접 전달)
-    const supabase2 = createClient()
-    const { data: roomMembers } = await supabase2.from('chat_members')
-      .select('*, user:user_id(id,name,color,tc,avatar_url)').eq('room_id', roomId)
-    const { data: reads } = await supabase2.from('chat_reads')
+
+    // upsert 완료 후 같은 클라이언트로 전체 reads 재조회 (본인 포함)
+    const { data: reads } = await supabase.from('chat_reads')
       .select('user_id, last_read_at').eq('room_id', roomId)
+
     const receipts: Record<string,{readers:any[], nonReaders:any[]}> = {}
     for (const msg of msgs) {
       if (msg.is_system) continue
       const readers: any[] = []
       const nonReaders: any[] = []
       const msgTime = new Date(msg.created_at).getTime()
-      for (const mem of (roomMembers||[])) {
+      for (const mem of (mems||[])) {
         const u = mem.user as any
-        if (!u || u.id === msg.sender_id) continue
+        if (!u || u.id === msg.sender_id) continue  // 발신자 제외
         const read = reads?.find((r:any) => r.user_id === u.id)
-        // new Date()로 변환해서 ms 단위 비교 - 타임존 문자열 비교 오류 방지
         const readTime = read ? new Date(read.last_read_at).getTime() : 0
         if (readTime >= msgTime) {
           readers.push(u)
@@ -109,6 +112,8 @@ export default function ChatPage() {
     loadMessages(activeRoom.id)
     const ch = supabase.channel(`room:${activeRoom.id}`)
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_messages',filter:`room_id=eq.${activeRoom.id}`},
+        () => { loadMessages(activeRoom.id) })
+      .on('postgres_changes',{event:'UPSERT',schema:'public',table:'chat_reads',filter:`room_id=eq.${activeRoom.id}`},
         () => { loadMessages(activeRoom.id) })
       .subscribe()
     return () => { supabase.removeChannel(ch) }
