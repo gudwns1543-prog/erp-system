@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
-import { isHoliday, sortByGrade } from '@/lib/attendance'
+import { isHoliday, sortByGrade, classifyWork, minutesToHours } from '@/lib/attendance'
 
 const DAYS = ['일','월','화','수','목','금','토']
 
@@ -32,42 +32,57 @@ export default function AttendancePage() {
       .gte('work_date',start).lte('work_date',end)
       .order('work_date', {ascending: true})
       .order('check_in', {ascending: true})
-    // 날짜별 세션 합산 - 모든 세션 누적 (10초 근무도 포함)
+    // 날짜별 세션 합산 - 첫 출근 ~ 마지막 퇴근 기준으로 계산
     const dateMap: Record<string,any> = {}
     ;(recs||[]).forEach((r:any)=>{
       const ds = r.work_date
-      if (!ds) return
-      // check_in 없는 레코드는 스킵
-      if (!r.check_in) return
+      if (!ds || !r.check_in) return
       if (!dateMap[ds]) {
         dateMap[ds] = {
           ...r,
           _firstCheckIn: r.check_in,
           _lastCheckOut: r.check_out || null,
-          _sessionCount: 1
+          _sessionCount: 1,
+          _allCheckIns: [r.check_in],
+          _allCheckOuts: r.check_out ? [r.check_out] : [],
         }
       } else {
-        // 모든 시간 누적 합산
-        dateMap[ds].reg_hours       = (dateMap[ds].reg_hours||0)       + (r.reg_hours||0)
-        dateMap[ds].ext_hours       = (dateMap[ds].ext_hours||0)       + (r.ext_hours||0)
-        dateMap[ds].night_hours     = (dateMap[ds].night_hours||0)     + (r.night_hours||0)
-        dateMap[ds].hol_hours       = (dateMap[ds].hol_hours||0)       + (r.hol_hours||0)
-        dateMap[ds].hol_eve_hours   = (dateMap[ds].hol_eve_hours||0)   + (r.hol_eve_hours||0)
-        dateMap[ds].hol_night_hours = (dateMap[ds].hol_night_hours||0) + (r.hol_night_hours||0)
-        dateMap[ds].ignored_hours   = (dateMap[ds].ignored_hours||0)   + (r.ignored_hours||0)
-        // 마지막 퇴근: check_out 있는 최신 세션
-        if (r.check_out) dateMap[ds]._lastCheckOut = r.check_out
-        // 아직 퇴근 안 한 세션이면 null 유지
+        // 첫 출근은 가장 이른 시간
+        if (r.check_in < dateMap[ds]._firstCheckIn) {
+          dateMap[ds]._firstCheckIn = r.check_in
+        }
+        // 마지막 퇴근은 가장 늦은 시간
+        if (r.check_out) {
+          if (!dateMap[ds]._lastCheckOut || r.check_out > dateMap[ds]._lastCheckOut) {
+            dateMap[ds]._lastCheckOut = r.check_out
+          }
+        }
+        // check_out 없는 세션이 있으면 아직 근무중
         if (!r.check_out) dateMap[ds]._lastCheckOut = null
         dateMap[ds]._sessionCount = (dateMap[ds]._sessionCount||1) + 1
       }
     })
-    // check_in / check_out 을 첫출근/마지막퇴근으로 정리
-    const merged = Object.values(dateMap).map((d:any) => ({
-      ...d,
-      check_in:  d._firstCheckIn  || null,
-      check_out: d._lastCheckOut  || null,
-    }))
+    // 첫출근 ~ 마지막퇴근으로 시간 재계산
+    const merged = Object.values(dateMap).map((d:any) => {
+      const ci = d._firstCheckIn
+      const co = d._lastCheckOut
+      if (ci && co) {
+        const r = classifyWork(d.work_date, ci, co)
+        return {
+          ...d,
+          check_in: ci,
+          check_out: co,
+          reg_hours: minutesToHours(r.reg),
+          ext_hours: minutesToHours(r.ext),
+          night_hours: minutesToHours(r.night),
+          hol_hours: minutesToHours(r.hReg),
+          hol_eve_hours: minutesToHours(r.hEve),
+          hol_night_hours: minutesToHours(r.hNight),
+          ignored_hours: minutesToHours(r.ignored),
+        }
+      }
+      return { ...d, check_in: ci, check_out: co }
+    })
     setRecords(merged)
   }, [selUser, selMonth, selYear])
 
