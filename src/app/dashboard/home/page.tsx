@@ -29,7 +29,7 @@ export default function HomePage() {
 
   function nowStr() {
     const n = new Date()
-    return String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0')
+    return String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0')+':'+String(n.getSeconds()).padStart(2,'0')
   }
 
   async function handleCheckIn() {
@@ -410,7 +410,10 @@ export default function HomePage() {
             <button onClick={nextMonth} className="btn-secondary px-2 py-1 text-xs">›</button>
             <button onClick={()=>{setCalYear(new Date().getFullYear());setCalMonth(new Date().getMonth())}}
               className="btn-secondary px-2 py-1 text-xs text-purple-600 ml-1">오늘</button>
-            <button onClick={()=>router.push('/dashboard/calendar')}
+            <button onClick={()=>{
+                if (profile?.id) localStorage.setItem(`cal_checked_${profile.id}`, new Date().toISOString())
+                router.push('/dashboard/calendar')
+              }}
               className="text-xs text-purple-600 hover:text-purple-800 ml-2">전체 →</button>
           </div>
         </div>
@@ -434,7 +437,10 @@ export default function HomePage() {
             const isSun = dow===0; const isSat = dow===6
             return (
               <div key={day}
-                onClick={()=>router.push('/dashboard/calendar')}
+                onClick={()=>{
+                  if (profile?.id) localStorage.setItem(`cal_checked_${profile.id}`, new Date().toISOString())
+                  router.push('/dashboard/calendar')
+                }}
                 className={`min-h-[80px] border border-gray-100 p-1 cursor-pointer transition-colors
                   ${isSat?'bg-blue-50/60':isHol||isSun?'bg-red-50':'bg-white'}
                   hover:bg-purple-50/40`}>
@@ -443,13 +449,24 @@ export default function HomePage() {
                   {day}
                 </div>
                 {dayEvs.slice(0,3).map((ev:any)=>{
-                  const isNew = ev.created_at && (new Date().getTime() - new Date(ev.created_at).getTime()) < 3*24*60*60*1000
+                  // 마지막으로 캘린더를 확인한 시간 이후 생성/수정된 일정 = NEW
+                  const lastChecked = typeof window !== 'undefined'
+                    ? localStorage.getItem(`cal_checked_${profile?.id}`) || '2000-01-01'
+                    : '2000-01-01'
+                  const evTime = ev.updated_at || ev.created_at
+                  const isNew = evTime && new Date(evTime).getTime() > new Date(lastChecked).getTime()
+                    && ev.creator_id !== profile?.id // 내가 만든 건 NEW 표시 안 함
                   return (
                     <div key={ev.id}
                       className="text-white rounded px-1 mb-0.5 flex items-center gap-0.5"
                       style={{background:ev.color||'#534AB7',fontSize:'10px',lineHeight:'16px'}}>
                       <span className="truncate flex-1">{ev.title}</span>
-                      {isNew && <span className="flex-shrink-0 bg-white/30 rounded px-0.5" style={{fontSize:'8px'}}>NEW</span>}
+                      {isNew && (
+                        <span className="flex-shrink-0 rounded px-0.5 font-bold"
+                          style={{fontSize:'8px',background:'#ef4444',color:'#facc15',border:'1px solid #dc2626'}}>
+                          NEW
+                        </span>
+                      )}
                     </div>
                   )
                 })}

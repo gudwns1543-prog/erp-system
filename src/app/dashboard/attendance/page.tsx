@@ -31,14 +31,15 @@ export default function AttendancePage() {
       .select('*').eq('user_id', userId)
       .gte('work_date',start).lte('work_date',end)
       .order('work_date', {ascending: true})
-      .order('session_seq', {ascending: true})
-    // 날짜별 세션 합산 - 첫 출근/마지막 퇴근 정확하게 유지
+      .order('check_in', {ascending: true})
+    // 날짜별 세션 합산 - 모든 세션 누적 (10초 근무도 포함)
     const dateMap: Record<string,any> = {}
     ;(recs||[]).forEach((r:any)=>{
       const ds = r.work_date
       if (!ds) return
+      // check_in 없는 레코드는 스킵
+      if (!r.check_in) return
       if (!dateMap[ds]) {
-        // 첫 세션: check_in은 첫 번째 값 고정
         dateMap[ds] = {
           ...r,
           _firstCheckIn: r.check_in,
@@ -46,7 +47,7 @@ export default function AttendancePage() {
           _sessionCount: 1
         }
       } else {
-        // 시간 합산
+        // 모든 시간 누적 합산
         dateMap[ds].reg_hours       = (dateMap[ds].reg_hours||0)       + (r.reg_hours||0)
         dateMap[ds].ext_hours       = (dateMap[ds].ext_hours||0)       + (r.ext_hours||0)
         dateMap[ds].night_hours     = (dateMap[ds].night_hours||0)     + (r.night_hours||0)
@@ -54,9 +55,9 @@ export default function AttendancePage() {
         dateMap[ds].hol_eve_hours   = (dateMap[ds].hol_eve_hours||0)   + (r.hol_eve_hours||0)
         dateMap[ds].hol_night_hours = (dateMap[ds].hol_night_hours||0) + (r.hol_night_hours||0)
         dateMap[ds].ignored_hours   = (dateMap[ds].ignored_hours||0)   + (r.ignored_hours||0)
-        // 마지막 퇴근 시간: check_out이 있는 가장 마지막 세션
+        // 마지막 퇴근: check_out 있는 최신 세션
         if (r.check_out) dateMap[ds]._lastCheckOut = r.check_out
-        // 현재 근무중인 세션(check_out 없음)이면 마지막 퇴근 null 유지
+        // 아직 퇴근 안 한 세션이면 null 유지
         if (!r.check_out) dateMap[ds]._lastCheckOut = null
         dateMap[ds]._sessionCount = (dateMap[ds]._sessionCount||1) + 1
       }

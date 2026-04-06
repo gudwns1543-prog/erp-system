@@ -11,11 +11,13 @@ export function isHoliday(dateStr: string): boolean {
   return d.getDay() === 0 || d.getDay() === 6 || HOLIDAYS_2026.includes(dateStr)
 }
 
+// HH:MM 또는 HH:MM:SS → 초 단위로 변환
 function parseTime(t: string): number {
-  const [h, m] = t.split(':').map(Number)
-  return h * 60 + m
+  const parts = t.split(':').map(Number)
+  return parts[0] * 3600 + parts[1] * 60 + (parts[2] || 0)
 }
 
+// 초 단위로 겹치는 시간 계산 (기존과 동일한 구조, 단위만 초로)
 function overlap(s1: number, e1: number, s2: number, e2: number): number {
   return Math.max(0, Math.min(e1, e2) - Math.max(s1, s2))
 }
@@ -24,52 +26,63 @@ export interface WorkResult {
   isHoliday: boolean
   ignored: number
   total: number
-  reg: number    // 평일 정규 09~18
-  ext: number    // 평일 시간외 19~22
-  night: number  // 평일 야간 22~익일07
-  hReg: number   // 휴일 정규 09~18
-  hEve: number   // 휴일 시간외 19~22
-  hNight: number // 휴일 야간 22~익일07
+  reg: number
+  ext: number
+  night: number
+  hReg: number
+  hEve: number
+  hNight: number
 }
 
 export function classifyWork(dateStr: string, inTime: string, outTime: string): WorkResult {
   const hol = isHoliday(dateStr)
-  let inM = parseTime(inTime)
-  let outM = parseTime(outTime)
+  let inS = parseTime(inTime)    // 초 단위
+  let outS = parseTime(outTime)  // 초 단위
 
-  // 버그수정: 같은시간=0, 작을때만 다음날
-  if (outM < inM) outM += 1440
-  if (outM === inM) {
+  if (outS < inS) outS += 86400  // 다음날로 넘어간 경우
+  if (outS === inS) {
     return { isHoliday: hol, ignored:0, total:0, reg:0, ext:0, night:0, hReg:0, hEve:0, hNight:0 }
   }
 
-  const ignored = overlap(inM, outM, 420, 540)
-  const lunch   = overlap(inM, outM, 720, 780)
-  const dinner  = overlap(inM, outM, 1080, 1140)
-  const total   = Math.max(0, outM - inM - ignored - lunch - dinner)
+  // 시간대 경계값 (초 단위로 변환: 기존 분×60)
+  // 미인정: 07:00(25200초) ~ 09:00(32400초)
+  // 점심: 12:00(43200초) ~ 13:00(46800초)
+  // 저녁: 18:00(64800초) ~ 19:00(68400초)
+  // 정규: 09:00(32400초) ~ 18:00(64800초)
+  // 시간외: 19:00(68400초) ~ 22:00(79200초)
+  // 야간: 22:00(79200초) ~ 익일07:00(111600초)
+
+  const ignored = overlap(inS, outS, 25200, 32400)   // 07~09 미인정
+  const lunch   = overlap(inS, outS, 43200, 46800)   // 12~13 점심
+  const dinner  = overlap(inS, outS, 64800, 68400)   // 18~19 저녁
+
+  const total = Math.max(0, outS - inS - ignored - lunch - dinner)
 
   if (!hol) {
     return {
       isHoliday: false, ignored, total,
-      reg:   Math.max(0, overlap(inM, outM, 540, 1080) - lunch),
-      ext:   overlap(inM, outM, 1140, 1320),
-      night: overlap(inM, outM, 1320, 1860),
+      reg:   Math.max(0, overlap(inS, outS, 32400, 64800) - lunch),
+      ext:   overlap(inS, outS, 68400, 79200),
+      night: overlap(inS, outS, 79200, 111600),
       hReg: 0, hEve: 0, hNight: 0,
     }
   } else {
     return {
       isHoliday: true, ignored, total,
       reg: 0, ext: 0, night: 0,
-      hReg:  Math.max(0, overlap(inM, outM, 540, 1080) - lunch),
-      hEve:  Math.max(0, overlap(inM, outM, 1140, 1320) - dinner),
-      hNight: overlap(inM, outM, 1320, 1860),
+      hReg:  Math.max(0, overlap(inS, outS, 32400, 64800) - lunch),
+      hEve:  Math.max(0, overlap(inS, outS, 68400, 79200) - dinner),
+      hNight: overlap(inS, outS, 79200, 111600),
     }
   }
 }
 
-export function minutesToHours(minutes: number): number {
-  if (minutes <= 0) return 0
-  return Math.round(minutes / 6) / 10
+// 초 → 시간(소수점 1자리), 최소 단위 1분(60초)
+export function minutesToHours(seconds: number): number {
+  if (seconds <= 0) return 0
+  // 1분 미만도 1분으로 올림 처리 (10초 근무도 기록)
+  const effectiveSecs = Math.max(seconds, 60)
+  return Math.round(effectiveSecs / 360) / 10
 }
 
 // 연차 계산 (입사일 기준, 1년차 15일, 매년 자동부여)
