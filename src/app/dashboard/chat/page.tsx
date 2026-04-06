@@ -82,11 +82,14 @@ export default function ChatPage() {
       if (msg.is_system) continue
       const readers: any[] = []
       const nonReaders: any[] = []
+      const msgTime = new Date(msg.created_at).getTime()
       for (const mem of (roomMembers||[])) {
         const u = mem.user as any
         if (!u || u.id === msg.sender_id) continue
         const read = reads?.find((r:any) => r.user_id === u.id)
-        if (read && read.last_read_at >= msg.created_at) {
+        // new Date()로 변환해서 ms 단위 비교 - 타임존 문자열 비교 오류 방지
+        const readTime = read ? new Date(read.last_read_at).getTime() : 0
+        if (readTime >= msgTime) {
           readers.push(u)
         } else {
           nonReaders.push(u)
@@ -312,8 +315,7 @@ export default function ChatPage() {
                 <button onClick={deleteRoom} className="btn-danger text-xs px-2 py-1">삭제</button>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2.5"
-              onClick={()=>setShowReadReceipt(null)}>
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2.5">
               {messages.map(m => {
                 const isMe = m.sender_id === profile?.id
                 if (m.is_system) return <div key={m.id} className="text-center text-xs text-gray-300 py-1">{m.content}</div>
@@ -357,42 +359,51 @@ export default function ChatPage() {
                       </div>
                       {/* 읽음 표시 - 모든 메시지 */}
                       {totalMembers > 0 && (
-                        <div className="relative cursor-pointer"
-                          onClick={()=>setShowReadReceipt(showReadReceipt===m.id?null:m.id)}>
-                          {readCount >= totalMembers ? (
-                            <span className="text-xs text-purple-400 font-medium">읽음</span>
-                          ) : readCount === 0 ? (
-                            <span className="text-xs text-gray-300">안읽음</span>
-                          ) : (
-                            <span className="text-xs text-gray-400">{readCount}/{totalMembers}</span>
-                          )}
+                        <div className="relative">
+                          <button
+                            className="text-xs cursor-pointer hover:opacity-70 transition-opacity"
+                            onClick={e=>{
+                              e.stopPropagation()
+                              setShowReadReceipt(prev => prev===m.id ? null : m.id)
+                            }}>
+                            {readCount >= totalMembers ? (
+                              <span className="text-purple-400 font-medium">읽음</span>
+                            ) : readCount === 0 ? (
+                              <span className="text-gray-300">안읽음</span>
+                            ) : (
+                              <span className="text-gray-400">{readCount}/{totalMembers}</span>
+                            )}
+                          </button>
                           {/* 읽음/안읽음 팝업 */}
                           {showReadReceipt===m.id && (
-                            <div className={`absolute bottom-6 ${isMe?'right-0':'left-0'} bg-white border border-gray-100 rounded-xl shadow-xl p-3 z-50 min-w-[150px]`}
-                              onClick={e=>e.stopPropagation()}>
-                              {readers.length > 0 && (
-                                <div className="mb-2">
-                                  <div className="text-xs font-semibold text-purple-500 mb-1.5">✅ 읽음 ({readers.length}명)</div>
-                                  {readers.map((u:any)=>(
-                                    <div key={u?.id} className="flex items-center gap-1.5 py-0.5">
-                                      <Avatar u={u} size={4} />
-                                      <span className="text-xs text-gray-700">{u?.name}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                              {nonReaders.length > 0 && (
-                                <div className={readers.length>0?'border-t border-gray-50 pt-2':''}>
-                                  <div className="text-xs font-semibold text-gray-400 mb-1.5">⏳ 안읽음 ({nonReaders.length}명)</div>
-                                  {nonReaders.map((u:any)=>(
-                                    <div key={u?.id} className="flex items-center gap-1.5 py-0.5">
-                                      <Avatar u={u} size={4} />
-                                      <span className="text-xs text-gray-400">{u?.name}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
+                            <>
+                              {/* 바깥 클릭 시 닫기 오버레이 */}
+                              <div className="fixed inset-0 z-40" onClick={()=>setShowReadReceipt(null)} />
+                              <div className={`absolute bottom-7 ${isMe?'right-0':'left-0'} bg-white border border-gray-200 rounded-xl shadow-2xl p-3 z-50 min-w-[160px]`}>
+                                {readers.length > 0 && (
+                                  <div className={nonReaders.length>0?'mb-2 pb-2 border-b border-gray-100':''}>
+                                    <div className="text-xs font-semibold text-purple-500 mb-1.5">✅ 읽음 ({readers.length}명)</div>
+                                    {readers.map((u:any)=>(
+                                      <div key={u?.id} className="flex items-center gap-1.5 py-0.5">
+                                        <Avatar u={u} size={4} />
+                                        <span className="text-xs text-gray-700">{u?.name}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {nonReaders.length > 0 && (
+                                  <div>
+                                    <div className="text-xs font-semibold text-gray-400 mb-1.5">⏳ 안읽음 ({nonReaders.length}명)</div>
+                                    {nonReaders.map((u:any)=>(
+                                      <div key={u?.id} className="flex items-center gap-1.5 py-0.5">
+                                        <Avatar u={u} size={4} />
+                                        <span className="text-xs text-gray-400">{u?.name}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </>
                           )}
                         </div>
                       )}
