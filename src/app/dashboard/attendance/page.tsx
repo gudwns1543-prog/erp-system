@@ -27,11 +27,12 @@ export default function AttendancePage() {
     const userId = selUser || session.user.id
     const start = `${selYear}-${String(selMonth).padStart(2,'0')}-01`
     const end   = `${selYear}-${String(selMonth).padStart(2,'0')}-31`
-    const { data: recs } = await supabase.from('attendance')
+    const { data: recs, error: recsError } = await supabase.from('attendance')
       .select('*').eq('user_id', userId)
       .gte('work_date',start).lte('work_date',end)
       .order('work_date', {ascending: true})
       .order('check_in', {ascending: true})
+    console.log('근태 쿼리 결과:', { userId, start, end, count: recs?.length, error: recsError })
     // 날짜별 세션 합산 - 첫 출근 ~ 마지막 퇴근 기준으로 계산
     const dateMap: Record<string,any> = {}
     ;(recs||[]).forEach((r:any)=>{

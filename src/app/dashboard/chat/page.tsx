@@ -152,14 +152,8 @@ export default function ChatPage() {
       setMembers(mems)
       prevMsgCount.current = msgs.length
 
-      // ★ 채팅방을 직접 클릭해서 열었을 때만 읽음 처리
-      if (isUserLooking()) {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session) {
-          await markRoomAsRead(activeRoomId, session.user.id)
-          setUnreadCounts(prev => ({...prev, [activeRoomId]: 0}))
-        }
-      }
+      // ★ 읽음 처리는 messagesEndRef가 실제로 화면에 보일 때만 (아래 observer에서 처리)
+      // 여기서는 읽음 계산만
       const receipts = await computeReceipts(activeRoomId, msgs, mems)
       setReadReceipts(receipts)
     })()
@@ -235,7 +229,7 @@ export default function ChatPage() {
     return () => { supabase.removeChannel(ch) }
   }, [activeRoomId])
 
-  // ── ★ 탭/창 포커스 복귀 시 읽음 처리 ───────────────────────
+  // ── 탭/창 포커스 복귀 시 읽음 처리 ───────────────────────
   useEffect(() => {
     if (!activeRoomId) return
     async function onFocus() {
@@ -244,7 +238,6 @@ export default function ChatPage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
       await markRoomAsRead(roomId, session.user.id)
-      // 레이아웃 뱃지도 갱신
       await recomputeUnreadForRoom(roomId, session.user.id)
     }
     document.addEventListener('visibilitychange', onFocus)
@@ -253,6 +246,29 @@ export default function ChatPage() {
       document.removeEventListener('visibilitychange', onFocus)
       window.removeEventListener('focus', onFocus)
     }
+  }, [activeRoomId])
+
+  // ── ★ 핵심: 메시지 영역이 실제로 보일 때만 읽음 처리 ─────────
+  const msgAreaRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!activeRoomId || !msgAreaRef.current) return
+    const el = msgAreaRef.current
+    const observer = new IntersectionObserver(
+      async (entries) => {
+        const entry = entries[0]
+        if (entry.isIntersecting && document.visibilityState === 'visible') {
+          const roomId = activeRoomIdRef.current
+          if (!roomId) return
+          const { data: { session } } = await supabase.auth.getSession()
+          if (!session) return
+          await markRoomAsRead(roomId, session.user.id)
+          setUnreadCounts(prev => ({...prev, [roomId]: 0}))
+        }
+      },
+      { threshold: 0.3 }
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
   }, [activeRoomId])
 
   // ── 다른 방 알림 구독 ────────────────────────────────────────
@@ -433,7 +449,7 @@ export default function ChatPage() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2.5">
+            <div ref={msgAreaRef} className="flex-1 overflow-y-auto p-4 flex flex-col gap-2.5">
               {messages.map(m => {
                 const isMe = m.sender_id === profile?.id
                 if (m.is_system) return <div key={m.id} className="text-center text-xs text-gray-300 py-1">{m.content}</div>
