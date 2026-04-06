@@ -56,40 +56,19 @@ export default function ChatPage() {
     setUnreadCounts(counts)
   }, [])
 
-  const loadMessages = useCallback(async (roomId: string) => {
+  const loadReadReceipts = useCallback(async (roomId: string, msgs: any[], mems: any[]) => {
     const supabase = createClient()
-    const { data: { session } } = await supabase.auth.getSession()
-
-    const { data } = await supabase.from('chat_messages')
-      .select('*, sender:sender_id(name,color,tc,avatar_url)').eq('room_id', roomId).order('created_at')
-    const msgs = data || []
-    setMessages(msgs)
-
-    const { data: mems } = await supabase.from('chat_members')
-      .select('*, user:user_id(id,name,color,tc,avatar_url)').eq('room_id', roomId)
-    setMembers(mems||[])
-
-    // 본인 읽음 시간 먼저 upsert
-    if (session) {
-      await supabase.from('chat_reads').upsert(
-        {room_id:roomId, user_id:session.user.id, last_read_at:new Date().toISOString()},
-        {onConflict:'room_id,user_id'}
-      )
-    }
-
-    // upsert 완료 후 같은 클라이언트로 전체 reads 재조회 (본인 포함)
     const { data: reads } = await supabase.from('chat_reads')
       .select('user_id, last_read_at').eq('room_id', roomId)
-
     const receipts: Record<string,{readers:any[], nonReaders:any[]}> = {}
     for (const msg of msgs) {
       if (msg.is_system) continue
       const readers: any[] = []
       const nonReaders: any[] = []
       const msgTime = new Date(msg.created_at).getTime()
-      for (const mem of (mems||[])) {
+      for (const mem of mems) {
         const u = mem.user as any
-        if (!u || u.id === msg.sender_id) continue  // 발신자 제외
+        if (!u || u.id === msg.sender_id) continue
         const read = reads?.find((r:any) => r.user_id === u.id)
         const readTime = read ? new Date(read.last_read_at).getTime() : 0
         if (readTime >= msgTime) {
@@ -103,6 +82,31 @@ export default function ChatPage() {
     setReadReceipts(receipts)
   }, [])
 
+  const loadMessages = useCallback(async (roomId: string) => {
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+
+    const { data } = await supabase.from('chat_messages')
+      .select('*, sender:sender_id(name,color,tc,avatar_url)').eq('room_id', roomId).order('created_at')
+    const msgs = data || []
+    setMessages(msgs)
+
+    const { data: mems } = await supabase.from('chat_members')
+      .select('*, user:user_id(id,name,color,tc,avatar_url)').eq('room_id', roomId)
+    setMembers(mems||[])
+
+    // 본인 읽음 upsert (이건 Realtime 이벤트를 발생시키지만 아래 구독에서 무시함)
+    if (session) {
+      await supabase.from('chat_reads').upsert(
+        {room_id:roomId, user_id:session.user.id, last_read_at:new Date().toISOString()},
+        {onConflict:'room_id,user_id'}
+      )
+    }
+
+    // 읽음 계산은 분리된 함수로
+    await loadReadReceipts(roomId, msgs, mems||[])
+  }, [loadReadReceipts])
+
   useEffect(() => {
     loadProfile().then(uid => { if (uid) loadRooms(uid) })
   }, [loadProfile, loadRooms])
@@ -114,12 +118,27 @@ export default function ChatPage() {
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_messages',filter:`room_id=eq.${activeRoom.id}`},
         () => { loadMessages(activeRoom.id) })
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_reads',filter:`room_id=eq.${activeRoom.id}`},
-        () => { loadMessages(activeRoom.id) })
+        async () => {
+          // 읽음 계산만 - 메시지 리로드 없음 (무한루프 방지)
+          const supabase2 = createClient()
+          const { data: msgs } = await supabase2.from('chat_messages')
+            .select('id,created_at,sender_id,is_system').eq('room_id', activeRoom.id).order('created_at')
+          const { data: mems } = await supabase2.from('chat_members')
+            .select('*, user:user_id(id,name,color,tc,avatar_url)').eq('room_id', activeRoom.id)
+          if (msgs && mems) loadReadReceipts(activeRoom.id, msgs, mems)
+        })
       .on('postgres_changes',{event:'UPDATE',schema:'public',table:'chat_reads',filter:`room_id=eq.${activeRoom.id}`},
-        () => { loadMessages(activeRoom.id) })
+        async () => {
+          const supabase2 = createClient()
+          const { data: msgs } = await supabase2.from('chat_messages')
+            .select('id,created_at,sender_id,is_system').eq('room_id', activeRoom.id).order('created_at')
+          const { data: mems } = await supabase2.from('chat_members')
+            .select('*, user:user_id(id,name,color,tc,avatar_url)').eq('room_id', activeRoom.id)
+          if (msgs && mems) loadReadReceipts(activeRoom.id, msgs, mems)
+        })
       .subscribe()
     return () => { supabase.removeChannel(ch) }
-  }, [activeRoom, loadMessages])
+  }, [activeRoom, loadMessages, loadReadReceipts])
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({behavior:'smooth'}) }, [messages])
 
