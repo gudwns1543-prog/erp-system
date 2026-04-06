@@ -34,9 +34,14 @@ export default function HomePage() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
     const ds = todayStr()
-    await supabase.from('attendance').upsert({
-      user_id: session.user.id, work_date: ds, check_in: nowStr(), is_holiday: isHoliday(ds),
-    }, { onConflict: 'user_id,work_date' })
+    // 오늘 세션 조회해서 다음 번호 계산
+    const { data: todaySessions } = await supabase.from('attendance')
+      .select('id').eq('user_id', session.user.id).eq('work_date', ds)
+    const nextSeq = (todaySessions?.length || 0) + 1
+    await supabase.from('attendance').insert({
+      user_id: session.user.id, work_date: ds,
+      check_in: nowStr(), is_holiday: isHoliday(ds), session_seq: nextSeq,
+    })
     load()
   }
 
@@ -47,26 +52,25 @@ export default function HomePage() {
     if (!session) return
     const outTime = nowStr(); const ds = todayStr()
     const r = classifyWork(ds, today.check_in, outTime)
-    await supabase.from('attendance').update({
-      check_out: outTime,
-      reg_hours: minutesToHours(r.reg), ext_hours: minutesToHours(r.ext),
-      night_hours: minutesToHours(r.night), hol_hours: minutesToHours(r.hReg),
-      hol_eve_hours: minutesToHours(r.hEve), hol_night_hours: minutesToHours(r.hNight),
-      ignored_hours: minutesToHours(r.ignored),
-    }).eq('user_id', session.user.id).eq('work_date', ds)
+    // check_out이 없는 가장 최근 세션 업데이트
+    const { data: openSessions } = await supabase.from('attendance')
+      .select('id').eq('user_id', session.user.id).eq('work_date', ds).is('check_out', null)
+      .order('session_seq', {ascending: false}).limit(1)
+    if (openSessions?.[0]) {
+      await supabase.from('attendance').update({
+        check_out: outTime,
+        reg_hours: minutesToHours(r.reg), ext_hours: minutesToHours(r.ext),
+        night_hours: minutesToHours(r.night), hol_hours: minutesToHours(r.hReg),
+        hol_eve_hours: minutesToHours(r.hEve), hol_night_hours: minutesToHours(r.hNight),
+        ignored_hours: minutesToHours(r.ignored),
+      }).eq('id', openSessions[0].id)
+    }
     load()
   }
 
   async function handleResumeWork() {
-    const supabase = createClient()
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
-    const ds = todayStr()
-    await supabase.from('attendance').update({
-      check_in: nowStr(), check_out: null,
-      reg_hours:0, ext_hours:0, night_hours:0,
-    }).eq('user_id', session.user.id).eq('work_date', ds)
-    load()
+    // 퇴근 후 복귀 = 새 세션 추가 (출근과 동일)
+    handleCheckIn()
   }
 
   const load = useCallback(async () => {
@@ -142,9 +146,11 @@ export default function HomePage() {
 
       // 이번달 근태 요약
       const thisMonth = todayDate.getMonth() + 1
+      const lastMonthDate = new Date(todayDate); lastMonthDate.setMonth(lastMonthDate.getMonth()-1)
       const monthStart = todayDate.getFullYear() + '-' + String(thisMonth).padStart(2,'0') + '-01'
+      const lastMonthStart = lastMonthDate.getFullYear() + '-' + String(lastMonthDate.getMonth()+1).padStart(2,'0') + '-01'
       const { data: monthAtts } = await supabase.from('attendance')
-        .select('reg_hours,ext_hours,night_hours,hol_hours').eq('user_id', session.user.id).gte('work_date', monthStart).lte('work_date', today)
+        .select('reg_hours,ext_hours,night_hours,hol_hours,work_date').eq('user_id', session.user.id).gte('work_date', monthStart).lte('work_date', today)
       const monthReg = (monthAtts||[]).reduce((a: number, r: any) => a + (r.reg_hours||0), 0)
       const monthExt = (monthAtts||[]).reduce((a: number, r: any) => a + (r.ext_hours||0) + (r.night_hours||0) + (r.hol_hours||0), 0)
       const workDays = (monthAtts||[]).filter((r: any) => r.reg_hours > 0).length
@@ -177,7 +183,7 @@ export default function HomePage() {
         eventsQuery = eventsQuery.eq('creator_id', session.user.id)
       }
       const { data: events } = await eventsQuery
-      const eventList = (events||[]).slice(0,5).map((e: any) =>
+      const eventList = (events||[]).slice(0,10).map((e: any) =>
         e.start_at.slice(5,10).replace('-','/') + ' ' + e.start_at.slice(11,16) + ' ' + e.title + (e.location ? ' @ ' + e.location : '')
       )
 
@@ -235,16 +241,18 @@ export default function HomePage() {
       // AI에게 보낼 최종 데이터
       const briefData = {
         날짜: (todayDate.getMonth()+1) + '월 ' + todayDate.getDate() + '일 ' + days[todayDate.getDay()] + '요일',
-        직원: (p?.name||'') + ' ' + (p?.grade||'') + ' / ' + (p?.dept||''),
-        출퇴근: attendStatus,
-        이번달근태: workDays + '일 출근 / 정규 ' + monthReg + 'h / 초과 ' + monthExt + 'h',
-        잔여연차: remainLeave + '일 (사용 ' + usedLeave + '일)',
-        급여일: paydayMsg,
-        다가오는일정: eventList.length ? eventList : ['없음'],
-        대기결재: approvalList.length ? approvalList : ['없음'],
+        직원정보: (p?.name||'') + ' ' + (p?.grade||'') + ' / ' + (p?.dept||''),
+        오늘출퇴근: attendStatus,
+        이번달근태: thisMonth + '월 ' + workDays + '일 출근 / 정규 ' + monthReg + 'h / 초과 ' + monthExt + 'h',
+        잔여연차: remainLeave + '일 (사용 ' + usedLeave + '일 / 기본 ' + (p?.annual_leave||0) + '일)',
+        급여일안내: paydayMsg,
+        향후30일일정: eventList.length ? eventList : ['등록된 일정 없음'],
+        결재현황: approvalList.length ? approvalList : ['대기중인 결재 없음'],
         미읽음공지: (noticeCount||0) + '건',
-        팀원생일입사기념: anniversaries.length ? anniversaries : undefined,
-        팀원출근현황: teamStatus || undefined,
+        특이사항: [
+          ...(anniversaries.length ? anniversaries : []),
+          ...(teamStatus ? [teamStatus] : []),
+        ].filter(Boolean),
       }
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -253,7 +261,7 @@ export default function HomePage() {
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 600,
-          system: '당신은 회사 ERP 시스템의 친근한 AI 어시스턴트입니다. 주어진 업무 데이터를 분석해서 오늘의 업무 브리핑을 작성해주세요. 규칙: 1) 인사말 없이 바로 핵심 내용 2) 이모지로 가독성 높이기 3) 중요한 것 먼저 (급한 결재, 오늘 일정 등) 4) 5줄 이내로 간결하게 5) 없는 항목은 언급 안함 6) 마지막 줄에 짧은 응원 멘트',
+          system: '당신은 회사 ERP 시스템의 친근한 AI 어시스턴트입니다. 주어진 업무 데이터를 분석해서 오늘의 업무 브리핑을 작성해주세요. 규칙: 1) 인사말 없이 바로 핵심 내용으로 시작 2) 이모지 적극 활용 3) 우선순위 순서 (오늘 일정 → 급한 결재 → 연차/급여 → 팀원 소식) 4) 향후 30일 일정 중 가장 중요한 것 3개 언급 5) 7줄 이내로 간결하게 6) 없는 항목은 언급하지 말 것 7) 마지막 줄에 짧은 응원 멘트',
           messages: [{ role: 'user', content: '업무 데이터:\n' + JSON.stringify(briefData, null, 2) }]
         })
       })
