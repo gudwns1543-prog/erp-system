@@ -87,14 +87,26 @@ export default function ChatPage() {
     const { data: memberRooms } = await supabase.from('chat_members').select('room_id').eq('user_id', uid)
     if (!memberRooms?.length) { setRooms([]); return }
     const roomIds = memberRooms.map((m:any) => m.room_id)
-    const { data } = await supabase.from('chat_rooms').select('*').in('id', roomIds).order('created_at',{ascending:false})
+    const { data } = await supabase.from('chat_rooms').select('*').in('id', roomIds)
     const { data: allMems } = await supabase.from('chat_members')
       .select('room_id, user:user_id(name)').in('room_id', roomIds)
+
+    // 각 방의 마지막 메시지 시간 조회 (정렬용)
+    const lastMsgTimes: Record<string,string> = {}
+    for (const room of (data||[])) {
+      const { data: lastMsg } = await supabase.from('chat_messages')
+        .select('created_at').eq('room_id', room.id)
+        .order('created_at', {ascending:false}).limit(1).maybeSingle()
+      lastMsgTimes[room.id] = lastMsg?.created_at || room.created_at
+    }
+
     setRooms((data||[]).map(r => ({
       ...r,
       _members: (allMems||[]).filter((m:any)=>m.room_id===r.id)
-        .map((m:any)=>(m.user as any)?.name).filter(Boolean).join(', ')
+        .map((m:any)=>(m.user as any)?.name).filter(Boolean).join(', '),
+      _lastMsgAt: lastMsgTimes[r.id] || r.created_at,
     })))
+
     // 미읽음 카운트 계산
     const { data: reads } = await supabase.from('chat_reads').select('*').eq('user_id', uid)
     const counts: Record<string,number> = {}
@@ -151,6 +163,8 @@ export default function ChatPage() {
       setMessages(msgs)
       setMembers(mems)
       prevMsgCount.current = msgs.length
+      // 채팅방 진입 시 무조건 최신 메시지로 스크롤
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'auto' }), 50)
 
       // ★ 읽음 처리는 messagesEndRef가 실제로 화면에 보일 때만 (아래 observer에서 처리)
       // 여기서는 읽음 계산만
@@ -284,6 +298,10 @@ export default function ChatPage() {
           const room = rooms.find(r => r.id === msg.room_id)
           if (!room) return
           setUnreadCounts(prev => ({...prev, [msg.room_id]: (prev[msg.room_id]||0)+1}))
+          // 해당 방의 마지막 메시지 시간 갱신 → 정렬 반영
+          setRooms(prev => prev.map(r =>
+            r.id === msg.room_id ? {...r, _lastMsgAt: msg.created_at} : r
+          ))
           const { data: sender } = await supabase.from('profiles').select('name').eq('id', msg.sender_id).single()
           setToast({ room: room.name, sender: sender?.name||'누군가', text: msg.content?.substring(0,40)||'파일을 보냈습니다' })
           setTimeout(() => setToast(null), 4000)
@@ -372,8 +390,19 @@ export default function ChatPage() {
   }
 
   async function deleteRoom() {
-    if (!activeRoomId || !confirm(`"${activeRoom?.name}" 을 삭제하시겠습니까?`)) return
-    await supabase.from('chat_rooms').delete().eq('id',activeRoomId)
+    if (!activeRoomId || !activeRoom) return
+    // 방장(creator)만 삭제 가능
+    if (activeRoom.created_by !== profile?.id) {
+      alert('채팅방을 만든 사람만 삭제할 수 있습니다.')
+      return
+    }
+    if (!confirm(`"${activeRoom.name}" 을 삭제하시겠습니까?\n모든 대화 내용이 삭제됩니다.`)) return
+    // 삭제 전 시스템 메시지
+    await supabase.from('chat_messages').insert({
+      room_id: activeRoomId, sender_id: profile.id,
+      content: `${profile.name}님이 채팅방을 삭제했습니다.`, is_system: true
+    })
+    await supabase.from('chat_rooms').delete().eq('id', activeRoomId)
     setActiveRoomId(null); setActiveRoom(null); loadRooms(profile?.id)
   }
 
@@ -406,8 +435,11 @@ export default function ChatPage() {
           <div className="flex-1 overflow-y-auto">
             {rooms.length===0 && <div className="p-4 text-xs text-gray-300 text-center">채팅방이 없습니다</div>}
             {[...rooms].sort((a,b)=>{
+              // 최신 메시지 순 정렬 (안읽음 있는 방 우선, 그 다음 최신 메시지 순)
               const ua=unreadCounts[a.id]||0, ub=unreadCounts[b.id]||0
-              return ua!==ub ? ub-ua : 0
+              if (ua>0 && ub===0) return -1
+              if (ub>0 && ua===0) return 1
+              return (b._lastMsgAt||b.created_at).localeCompare(a._lastMsgAt||a.created_at)
             }).map(r => {
               const unread = unreadCounts[r.id]||0
               return (
@@ -445,7 +477,9 @@ export default function ChatPage() {
               <div className="flex gap-1.5">
                 <button onClick={()=>{setShowInvite(true);setSelectedUsers([])}} className="btn-secondary text-xs px-2 py-1">+ 초대</button>
                 <button onClick={leaveRoom} className="btn-secondary text-xs px-2 py-1">나가기</button>
-                <button onClick={deleteRoom} className="btn-danger text-xs px-2 py-1">삭제</button>
+                {activeRoom?.created_by === profile?.id && (
+                  <button onClick={deleteRoom} className="btn-danger text-xs px-2 py-1">삭제</button>
+                )}
               </div>
             </div>
 
