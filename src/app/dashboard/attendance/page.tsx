@@ -31,11 +31,15 @@ export default function AttendancePage() {
       .select('*').eq('user_id', userId)
       .gte('work_date',start).lte('work_date',end)
       .order('work_date', {ascending: true})
-      .order('check_in', {ascending: true})
     console.log('근태 쿼리 결과:', { userId, start, end, count: recs?.length, error: recsError })
+    // check_in 기준으로 JS에서 정렬 (time 타입은 DB order 미지원)
+    const sortedRecs = (recs||[]).sort((a:any, b:any) => {
+      if (a.work_date !== b.work_date) return a.work_date.localeCompare(b.work_date)
+      return (a.check_in||'').localeCompare(b.check_in||'')
+    })
     // 날짜별 세션 합산 - 첫 출근 ~ 마지막 퇴근 기준으로 계산
     const dateMap: Record<string,any> = {}
-    ;(recs||[]).forEach((r:any)=>{
+    ;(sortedRecs).forEach((r:any)=>{
       const ds = r.work_date
       if (!ds || !r.check_in) return
       if (!dateMap[ds]) {
