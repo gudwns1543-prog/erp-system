@@ -59,7 +59,8 @@ export default function ChatPage() {
   const loadMessages = useCallback(async (roomId: string) => {
     const { data } = await supabase.from('chat_messages')
       .select('*, sender:sender_id(name,color,tc,avatar_url)').eq('room_id', roomId).order('created_at')
-    setMessages(data||[])
+    const msgs = data || []
+    setMessages(msgs)
     const { data: mems } = await supabase.from('chat_members')
       .select('*, user:user_id(id,name,color,tc,avatar_url)').eq('room_id', roomId)
     setMembers(mems||[])
@@ -70,6 +71,30 @@ export default function ChatPage() {
         {onConflict:'room_id,user_id'}
       )
     }
+    // 메시지 로드 완료 후 읽음 데이터 로드 (최신 msgs 직접 전달)
+    const supabase2 = createClient()
+    const { data: roomMembers } = await supabase2.from('chat_members')
+      .select('*, user:user_id(id,name,color,tc,avatar_url)').eq('room_id', roomId)
+    const { data: reads } = await supabase2.from('chat_reads')
+      .select('user_id, last_read_at').eq('room_id', roomId)
+    const receipts: Record<string,{readers:any[], nonReaders:any[]}> = {}
+    for (const msg of msgs) {
+      if (msg.is_system) continue
+      const readers: any[] = []
+      const nonReaders: any[] = []
+      for (const mem of (roomMembers||[])) {
+        const u = mem.user as any
+        if (!u || u.id === msg.sender_id) continue
+        const read = reads?.find((r:any) => r.user_id === u.id)
+        if (read && read.last_read_at >= msg.created_at) {
+          readers.push(u)
+        } else {
+          nonReaders.push(u)
+        }
+      }
+      receipts[msg.id] = { readers, nonReaders }
+    }
+    setReadReceipts(receipts)
   }, [])
 
   useEffect(() => {
@@ -79,10 +104,9 @@ export default function ChatPage() {
   useEffect(() => {
     if (!activeRoom) return
     loadMessages(activeRoom.id)
-    loadReadReceipts(activeRoom.id)
     const ch = supabase.channel(`room:${activeRoom.id}`)
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_messages',filter:`room_id=eq.${activeRoom.id}`},
-        () => { loadMessages(activeRoom.id); setTimeout(()=>loadReadReceipts(activeRoom.id),800) })
+        () => { loadMessages(activeRoom.id) })
       .subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [activeRoom, loadMessages])
@@ -124,20 +148,35 @@ export default function ChatPage() {
     return () => { supabase.removeChannel(ch) }
   }, [profile, activeRoom, rooms, loadMessages])
 
-  const [showReadReceipt, setShowReadReceipt] = useState<string|null>(null) // message id
-  const [readReceipts, setReadReceipts] = useState<Record<string,any[]>>({}) // msgId -> [{name,avatar,...}]
+  const [showReadReceipt, setShowReadReceipt] = useState<string|null>(null)
+  const [readReceipts, setReadReceipts] = useState<Record<string,{readers:any[], nonReaders:any[]}>>({})
 
-  async function loadReadReceipts(roomId: string) {
+  async function loadReadReceipts(roomId: string, currentMessages: any[]) {
     const supabase2 = createClient()
-    const { data: reads } = await supabase2.from('chat_reads')
+    // 채팅방 전체 멤버
+    const { data: roomMembers } = await supabase2.from('chat_members')
       .select('*, user:user_id(id,name,color,tc,avatar_url)').eq('room_id', roomId)
-    // 각 메시지별로 누가 읽었는지: last_read_at이 메시지 created_at보다 최신이면 읽은 것
-    const receipts: Record<string,any[]> = {}
-    for (const msg of messages) {
+    // 각 멤버의 마지막 읽은 시간
+    const { data: reads } = await supabase2.from('chat_reads')
+      .select('user_id, last_read_at').eq('room_id', roomId)
+
+    const receipts: Record<string,{readers:any[], nonReaders:any[]}> = {}
+    for (const msg of currentMessages) {
       if (msg.is_system) continue
-      receipts[msg.id] = (reads||[]).filter((r:any) =>
-        r.user_id !== msg.sender_id && r.last_read_at >= msg.created_at
-      ).map((r:any) => r.user)
+      const readers: any[] = []
+      const nonReaders: any[] = []
+      for (const mem of (roomMembers||[])) {
+        const u = mem.user as any
+        if (!u || u.id === msg.sender_id) continue // 발신자 제외
+        const read = reads?.find((r:any) => r.user_id === u.id)
+        // last_read_at이 메시지 created_at보다 같거나 이후면 읽은 것
+        if (read && read.last_read_at >= msg.created_at) {
+          readers.push(u)
+        } else {
+          nonReaders.push(u)
+        }
+      }
+      receipts[msg.id] = { readers, nonReaders }
     }
     setReadReceipts(receipts)
   }
@@ -148,7 +187,6 @@ export default function ChatPage() {
       room_id: activeRoom.id, sender_id: profile.id, content: input.trim()
     })
     setInput('')
-    setTimeout(() => loadReadReceipts(activeRoom.id), 500)
   }
 
   async function handleFileUpload(file: File) {
@@ -274,13 +312,15 @@ export default function ChatPage() {
                 <button onClick={deleteRoom} className="btn-danger text-xs px-2 py-1">삭제</button>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2.5">
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2.5"
+              onClick={()=>setShowReadReceipt(null)}>
               {messages.map(m => {
                 const isMe = m.sender_id === profile?.id
                 if (m.is_system) return <div key={m.id} className="text-center text-xs text-gray-300 py-1">{m.content}</div>
                 const s = m.sender as any
-                const readers = readReceipts[m.id] || []
-                const totalMembers = members.length - 1 // 본인 제외
+                const receipt = readReceipts[m.id] || { readers: [], nonReaders: [] }
+                const { readers, nonReaders } = receipt
+                const totalMembers = readers.length + nonReaders.length
                 const readCount = readers.length
                 return (
                   <div key={m.id} className={`flex flex-col ${isMe?'items-end self-end':'items-start self-start'} max-w-[70%]`}>
@@ -315,26 +355,43 @@ export default function ChatPage() {
                       <div className="text-xs text-gray-300">
                         {new Date(m.created_at).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}
                       </div>
-                      {/* 읽음 표시 - 본인 메시지에만 */}
-                      {isMe && totalMembers > 0 && (
-                        <div
-                          className="relative group cursor-pointer"
+                      {/* 읽음 표시 - 모든 메시지 */}
+                      {totalMembers > 0 && (
+                        <div className="relative cursor-pointer"
                           onClick={()=>setShowReadReceipt(showReadReceipt===m.id?null:m.id)}>
                           {readCount >= totalMembers ? (
                             <span className="text-xs text-purple-400 font-medium">읽음</span>
+                          ) : readCount === 0 ? (
+                            <span className="text-xs text-gray-300">안읽음</span>
                           ) : (
-                            <span className="text-xs text-gray-300">{readCount}/{totalMembers}</span>
+                            <span className="text-xs text-gray-400">{readCount}/{totalMembers}</span>
                           )}
-                          {/* 읽은 사람 툴팁 */}
-                          {showReadReceipt===m.id && readers.length > 0 && (
-                            <div className="absolute bottom-5 right-0 bg-white border border-gray-100 rounded-xl shadow-xl p-2 z-50 min-w-[120px]">
-                              <div className="text-xs font-semibold text-gray-500 mb-1.5 px-1">읽은 사람 ({readCount}명)</div>
-                              {readers.map((u:any)=>(
-                                <div key={u?.id} className="flex items-center gap-1.5 px-1 py-0.5">
-                                  <Avatar u={u} size={4} />
-                                  <span className="text-xs text-gray-700">{u?.name}</span>
+                          {/* 읽음/안읽음 팝업 */}
+                          {showReadReceipt===m.id && (
+                            <div className={`absolute bottom-6 ${isMe?'right-0':'left-0'} bg-white border border-gray-100 rounded-xl shadow-xl p-3 z-50 min-w-[150px]`}
+                              onClick={e=>e.stopPropagation()}>
+                              {readers.length > 0 && (
+                                <div className="mb-2">
+                                  <div className="text-xs font-semibold text-purple-500 mb-1.5">✅ 읽음 ({readers.length}명)</div>
+                                  {readers.map((u:any)=>(
+                                    <div key={u?.id} className="flex items-center gap-1.5 py-0.5">
+                                      <Avatar u={u} size={4} />
+                                      <span className="text-xs text-gray-700">{u?.name}</span>
+                                    </div>
+                                  ))}
                                 </div>
-                              ))}
+                              )}
+                              {nonReaders.length > 0 && (
+                                <div className={readers.length>0?'border-t border-gray-50 pt-2':''}>
+                                  <div className="text-xs font-semibold text-gray-400 mb-1.5">⏳ 안읽음 ({nonReaders.length}명)</div>
+                                  {nonReaders.map((u:any)=>(
+                                    <div key={u?.id} className="flex items-center gap-1.5 py-0.5">
+                                      <Avatar u={u} size={4} />
+                                      <span className="text-xs text-gray-400">{u?.name}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
