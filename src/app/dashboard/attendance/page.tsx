@@ -29,7 +29,7 @@ export default function AttendancePage() {
     const end   = `${selYear}-${String(selMonth).padStart(2,'0')}-31`
     const { data: recs } = await supabase.from('attendance')
       .select('*').eq('user_id', userId)
-      .gte('work_date',start).lte('work_date',end).order('work_date').order('session_seq')
+      .gte('work_date',start).lte('work_date',end).order('work_date').order('session_seq', {nullsFirst: true})
     // 날짜별 세션 합산
     const dateMap: Record<string,any> = {}
     ;(recs||[]).forEach((r:any)=>{
@@ -65,7 +65,7 @@ export default function AttendancePage() {
     if (d.getMonth()+1!==selMonth) return null
     const dow = d.getDay()
     const rec = records.find(r=>r.work_date===ds)
-    if (!rec && (isHoliday(ds)||dow===0||dow===6)) return null
+    if (!rec && (isHoliday(ds)||dow===0||dow===6)) return null  // 주말/공휴일은 기록없으면 숨김
     return { ds, dow, rec: rec||null }
   }).filter(Boolean)
 
