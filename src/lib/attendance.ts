@@ -80,9 +80,9 @@ export function classifyWork(dateStr: string, inTime: string, outTime: string): 
 // 초 → 시간(소수점 1자리), 최소 단위 1분(60초)
 export function minutesToHours(seconds: number): number {
   if (seconds <= 0) return 0
-  // 1분 미만도 1분으로 올림 처리 (10초 근무도 기록)
   const effectiveSecs = Math.max(seconds, 60)
-  return Math.round(effectiveSecs / 360) / 10
+  // toFixed로 부동소수점 오류 방지
+  return parseFloat((Math.round(effectiveSecs / 360) / 10).toFixed(1))
 }
 
 // 연차 계산 (입사일 기준, 1년차 15일, 매년 자동부여)

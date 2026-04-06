@@ -473,6 +473,13 @@ export default function ChatPage() {
                 <div className="text-xs text-gray-400">
                   {members.map(m=>(m.user as any)?.name).filter(Boolean).join(', ')} · {members.length}명
                 </div>
+                {/* 방장 표시 */}
+                <div className="text-xs text-purple-400 mt-0.5">
+                  👑 방장: {members.find(m=>(m.user as any)?.id===activeRoom?.created_by) 
+                    ? (members.find(m=>(m.user as any)?.id===activeRoom?.created_by)?.user as any)?.name 
+                    : '알 수 없음'}
+                  {activeRoom?.created_by === profile?.id && ' (나)'}
+                </div>
               </div>
               <div className="flex gap-1.5">
                 <button onClick={()=>{setShowInvite(true);setSelectedUsers([])}} className="btn-secondary text-xs px-2 py-1">+ 초대</button>

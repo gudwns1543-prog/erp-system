@@ -37,13 +37,9 @@ export default function HomePage() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
     const ds = todayStr()
-    // 오늘 세션 조회해서 다음 번호 계산
-    const { data: todaySessions } = await supabase.from('attendance')
-      .select('id').eq('user_id', session.user.id).eq('work_date', ds)
-    const nextSeq = (todaySessions?.length || 0) + 1
     await supabase.from('attendance').insert({
       user_id: session.user.id, work_date: ds,
-      check_in: nowStr(), is_holiday: isHoliday(ds), session_seq: nextSeq,
+      check_in: nowStr(), is_holiday: isHoliday(ds),
     })
     load()
   }
@@ -55,10 +51,10 @@ export default function HomePage() {
     if (!session) return
     const outTime = nowStr(); const ds = todayStr()
     const r = classifyWork(ds, today.check_in, outTime)
-    // check_out이 없는 가장 최근 세션 업데이트
+    // check_out이 없는 가장 최근 세션 업데이트 (created_at 기준)
     const { data: openSessions } = await supabase.from('attendance')
       .select('id').eq('user_id', session.user.id).eq('work_date', ds).is('check_out', null)
-      .order('session_seq', {ascending: false}).limit(1)
+      .order('created_at', {ascending: false}).limit(1)
     if (openSessions?.[0]) {
       await supabase.from('attendance').update({
         check_out: outTime,
@@ -84,7 +80,7 @@ export default function HomePage() {
     setProfile(p)
     const { data: todaySess } = await supabase.from('attendance')
       .select('*').eq('user_id', session.user.id).eq('work_date', todayStr())
-      .order('session_seq')
+      .order('created_at', {ascending: true})
     // 활성 세션(미퇴근) 또는 가장 최근 세션
     const activeS = (todaySess||[]).find((s:any) => s.check_in && !s.check_out)
     const lastS = (todaySess||[]).slice(-1)[0]
@@ -115,8 +111,15 @@ export default function HomePage() {
       setPendingApprovals(apps||[])
       const { data: allStaff } = await supabase.from('profiles').select('id,name,dept,color,tc,avatar_url').eq('status','active').neq('id', session.user.id)
       const { data: todayAtts } = await supabase.from('attendance').select('user_id,check_in,check_out').eq('work_date', todayStr())
+      // user_id 중복 제거 - 각 직원의 가장 최근 세션만 사용
+      const attMap: Record<string,any> = {}
+      ;(todayAtts||[]).forEach((a:any) => {
+        if (!attMap[a.user_id] || (a.check_in > (attMap[a.user_id].check_in||''))) {
+          attMap[a.user_id] = a
+        }
+      })
       setTeamStatus((allStaff||[]).map((s:any)=>{
-        const att = (todayAtts||[]).find((a:any)=>a.user_id===s.id)
+        const att = attMap[s.id]
         return { ...s, checkIn: att?.check_in, status: att?.check_out?'done':att?.check_in?'working':'absent' }
       }).slice(0,5))
     }

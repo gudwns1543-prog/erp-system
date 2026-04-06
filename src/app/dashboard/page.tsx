@@ -5,7 +5,7 @@ import { classifyWork, minutesToHours, isHoliday } from '@/lib/attendance'
 
 function nowStr() {
   const n = new Date()
-  return String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0')
+  return String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0')+':'+String(n.getSeconds()).padStart(2,'0')
 }
 function todayStr() {
   const d = new Date()
@@ -32,7 +32,7 @@ export default function DashboardPage() {
     // 오늘 세션 전체 조회
     const { data: todaySessions } = await supabase.from('attendance')
       .select('*').eq('user_id', session.user.id).eq('work_date', todayStr())
-      .order('session_seq')
+      .order('created_at', {ascending: true})
     setSessions(todaySessions || [])
 
     // 이번 주 월~일
@@ -81,16 +81,15 @@ export default function DashboardPage() {
     setLoading(true)
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
+    if (!session) { setLoading(false); return }
     const ds = todayStr(); const inTime = nowStr()
-    // 새 세션 번호 계산
-    const nextSeq = sessions.length + 1
+    const seqNum = sessions.length + 1
     await supabase.from('attendance').insert({
-      user_id: session.user.id, work_date: ds, check_in: inTime,
-      is_holiday: isHoliday(ds), session_seq: nextSeq,
+      user_id: session.user.id, work_date: ds,
+      check_in: inTime, is_holiday: isHoliday(ds),
     })
-    const label = nextSeq === 1 ? '출근' : `${nextSeq}번째 출근 (복귀)`
-    setAlert(`${label} 완료 (${inTime})`)
+    const label = seqNum === 1 ? '출근' : `${seqNum}번째 출근 (복귀)`
+    setAlert(`${label} 완료 (${inTime.slice(0,5)})`)
     setTimeout(()=>setAlert(''),4000); loadData(); setLoading(false)
   }
 
