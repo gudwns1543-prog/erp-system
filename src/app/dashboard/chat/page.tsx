@@ -113,7 +113,9 @@ export default function ChatPage() {
     const ch = supabase.channel(`room:${activeRoom.id}`)
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_messages',filter:`room_id=eq.${activeRoom.id}`},
         () => { loadMessages(activeRoom.id) })
-      .on('postgres_changes',{event:'UPSERT',schema:'public',table:'chat_reads',filter:`room_id=eq.${activeRoom.id}`},
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_reads',filter:`room_id=eq.${activeRoom.id}`},
+        () => { loadMessages(activeRoom.id) })
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'chat_reads',filter:`room_id=eq.${activeRoom.id}`},
         () => { loadMessages(activeRoom.id) })
       .subscribe()
     return () => { supabase.removeChannel(ch) }
