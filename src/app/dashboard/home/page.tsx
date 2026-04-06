@@ -275,13 +275,18 @@ export default function HomePage() {
       const data = await response.json()
       const text = data.content?.[0]?.text || '브리핑을 불러올 수 없습니다.'
       setBriefing(text)
-    } catch (e) {
-      setBriefing('브리핑 로딩 실패. 잠시 후 다시 시도해주세요.')
+    } catch (e: any) {
+      console.error('브리핑 오류:', e)
+      setBriefing('브리핑 로딩 실패: ' + (e?.message || '알 수 없는 오류'))
     }
     setBriefingLoading(false)
   }
 
-  useEffect(() => { loadBriefing() }, [])
+  useEffect(() => {
+    if (profile?.id) {
+      loadBriefing()
+    }
+  }, [profile?.id])
   useEffect(() => {
     const id = setInterval(() => {
       const n = new Date()

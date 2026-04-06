@@ -29,11 +29,12 @@ export default function AttendancePage() {
     const end   = `${selYear}-${String(selMonth).padStart(2,'0')}-31`
     const { data: recs } = await supabase.from('attendance')
       .select('*').eq('user_id', userId)
-      .gte('work_date',start).lte('work_date',end).order('work_date').order('session_seq', {nullsFirst: true})
+      .gte('work_date',start).lte('work_date',end).order('work_date', {ascending: true})
     // 날짜별 세션 합산
     const dateMap: Record<string,any> = {}
     ;(recs||[]).forEach((r:any)=>{
       const ds = r.work_date
+      if (!ds) return  // 날짜 없으면 스킵
       if (!dateMap[ds]) {
         dateMap[ds] = {...r, _sessionCount:1}
       } else {

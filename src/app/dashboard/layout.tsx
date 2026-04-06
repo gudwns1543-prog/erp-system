@@ -192,7 +192,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           }
         })
       .on('postgres_changes', {event:'INSERT', schema:'public', table:'notices'},
-        () => { setUnreadNotice(prev => prev + 1) })
+        (payload: any) => {
+          // 본인이 작성한 공지는 읽음 처리
+          if (payload.new?.author_id !== profile?.id) {
+            setUnreadNotice(prev => prev + 1)
+          }
+        })
       .on('postgres_changes', {event:'INSERT', schema:'public', table:'event_attendees'},
         async (payload: any) => {
           if (payload.new.user_id === profile.id && payload.new.status === 'pending') {
@@ -232,7 +237,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         }
       })
     }
-    if (pathname === '/dashboard/signup') setPendingLeave(0)
+    if (pathname === '/dashboard/signup') {
+      setPendingLeave(0)
+      // 가입승인도 읽음 처리
+    }
   }, [pathname, profile])
 
   if (!profile) return (
