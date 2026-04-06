@@ -173,11 +173,18 @@ export default function HomePage() {
         a + (l.type.includes('반차') ? 0.5 : 1), 0)
       const remainLeave = (p?.annual_leave || 0) - usedLeave
 
-      // 급여일 계산 (매월 25일)
-      const payDay = 25
+      // 급여일 계산 - DB company_settings에서 읽기
+      const { data: payDaySetting } = await supabase.from('company_settings')
+        .select('value').eq('key', 'pay_day').maybeSingle()
+      const payDay = Number(payDaySetting?.value || 10)
       const today_d = todayDate.getDate()
-      const daysToPayday = today_d <= payDay ? payDay - today_d : (new Date(todayDate.getFullYear(), todayDate.getMonth()+1, payDay).getDate() + (new Date(todayDate.getFullYear(), todayDate.getMonth()+1, 0).getDate() - today_d))
-      const paydayMsg = today_d === payDay ? '🎉 오늘이 급여일입니다!' : ('급여일까지 ' + (payDay - today_d > 0 ? payDay - today_d : new Date(todayDate.getFullYear(), todayDate.getMonth()+1, 0).getDate() - today_d + payDay) + '일 남았어요')
+      const daysToPayday = today_d <= payDay
+        ? payDay - today_d
+        : new Date(todayDate.getFullYear(), todayDate.getMonth()+1, 0).getDate() - today_d + payDay
+      const nextPayMonth = today_d <= payDay ? todayDate.getMonth()+1 : todayDate.getMonth()+2
+      const paydayMsg = today_d === payDay
+        ? '🎉 오늘이 급여일입니다!'
+        : `${nextPayMonth}월 ${payDay}일 급여일까지 ${daysToPayday}일 남았습니다`
 
       // 다가오는 30일 일정
       const next30 = new Date(todayDate); next30.setDate(todayDate.getDate() + 30)
