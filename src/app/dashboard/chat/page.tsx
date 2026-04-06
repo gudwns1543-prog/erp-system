@@ -23,7 +23,7 @@ export default function ChatPage() {
   const [toast, setToast] = useState<{room:string,sender:string,text:string}|null>(null)
   const [showReadReceipt, setShowReadReceipt] = useState<string|null>(null)
   const [readReceipts, setReadReceipts] = useState<Record<string,{readers:any[],nonReaders:any[]}>>({})
-
+  const [popupPos, setPopupPos] = useState<{x:number,y:number}>({x:0,y:0})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const profileRef = useRef<any>(null)
@@ -75,18 +75,20 @@ export default function ChatPage() {
     return data || []
   }
 
-  async function loadRoom(roomId: string) {
+  async function loadRoom(roomId: string, markAsRead: boolean = false) {
     const [msgs, mems] = await Promise.all([fetchMessages(roomId), fetchMembers(roomId)])
     setMessages(msgs)
     setMembers(mems)
 
-    // 본인 읽음 upsert
-    const { data: { session } } = await supabase.auth.getSession()
-    if (session) {
-      await supabase.from('chat_reads').upsert(
-        { room_id: roomId, user_id: session.user.id, last_read_at: new Date().toISOString() },
-        { onConflict: 'room_id,user_id' }
-      )
+    // 실제로 채팅방을 열어서 볼 때만 읽음 처리 (markAsRead=true일 때만)
+    if (markAsRead) {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        await supabase.from('chat_reads').upsert(
+          { room_id: roomId, user_id: session.user.id, last_read_at: new Date().toISOString() },
+          { onConflict: 'room_id,user_id' }
+        )
+      }
     }
     // 읽음 계산
     await calcReceipts(roomId, msgs, mems)
@@ -140,11 +142,10 @@ export default function ChatPage() {
   useEffect(() => {
     if (!activeRoomId) return
     activeRoomIdRef.current = activeRoomId
-    // 방 변경 시 이전 메시지/멤버 초기화
     setMessages([])
     setMembers([])
     setReadReceipts({})
-    loadRoom(activeRoomId)
+    loadRoom(activeRoomId, true)  // true = 실제로 열어서 읽는 것이므로 읽음 처리
   }, [activeRoomId])
 
   // ── Realtime 구독 (채팅방 바뀔 때마다 재구독) ─────────────────
@@ -160,7 +161,7 @@ export default function ChatPage() {
         if (activeRoomIdRef.current !== activeRoomId) return
         const msgs = await fetchMessages(activeRoomId)
         setMessages(msgs)
-        // 본인 읽음 갱신
+        // 지금 이 방을 보고 있으므로 읽음 처리
         const { data: { session } } = await supabase.auth.getSession()
         if (session) {
           await supabase.from('chat_reads').upsert(
@@ -340,10 +341,12 @@ export default function ChatPage() {
                     setUnreadCounts(p=>({...p,[r.id]:0}))
                   }}
                   className={`p-3 cursor-pointer border-b border-gray-50 transition-colors
-                    ${activeRoomId===r.id?'bg-purple-50 border-l-2 border-l-purple-600':'hover:bg-gray-50'}`}>
+                    ${activeRoomId===r.id?'bg-purple-50 border-l-2 border-l-purple-600':unread>0?'bg-red-50/40 hover:bg-red-50':'hover:bg-gray-50'}`}>
                   <div className="flex items-center justify-between">
-                    <div className="text-xs font-medium text-gray-800 truncate flex-1 mr-1">{r.name}</div>
-                    {unread>0 && <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full flex-shrink-0">{unread}</span>}
+                    <div className={`text-xs truncate flex-1 mr-1 ${unread>0?'font-bold text-gray-900':'font-medium text-gray-800'}`}>{r.name}</div>
+                    {unread>0 && (
+                      <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full flex-shrink-0 min-w-[18px] text-center">{unread}</span>
+                    )}
                   </div>
                   {r._members && <div className="text-xs text-gray-300 truncate mt-0.5">{r._members}</div>}
                 </div>
@@ -420,42 +423,22 @@ export default function ChatPage() {
                       {totalMembers > 0 && (
                         <div className="relative">
                           <button className="text-xs hover:opacity-70"
-                            onClick={e=>{ e.stopPropagation(); setShowReadReceipt(prev=>prev===m.id?null:m.id) }}>
+                            onClick={e=>{
+                              e.stopPropagation()
+                              if (showReadReceipt===m.id) { setShowReadReceipt(null); return }
+                              // 버튼 위치 기반으로 팝업 위치 계산
+                              const rect = (e.target as HTMLElement).closest('button')!.getBoundingClientRect()
+                              const popupH = 200
+                              const y = rect.top - popupH > 10 ? rect.top - popupH : rect.bottom + 8
+                              setPopupPos({ x: isMe ? rect.right - 170 : rect.left, y })
+                              setShowReadReceipt(m.id)
+                            }}>
                             {readCount>=totalMembers
                               ? <span className="text-purple-400 font-medium">읽음</span>
                               : readCount===0
                                 ? <span className="text-gray-300">안읽음</span>
                                 : <span className="text-gray-400">{readCount}/{totalMembers}</span>}
                           </button>
-                          {showReadReceipt===m.id && (
-                            <>
-                              <div className="fixed inset-0 z-40" onClick={()=>setShowReadReceipt(null)} />
-                              <div className={`absolute bottom-7 ${isMe?'right-0':'left-0'} bg-white border border-gray-200 rounded-xl shadow-2xl p-3 z-50 min-w-[160px]`}>
-                                {readers.length > 0 && (
-                                  <div className={nonReaders.length>0?'mb-2 pb-2 border-b border-gray-100':''}>
-                                    <div className="text-xs font-semibold text-purple-500 mb-1.5">✅ 읽음 ({readers.length}명)</div>
-                                    {readers.map((u:any)=>(
-                                      <div key={u?.id} className="flex items-center gap-1.5 py-0.5">
-                                        <Avatar u={u} size={4} />
-                                        <span className="text-xs text-gray-700">{u?.name}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                                {nonReaders.length > 0 && (
-                                  <div>
-                                    <div className="text-xs font-semibold text-gray-400 mb-1.5">⏳ 안읽음 ({nonReaders.length}명)</div>
-                                    {nonReaders.map((u:any)=>(
-                                      <div key={u?.id} className="flex items-center gap-1.5 py-0.5">
-                                        <Avatar u={u} size={4} />
-                                        <span className="text-xs text-gray-400">{u?.name}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            </>
-                          )}
                         </div>
                       )}
                     </div>
@@ -546,6 +529,45 @@ export default function ChatPage() {
           </div>
         </div>
       )}
+
+      {/* 읽음/안읽음 팝업 - 전역 fixed (영역 바깥 나가는 문제 해결) */}
+      {showReadReceipt && (() => {
+        const receipt = readReceipts[showReadReceipt] || { readers:[], nonReaders:[] }
+        const { readers, nonReaders } = receipt
+        return (
+          <>
+            <div className="fixed inset-0 z-40" onClick={()=>setShowReadReceipt(null)} />
+            <div className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-2xl p-3 min-w-[170px]"
+              style={{ left: Math.min(popupPos.x, window.innerWidth-190), top: popupPos.y }}>
+              {readers.length > 0 && (
+                <div className={nonReaders.length>0?'mb-2 pb-2 border-b border-gray-100':''}>
+                  <div className="text-xs font-semibold text-purple-500 mb-1.5">✅ 읽음 ({readers.length}명)</div>
+                  {readers.map((u:any)=>(
+                    <div key={u?.id} className="flex items-center gap-1.5 py-0.5">
+                      <Avatar u={u} size={4} />
+                      <span className="text-xs text-gray-700">{u?.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {nonReaders.length > 0 && (
+                <div>
+                  <div className="text-xs font-semibold text-gray-400 mb-1.5">⏳ 안읽음 ({nonReaders.length}명)</div>
+                  {nonReaders.map((u:any)=>(
+                    <div key={u?.id} className="flex items-center gap-1.5 py-0.5">
+                      <Avatar u={u} size={4} />
+                      <span className="text-xs text-gray-400">{u?.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {readers.length===0 && nonReaders.length===0 && (
+                <div className="text-xs text-gray-300 text-center py-2">정보 없음</div>
+              )}
+            </div>
+          </>
+        )
+      })()}
 
       {/* 토스트 알림 */}
       {toast && (

@@ -136,40 +136,73 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         async (payload: any) => {
           const msg = payload.new
           if (msg.sender_id === profile.id || msg.is_system) return
-          // 내가 속한 방인지 확인 후 카운트 증가
+          // 내가 속한 방인지 확인
           const { data: membership } = await supabase.from('chat_members')
             .select('room_id').eq('user_id', profile.id).eq('room_id', msg.room_id).maybeSingle()
-          if (membership) {
-            setUnreadChat(prev => prev + 1)
-            // 발신자 정보 조회
-            const { data: sender } = await supabase.from('profiles')
-              .select('name,avatar_url,color,tc').eq('id', msg.sender_id).single()
-            // 채팅방 이름 조회
-            const { data: room } = await supabase.from('chat_rooms')
-              .select('name').eq('id', msg.room_id).single()
-            if (sender && room) {
-              const toastData = {
-                name: sender.name || '누군가',
-                avatar: sender.avatar_url || null,
-                color: sender.color || '#EEEDFE',
-                tc: sender.tc || '#3C3489',
-                room: room.name,
-                roomId: msg.room_id,
-                text: msg.content?.substring(0,60) || '파일을 보냈습니다',
-              }
-              setChatToast(toastData)
-              if (toastTimer) clearTimeout(toastTimer)
-              const t = setTimeout(() => setChatToast(null), 5000)
-              setToastTimer(t)
-              // 브라우저 푸시 알림
-              if ('Notification' in window && Notification.permission === 'granted') {
-                new Notification('💬 ' + room.name + ' - ' + sender.name, {
-                  body: msg.content?.substring(0,80) || '파일을 보냈습니다',
-                  icon: '/favicon.svg'
-                })
-              }
+          if (!membership) return
+          // 채팅 페이지에 있으면 카운트 증가 안 함 (채팅 페이지가 직접 처리)
+          if (pathname === '/dashboard/chat') return
+          setUnreadChat(prev => prev + 1)
+          // 발신자 정보 조회
+          const { data: sender } = await supabase.from('profiles')
+            .select('name,avatar_url,color,tc').eq('id', msg.sender_id).single()
+          const { data: room } = await supabase.from('chat_rooms')
+            .select('name').eq('id', msg.room_id).single()
+          if (sender && room) {
+            const toastData = {
+              name: sender.name || '누군가',
+              avatar: sender.avatar_url || null,
+              color: sender.color || '#EEEDFE',
+              tc: sender.tc || '#3C3489',
+              room: room.name,
+              roomId: msg.room_id,
+              text: msg.content?.substring(0,60) || '파일을 보냈습니다',
+            }
+            setChatToast(toastData)
+            if (toastTimer) clearTimeout(toastTimer)
+            const t = setTimeout(() => setChatToast(null), 5000)
+            setToastTimer(t)
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification('💬 ' + room.name + ' - ' + sender.name, {
+                body: msg.content?.substring(0,80) || '파일을 보냈습니다',
+                icon: '/favicon.svg'
+              })
             }
           }
+        })
+      // chat_reads 업데이트 시 레이아웃 카운트 재계산
+      .on('postgres_changes', {event:'INSERT', schema:'public', table:'chat_reads'},
+        async (payload: any) => {
+          if (payload.new?.user_id !== profile.id) return
+          // 본인 읽음 기록 변경 → 전체 미읽음 재계산
+          const { data: myRooms } = await supabase.from('chat_members').select('room_id').eq('user_id', profile.id)
+          const roomIds = (myRooms||[]).map((r:any) => r.room_id)
+          const { data: reads } = await supabase.from('chat_reads').select('*').eq('user_id', profile.id)
+          let total = 0
+          for (const roomId of roomIds) {
+            const lastRead = reads?.find((r:any) => r.room_id === roomId)?.last_read_at
+            const { count } = await supabase.from('chat_messages')
+              .select('*',{count:'exact',head:true}).eq('room_id',roomId).eq('is_system',false)
+              .gt('created_at', lastRead||'2000-01-01').neq('sender_id', profile.id)
+            total += count||0
+          }
+          setUnreadChat(total)
+        })
+      .on('postgres_changes', {event:'UPDATE', schema:'public', table:'chat_reads'},
+        async (payload: any) => {
+          if (payload.new?.user_id !== profile.id) return
+          const { data: myRooms } = await supabase.from('chat_members').select('room_id').eq('user_id', profile.id)
+          const roomIds = (myRooms||[]).map((r:any) => r.room_id)
+          const { data: reads } = await supabase.from('chat_reads').select('*').eq('user_id', profile.id)
+          let total = 0
+          for (const roomId of roomIds) {
+            const lastRead = reads?.find((r:any) => r.room_id === roomId)?.last_read_at
+            const { count } = await supabase.from('chat_messages')
+              .select('*',{count:'exact',head:true}).eq('room_id',roomId).eq('is_system',false)
+              .gt('created_at', lastRead||'2000-01-01').neq('sender_id', profile.id)
+            total += count||0
+          }
+          setUnreadChat(total)
         })
       .on('postgres_changes', {event:'INSERT', schema:'public', table:'approvals'},
         (payload: any) => {
@@ -216,7 +249,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         localStorage.setItem(`notice_read_${profile.id}`, new Date().toISOString())
       }
     }
-    if (pathname === '/dashboard/chat') setUnreadChat(0)
+    if (pathname === '/dashboard/chat') {
+      // 채팅 페이지 진입 시 DB 기준으로 정확히 재계산
+      const supabase = createClient()
+      supabase.auth.getSession().then(async ({ data: { session } }) => {
+        if (!session) return
+        const { data: myRooms } = await supabase.from('chat_members').select('room_id').eq('user_id', session.user.id)
+        const roomIds = (myRooms||[]).map((r:any) => r.room_id)
+        const { data: reads } = await supabase.from('chat_reads').select('*').eq('user_id', session.user.id)
+        let totalUnread = 0
+        for (const roomId of roomIds) {
+          const lastRead = reads?.find((r:any) => r.room_id === roomId)?.last_read_at
+          const { count } = await supabase.from('chat_messages')
+            .select('*',{count:'exact',head:true}).eq('room_id',roomId).eq('is_system',false)
+            .gt('created_at', lastRead||'2000-01-01').neq('sender_id', session.user.id)
+          totalUnread += count||0
+        }
+        setUnreadChat(totalUnread)
+      })
+    }
     if (pathname === '/dashboard/calendar') setPendingInvite(0)
     if (pathname === '/dashboard/approval' || pathname === '/dashboard/leave') {
       // 실제 DB에서 재조회해서 정확한 값 설정
