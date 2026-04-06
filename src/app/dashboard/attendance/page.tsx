@@ -51,14 +51,14 @@ export default function AttendancePage() {
         if (r.check_in < dateMap[ds]._firstCheckIn) {
           dateMap[ds]._firstCheckIn = r.check_in
         }
-        // 마지막 퇴근은 가장 늦은 시간
+        // 마지막 퇴근은 가장 늦은 시간으로 갱신
         if (r.check_out) {
           if (!dateMap[ds]._lastCheckOut || r.check_out > dateMap[ds]._lastCheckOut) {
             dateMap[ds]._lastCheckOut = r.check_out
           }
         }
-        // check_out 없는 세션이 있으면 아직 근무중
-        if (!r.check_out) dateMap[ds]._lastCheckOut = null
+        // check_out 없는 세션 = 아직 근무중인 세션이 하나라도 있으면 표시
+        if (!r.check_out) dateMap[ds]._hasOpenSession = true
         dateMap[ds]._sessionCount = (dateMap[ds]._sessionCount||1) + 1
       }
     })
@@ -162,7 +162,10 @@ export default function AttendancePage() {
                   <td className="py-1.5 pr-2 font-medium">{d.rec?.check_in?.slice(0,5)||'--'}</td>
                   <td className="py-1.5 pr-2 font-medium">
                     {d.rec?.check_out?.slice(0,5)
-                      ? d.rec.check_out.slice(0,5)
+                      ? <>
+                          {d.rec.check_out.slice(0,5)}
+                          {d.rec?._hasOpenSession && <span className="ml-1 text-xs text-green-500">+근무중</span>}
+                        </>
                       : d.rec?.check_in ? <span className="text-green-500">근무중</span> : '--'}
                     {d.rec?._sessionCount > 1 && (
                       <span className="ml-1 text-xs text-gray-300">({d.rec._sessionCount}회)</span>
