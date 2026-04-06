@@ -34,6 +34,9 @@ const NAV = [
     { href: '/dashboard/hrm', label: '인사정보 관리', icon: '⚙️', adminOnly: true },
     { href: '/dashboard/signup', label: '가입 승인', icon: '🔑', adminOnly: true },
   ]},
+  { group: '설정', items: [
+    { href: '/dashboard/settings', label: '회사 설정', icon: '🔧', adminOnly: true },
+  ]},
 ]
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
