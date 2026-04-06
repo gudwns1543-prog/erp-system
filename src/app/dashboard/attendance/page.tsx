@@ -26,11 +26,12 @@ export default function AttendancePage() {
     }
     const userId = selUser || session.user.id
     const start = `${selYear}-${String(selMonth).padStart(2,'0')}-01`
-    const end   = `${selYear}-${String(selMonth).padStart(2,'0')}-31`
+    // 해당 월의 실제 마지막 날 계산 (4월=30일, 2월=28/29일 등)
+    const lastDay = new Date(selYear, selMonth, 0).getDate()
+    const end = `${selYear}-${String(selMonth).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`
     const { data: recs, error: recsError } = await supabase.from('attendance')
       .select('*').eq('user_id', userId)
-      .gte('work_date',start).lte('work_date',end)
-      .order('work_date', {ascending: true})
+      .gte('work_date', start).lte('work_date', end)
     console.log('근태 쿼리 결과:', { userId, start, end, count: recs?.length, error: recsError })
     // check_in 기준으로 JS에서 정렬 (time 타입은 DB order 미지원)
     const sortedRecs = (recs||[]).sort((a:any, b:any) => {
