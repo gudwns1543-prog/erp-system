@@ -29,27 +29,45 @@ export default function AttendancePage() {
     const end   = `${selYear}-${String(selMonth).padStart(2,'0')}-31`
     const { data: recs } = await supabase.from('attendance')
       .select('*').eq('user_id', userId)
-      .gte('work_date',start).lte('work_date',end).order('work_date', {ascending: true})
-    // 날짜별 세션 합산
+      .gte('work_date',start).lte('work_date',end)
+      .order('work_date', {ascending: true})
+      .order('session_seq', {ascending: true})
+    // 날짜별 세션 합산 - 첫 출근/마지막 퇴근 정확하게 유지
     const dateMap: Record<string,any> = {}
     ;(recs||[]).forEach((r:any)=>{
       const ds = r.work_date
-      if (!ds) return  // 날짜 없으면 스킵
+      if (!ds) return
       if (!dateMap[ds]) {
-        dateMap[ds] = {...r, _sessionCount:1}
+        // 첫 세션: check_in은 첫 번째 값 고정
+        dateMap[ds] = {
+          ...r,
+          _firstCheckIn: r.check_in,
+          _lastCheckOut: r.check_out || null,
+          _sessionCount: 1
+        }
       } else {
-        dateMap[ds].reg_hours    = (dateMap[ds].reg_hours||0)    + (r.reg_hours||0)
-        dateMap[ds].ext_hours    = (dateMap[ds].ext_hours||0)    + (r.ext_hours||0)
-        dateMap[ds].night_hours  = (dateMap[ds].night_hours||0)  + (r.night_hours||0)
-        dateMap[ds].hol_hours    = (dateMap[ds].hol_hours||0)    + (r.hol_hours||0)
-        dateMap[ds].hol_eve_hours  = (dateMap[ds].hol_eve_hours||0)  + (r.hol_eve_hours||0)
+        // 시간 합산
+        dateMap[ds].reg_hours       = (dateMap[ds].reg_hours||0)       + (r.reg_hours||0)
+        dateMap[ds].ext_hours       = (dateMap[ds].ext_hours||0)       + (r.ext_hours||0)
+        dateMap[ds].night_hours     = (dateMap[ds].night_hours||0)     + (r.night_hours||0)
+        dateMap[ds].hol_hours       = (dateMap[ds].hol_hours||0)       + (r.hol_hours||0)
+        dateMap[ds].hol_eve_hours   = (dateMap[ds].hol_eve_hours||0)   + (r.hol_eve_hours||0)
         dateMap[ds].hol_night_hours = (dateMap[ds].hol_night_hours||0) + (r.hol_night_hours||0)
-        dateMap[ds].ignored_hours  = (dateMap[ds].ignored_hours||0)  + (r.ignored_hours||0)
-        dateMap[ds].check_out    = r.check_out || dateMap[ds].check_out
+        dateMap[ds].ignored_hours   = (dateMap[ds].ignored_hours||0)   + (r.ignored_hours||0)
+        // 마지막 퇴근 시간: check_out이 있는 가장 마지막 세션
+        if (r.check_out) dateMap[ds]._lastCheckOut = r.check_out
+        // 현재 근무중인 세션(check_out 없음)이면 마지막 퇴근 null 유지
+        if (!r.check_out) dateMap[ds]._lastCheckOut = null
         dateMap[ds]._sessionCount = (dateMap[ds]._sessionCount||1) + 1
       }
     })
-    setRecords(Object.values(dateMap))
+    // check_in / check_out 을 첫출근/마지막퇴근으로 정리
+    const merged = Object.values(dateMap).map((d:any) => ({
+      ...d,
+      check_in:  d._firstCheckIn  || null,
+      check_out: d._lastCheckOut  || null,
+    }))
+    setRecords(merged)
   }, [selUser, selMonth, selYear])
 
   useEffect(() => { load() }, [load])
@@ -115,15 +133,25 @@ export default function AttendancePage() {
           </tr></thead>
           <tbody>
             {days.map((d:any)=>{
-              const hol = isHoliday(d.ds)
+              const hol = isHoliday(d.ds) && d.dow !== 6  // 토요일은 공휴일 표시 안 함
               const dd = new Date(d.ds+'T00:00:00')
+              const isSat = d.dow === 6
+              const isSun = d.dow === 0
               return (
-                <tr key={d.ds} className="border-b border-gray-50 hover:bg-gray-50">
+                <tr key={d.ds} className={`border-b border-gray-50 hover:bg-gray-50
+                  ${isSat ? 'bg-blue-50/40' : hol || isSun ? 'bg-red-50/40' : ''}`}>
                   <td className="py-1.5 pr-2">{dd.getMonth()+1}/{dd.getDate()}</td>
-                  <td className={`py-1.5 pr-2 ${d.dow===0||d.dow===6?'text-red-400':''}`}>{DAYS[d.dow]}</td>
-                  <td className="py-1.5 pr-2">{hol?<span className="badge-holiday">휴일</span>:<span className="badge-work">평일</span>}</td>
-                  <td className="py-1.5 pr-2">{d.rec?.check_in?.slice(0,5)||'--'}</td>
-                  <td className="py-1.5 pr-2">{d.rec?.check_out?.slice(0,5)||'--'}</td>
+                  <td className={`py-1.5 pr-2 font-medium ${isSat ? 'text-blue-500' : isSun ? 'text-red-400' : ''}`}>{DAYS[d.dow]}</td>
+                  <td className="py-1.5 pr-2">{hol?<span className="badge-holiday">휴일</span>:isSat?<span className="text-blue-500 text-xs">토요일</span>:<span className="badge-work">평일</span>}</td>
+                  <td className="py-1.5 pr-2 font-medium">{d.rec?.check_in?.slice(0,5)||'--'}</td>
+                  <td className="py-1.5 pr-2 font-medium">
+                    {d.rec?.check_out?.slice(0,5)
+                      ? d.rec.check_out.slice(0,5)
+                      : d.rec?.check_in ? <span className="text-green-500">근무중</span> : '--'}
+                    {d.rec?._sessionCount > 1 && (
+                      <span className="ml-1 text-xs text-gray-300">({d.rec._sessionCount}회)</span>
+                    )}
+                  </td>
                   <td className="py-1.5 pr-2 text-purple-600">{d.rec?.reg_hours>0?d.rec.reg_hours:'-'}</td>
                   <td className="py-1.5 pr-2 text-blue-600">{d.rec?.ext_hours>0?d.rec.ext_hours:'-'}</td>
                   <td className="py-1.5 pr-2 text-red-600">{d.rec?.night_hours>0?d.rec.night_hours:'-'}</td>

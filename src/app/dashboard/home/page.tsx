@@ -105,7 +105,7 @@ export default function HomePage() {
     const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
     const attIds = (myAtt||[]).map((a:any)=>a.event_id)
     const { data: evs } = await supabase.from('events')
-      .select('id,title,start_at,end_at,color,creator_id')
+      .select('id,title,start_at,end_at,color,creator_id,created_at')
       .or('creator_id.eq.'+session.user.id+(attIds.length?',id.in.('+attIds.join(',')+')'  :'')).order('start_at')
     setAllEvents(evs||[])
     if (p?.role === 'director') {
@@ -176,14 +176,14 @@ export default function HomePage() {
       const daysToPayday = today_d <= payDay ? payDay - today_d : (new Date(todayDate.getFullYear(), todayDate.getMonth()+1, payDay).getDate() + (new Date(todayDate.getFullYear(), todayDate.getMonth()+1, 0).getDate() - today_d))
       const paydayMsg = today_d === payDay ? '🎉 오늘이 급여일입니다!' : ('급여일까지 ' + (payDay - today_d > 0 ? payDay - today_d : new Date(todayDate.getFullYear(), todayDate.getMonth()+1, 0).getDate() - today_d + payDay) + '일 남았어요')
 
-      // 다가오는 7일 일정
-      const next7 = new Date(todayDate); next7.setDate(todayDate.getDate() + 7)
-      const next7str = next7.toISOString().slice(0,10) + 'T23:59:59'
+      // 다가오는 30일 일정
+      const next30 = new Date(todayDate); next30.setDate(todayDate.getDate() + 30)
+      const next30str = next30.toISOString().slice(0,10) + 'T23:59:59'
       const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
       const attIds = (myAtt||[]).map((a: any) => a.event_id)
       let eventsQuery = supabase.from('events')
         .select('title,start_at,location').order('start_at')
-        .gte('start_at', today).lte('start_at', next7str)
+        .gte('start_at', today).lte('start_at', next30str)
       if (attIds.length > 0) {
         eventsQuery = eventsQuery.or('creator_id.eq.' + session.user.id + ',id.in.(' + attIds.join(',') + ')')
       } else {
@@ -265,15 +265,10 @@ export default function HomePage() {
       const response = await fetch('/api/briefing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 600,
-          system: '당신은 회사 ERP 시스템의 친근한 AI 어시스턴트입니다. 주어진 업무 데이터를 분석해서 오늘의 업무 브리핑을 작성해주세요. 규칙: 1) 인사말 없이 바로 핵심 내용으로 시작 2) 이모지 적극 활용 3) 우선순위 순서 (오늘 일정 → 급한 결재 → 연차/급여 → 팀원 소식) 4) 향후 30일 일정 중 가장 중요한 것 3개 언급 5) 7줄 이내로 간결하게 6) 없는 항목은 언급하지 말 것 7) 마지막 줄에 짧은 응원 멘트',
-          messages: [{ role: 'user', content: '업무 데이터:\n' + JSON.stringify(briefData, null, 2) }]
-        })
+        body: JSON.stringify({ briefData })
       })
       const data = await response.json()
-      const text = data.content?.[0]?.text || '브리핑을 불러올 수 없습니다.'
+      const text = data.text || '브리핑을 불러올 수 없습니다.'
       setBriefing(text)
     } catch (e: any) {
       console.error('브리핑 오류:', e)
@@ -441,19 +436,23 @@ export default function HomePage() {
               <div key={day}
                 onClick={()=>router.push('/dashboard/calendar')}
                 className={`min-h-[80px] border border-gray-100 p-1 cursor-pointer transition-colors
-                  ${isHol?'bg-red-50':isSun?'bg-rose-50/60':isSat?'bg-blue-50/60':'bg-white'}
+                  ${isSat?'bg-blue-50/60':isHol||isSun?'bg-red-50':'bg-white'}
                   hover:bg-purple-50/40`}>
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold mb-0.5
-                  ${isToday?'bg-purple-600 text-white':isHol||isSun?'text-red-400':isSat?'text-blue-500':'text-gray-700'}`}>
+                  ${isToday?'bg-purple-600 text-white':isSat?'text-blue-500':isHol||isSun?'text-red-400':'text-gray-700'}`}>
                   {day}
                 </div>
-                {dayEvs.slice(0,3).map((ev:any)=>(
-                  <div key={ev.id}
-                    className="text-white rounded px-1 mb-0.5 truncate"
-                    style={{background:ev.color||'#534AB7',fontSize:'10px',lineHeight:'16px'}}>
-                    {ev.title}
-                  </div>
-                ))}
+                {dayEvs.slice(0,3).map((ev:any)=>{
+                  const isNew = ev.created_at && (new Date().getTime() - new Date(ev.created_at).getTime()) < 3*24*60*60*1000
+                  return (
+                    <div key={ev.id}
+                      className="text-white rounded px-1 mb-0.5 flex items-center gap-0.5"
+                      style={{background:ev.color||'#534AB7',fontSize:'10px',lineHeight:'16px'}}>
+                      <span className="truncate flex-1">{ev.title}</span>
+                      {isNew && <span className="flex-shrink-0 bg-white/30 rounded px-0.5" style={{fontSize:'8px'}}>NEW</span>}
+                    </div>
+                  )
+                })}
                 {dayEvs.length>3 && <div className="text-gray-400" style={{fontSize:'10px'}}>+{dayEvs.length-3}</div>}
               </div>
             )
@@ -507,7 +506,9 @@ export default function HomePage() {
             {recentNotices.length===0
               ? <div className="py-3 text-center text-gray-300 text-xs">공지사항이 없습니다</div>
               : recentNotices.map((n:any)=>(
-                <div key={n.id} className="py-1.5 border-b border-gray-50 last:border-0">
+                <div key={n.id}
+                  className="py-1.5 border-b border-gray-50 last:border-0 cursor-pointer hover:bg-purple-50 -mx-3 px-3 rounded transition-colors"
+                  onClick={()=>router.push(`/dashboard/notice?id=${n.id}`)}>
                   <div className="text-xs font-medium text-gray-800 truncate">{n.title}</div>
                   <div className="text-xs text-gray-400 mt-0.5">{(n.author as any)?.name} · {n.created_at?.slice(0,10)}</div>
                 </div>

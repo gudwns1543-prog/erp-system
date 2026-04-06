@@ -79,9 +79,10 @@ export default function ChatPage() {
   useEffect(() => {
     if (!activeRoom) return
     loadMessages(activeRoom.id)
+    loadReadReceipts(activeRoom.id)
     const ch = supabase.channel(`room:${activeRoom.id}`)
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'chat_messages',filter:`room_id=eq.${activeRoom.id}`},
-        () => { loadMessages(activeRoom.id) })
+        () => { loadMessages(activeRoom.id); setTimeout(()=>loadReadReceipts(activeRoom.id),800) })
       .subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [activeRoom, loadMessages])
@@ -123,12 +124,31 @@ export default function ChatPage() {
     return () => { supabase.removeChannel(ch) }
   }, [profile, activeRoom, rooms, loadMessages])
 
+  const [showReadReceipt, setShowReadReceipt] = useState<string|null>(null) // message id
+  const [readReceipts, setReadReceipts] = useState<Record<string,any[]>>({}) // msgId -> [{name,avatar,...}]
+
+  async function loadReadReceipts(roomId: string) {
+    const supabase2 = createClient()
+    const { data: reads } = await supabase2.from('chat_reads')
+      .select('*, user:user_id(id,name,color,tc,avatar_url)').eq('room_id', roomId)
+    // 각 메시지별로 누가 읽었는지: last_read_at이 메시지 created_at보다 최신이면 읽은 것
+    const receipts: Record<string,any[]> = {}
+    for (const msg of messages) {
+      if (msg.is_system) continue
+      receipts[msg.id] = (reads||[]).filter((r:any) =>
+        r.user_id !== msg.sender_id && r.last_read_at >= msg.created_at
+      ).map((r:any) => r.user)
+    }
+    setReadReceipts(receipts)
+  }
+
   async function sendMessage() {
     if (!input.trim() || !activeRoom || !profile) return
     await supabase.from('chat_messages').insert({
       room_id: activeRoom.id, sender_id: profile.id, content: input.trim()
     })
     setInput('')
+    setTimeout(() => loadReadReceipts(activeRoom.id), 500)
   }
 
   async function handleFileUpload(file: File) {
@@ -259,6 +279,9 @@ export default function ChatPage() {
                 const isMe = m.sender_id === profile?.id
                 if (m.is_system) return <div key={m.id} className="text-center text-xs text-gray-300 py-1">{m.content}</div>
                 const s = m.sender as any
+                const readers = readReceipts[m.id] || []
+                const totalMembers = members.length - 1 // 본인 제외
+                const readCount = readers.length
                 return (
                   <div key={m.id} className={`flex flex-col ${isMe?'items-end self-end':'items-start self-start'} max-w-[70%]`}>
                     {!isMe && (
@@ -283,31 +306,71 @@ export default function ChatPage() {
                         )}
                       </div>
                     ) : (
-                      <div className={`px-3 py-2 rounded-xl text-sm leading-relaxed
+                      <div className={`px-3 py-2 rounded-xl text-sm leading-relaxed whitespace-pre-wrap
                         ${isMe?'bg-purple-600 text-white rounded-tr-sm':'bg-gray-100 text-gray-800 rounded-tl-sm'}`}>
                         {m.content}
                       </div>
                     )}
-                    <div className="text-xs text-gray-300 mt-0.5">
-                      {new Date(m.created_at).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}
+                    <div className={`flex items-center gap-1.5 mt-0.5 ${isMe?'flex-row-reverse':''}`}>
+                      <div className="text-xs text-gray-300">
+                        {new Date(m.created_at).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}
+                      </div>
+                      {/* 읽음 표시 - 본인 메시지에만 */}
+                      {isMe && totalMembers > 0 && (
+                        <div
+                          className="relative group cursor-pointer"
+                          onClick={()=>setShowReadReceipt(showReadReceipt===m.id?null:m.id)}>
+                          {readCount >= totalMembers ? (
+                            <span className="text-xs text-purple-400 font-medium">읽음</span>
+                          ) : (
+                            <span className="text-xs text-gray-300">{readCount}/{totalMembers}</span>
+                          )}
+                          {/* 읽은 사람 툴팁 */}
+                          {showReadReceipt===m.id && readers.length > 0 && (
+                            <div className="absolute bottom-5 right-0 bg-white border border-gray-100 rounded-xl shadow-xl p-2 z-50 min-w-[120px]">
+                              <div className="text-xs font-semibold text-gray-500 mb-1.5 px-1">읽은 사람 ({readCount}명)</div>
+                              {readers.map((u:any)=>(
+                                <div key={u?.id} className="flex items-center gap-1.5 px-1 py-0.5">
+                                  <Avatar u={u} size={4} />
+                                  <span className="text-xs text-gray-700">{u?.name}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )
               })}
               <div ref={messagesEndRef} />
             </div>
-            <div className="p-3 border-t border-gray-100 flex gap-2 flex-shrink-0">
+            <div className="p-3 border-t border-gray-100 flex gap-2 flex-shrink-0 items-end">
               <input type="file" ref={fileInputRef} className="hidden"
                 accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip"
                 onChange={e=>{ if(e.target.files?.[0]) handleFileUpload(e.target.files[0]) }} />
               <button onClick={()=>fileInputRef.current?.click()} disabled={uploading}
-                className="btn-secondary px-2.5 text-sm flex-shrink-0" title="파일/이미지 첨부">
+                className="btn-secondary px-2.5 text-sm flex-shrink-0 h-9" title="파일/이미지 첨부">
                 {uploading ? '⏳' : '📎'}
               </button>
-              <input className="input flex-1" placeholder="메시지를 입력하세요..." value={input}
-                onChange={e=>setInput(e.target.value)}
-                onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage()}}} />
-              <button onClick={sendMessage} className="btn-primary px-4">전송</button>
+              <textarea
+                className="input flex-1 resize-none min-h-[36px] max-h-[120px] py-2 leading-5"
+                placeholder="메시지를 입력하세요... (Shift+Enter 줄바꿈)"
+                value={input}
+                rows={1}
+                onChange={e=>{
+                  setInput(e.target.value)
+                  e.target.style.height='auto'
+                  e.target.style.height=Math.min(e.target.scrollHeight,120)+'px'
+                }}
+                onKeyDown={e=>{
+                  if(e.key==='Enter' && !e.shiftKey && !e.altKey){
+                    e.preventDefault(); sendMessage()
+                  }
+                  // Shift+Enter 또는 Alt+Enter → 줄바꿈 (기본동작 허용)
+                }}
+              />
+              <button onClick={sendMessage} className="btn-primary px-4 h-9 flex-shrink-0">전송</button>
             </div>
           </div>
         )}

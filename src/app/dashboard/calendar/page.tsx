@@ -35,6 +35,7 @@ export default function CalendarPage() {
   const [showForm, setShowForm] = useState(false)
   const [showDetail, setShowDetail] = useState<any>(null)
   const [editMode, setEditMode] = useState(false)
+  const [editingEventId, setEditingEventId] = useState<string|null>(null)
   const [myInvites, setMyInvites] = useState<any[]>([])
   const [tab, setTab] = useState<'calendar'|'invites'>('calendar')
   const [form, setForm] = useState({
@@ -94,15 +95,15 @@ export default function CalendarPage() {
     const supabase = createClient()
     const startAt = form.all_day ? `${form.start_date}T00:00:00` : `${form.start_date}T${form.start_time}:00`
     const endAt   = form.all_day ? `${form.end_date||form.start_date}T23:59:59` : `${form.end_date||form.start_date}T${form.end_time}:00`
-    if (editMode && showDetail) {
+    if (editMode && editingEventId) {
       await supabase.from('events').update({
         title:form.title, description:form.description, start_at:startAt, end_at:endAt,
         all_day:form.all_day, location:form.location, color:form.color,
-      }).eq('id', showDetail.id)
-      await supabase.from('event_attendees').delete().eq('event_id', showDetail.id).neq('user_id', profile.id)
+      }).eq('id', editingEventId)
+      await supabase.from('event_attendees').delete().eq('event_id', editingEventId).neq('user_id', profile.id)
       if (form.attendeeIds.length) {
         await supabase.from('event_attendees').upsert(
-          form.attendeeIds.map(uid=>({event_id:showDetail.id, user_id:uid, status:'pending'})),
+          form.attendeeIds.map(uid=>({event_id:editingEventId, user_id:uid, status:'pending'})),
           {onConflict:'event_id,user_id'}
         )
       }
@@ -117,7 +118,7 @@ export default function CalendarPage() {
         )
       }
     }
-    setShowForm(false); setEditMode(false); setShowDetail(null); resetForm(); load()
+    setShowForm(false); setEditMode(false); setEditingEventId(null); setShowDetail(null); resetForm(); load()
   }
 
   async function handleDelete(eventId: string) {
@@ -152,6 +153,7 @@ export default function CalendarPage() {
       end_date:ev.end_at.slice(0,10), end_time:ev.end_at.slice(11,16),
       all_day:ev.all_day||false, location:ev.location||'', color:ev.color||'#534AB7', attendeeIds:atts
     })
+    setEditingEventId(ev.id)
     setEditMode(true); setShowDetail(null); setShowForm(true)
   }
 
@@ -256,16 +258,15 @@ export default function CalendarPage() {
                 return (
                   <div key={day}
                     className={`min-h-[90px] border-b border-r p-1 cursor-pointer transition-colors
-                      ${isHol ? 'bg-red-50 border-red-100 hover:bg-red-100'
-                        : isSun ? 'bg-rose-50 border-rose-100 hover:bg-rose-100'
-                        : isSat ? 'bg-sky-100 border-sky-200 hover:bg-sky-200'
+                      ${isSat ? 'bg-sky-100 border-sky-200 hover:bg-sky-200'
+                        : isHol || isSun ? 'bg-red-50 border-red-100 hover:bg-red-100'
                         : 'bg-white border-gray-100 hover:bg-purple-50'}`}
                     onClick={()=>openCreate(dateStr)}>
                     <div className="flex items-center gap-1 mb-1">
                       <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0
                         ${isToday ? 'bg-purple-600 text-white'
-                          : isHol||isSun ? 'text-red-500'
                           : isSat ? 'text-sky-600'
+                          : isHol||isSun ? 'text-red-500'
                           : 'text-gray-700'}`}>
                         {day}
                       </div>
@@ -382,7 +383,7 @@ export default function CalendarPage() {
               </div>
             </div>
             <div className="p-4 border-t border-gray-100 flex gap-2 justify-end">
-              <button onClick={()=>{setShowForm(false);setEditMode(false);resetForm()}} className="btn-secondary text-sm">취소</button>
+              <button onClick={()=>{setShowForm(false);setEditMode(false);setEditingEventId(null);resetForm()}} className="btn-secondary text-sm">취소</button>
               <button onClick={handleSubmit} className="btn-primary text-sm">{editMode?'수정':'등록'}</button>
             </div>
           </div>

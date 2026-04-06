@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 
 export default function NoticePage() {
@@ -9,6 +10,7 @@ export default function NoticePage() {
   const [open, setOpen] = useState<string|null>(null)
   const [loading, setLoading] = useState(false)
   const [alert, setAlert] = useState('')
+  const searchParams = useSearchParams()
 
   const load = useCallback(async () => {
     const supabase = createClient()
@@ -22,6 +24,21 @@ export default function NoticePage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // URL 파라미터로 특정 공지 자동 열기
+  useEffect(() => {
+    const id = searchParams.get('id')
+    if (id && notices.length > 0) {
+      const found = notices.find((n:any) => n.id === id)
+      if (found) {
+        setOpen(id)
+        // 해당 공지로 스크롤
+        setTimeout(() => {
+          document.getElementById(`notice-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }, 100)
+      }
+    }
+  }, [searchParams, notices])
 
   async function handlePost(e: React.FormEvent) {
     e.preventDefault()
@@ -74,7 +91,7 @@ export default function NoticePage() {
         ) : (
           <div className="divide-y divide-gray-50">
             {notices.map(n=>(
-              <div key={n.id} className="py-3">
+              <div key={n.id} id={`notice-${n.id}`} className={`py-3 transition-colors rounded-lg px-2 -mx-2 ${open===n.id?'bg-purple-50/50':''}`}>
                 <div className="flex items-start justify-between cursor-pointer" onClick={()=>setOpen(open===n.id?null:n.id)}>
                   <div>
                     <div className="flex items-center gap-2">
