@@ -30,9 +30,25 @@ export async function POST(req: NextRequest) {
     })
     
     const data = await response.json()
-    const text = data.content?.[0]?.text || '브리핑을 생성할 수 없습니다.'
+
+    // API 오류 응답 처리
+    if (!response.ok || data.error) {
+      const errMsg = data.error?.message || data.error?.type || JSON.stringify(data.error)
+      console.error('Anthropic API 오류:', errMsg)
+      return NextResponse.json({ 
+        text: `⚠️ AI 브리핑 오류: ${errMsg}` 
+      })
+    }
+
+    const text = data.content?.[0]?.text
+    if (!text) {
+      console.error('Anthropic 응답 구조 이상:', JSON.stringify(data))
+      return NextResponse.json({ text: '⚠️ AI 응답을 받았으나 내용이 비어있습니다.' })
+    }
+
     return NextResponse.json({ text })
   } catch (e: any) {
-    return NextResponse.json({ text: '브리핑 로딩 실패: ' + e.message }, { status: 500 })
+    console.error('브리핑 서버 오류:', e)
+    return NextResponse.json({ text: '⚠️ 브리핑 서버 오류: ' + (e?.message || String(e)) }, { status: 500 })
   }
 }

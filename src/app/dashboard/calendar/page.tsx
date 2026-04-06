@@ -41,7 +41,8 @@ export default function CalendarPage() {
   const [form, setForm] = useState({
     title:'', description:'', start_date:'', start_time:'09:00',
     end_date:'', end_time:'18:00', all_day:false,
-    location:'', color:'#534AB7', attendeeIds:[] as string[]
+    location:'', color:'#534AB7', attendeeIds:[] as string[],
+    calendar_type: 'personal' as 'personal' | 'company'
   })
 
   const load = useCallback(async () => {
@@ -54,9 +55,10 @@ export default function CalendarPage() {
     setAllUsers(users||[])
     const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
     const attEventIds = (myAtt||[]).map((a:any)=>a.event_id)
+    // 공유일정(company)은 전직원 노출, 개인일정은 본인+초대된 것만
     const { data: evs } = await supabase.from('events')
       .select('*, creator:creator_id(name,grade,color,tc)')
-      .or(`creator_id.eq.${session.user.id}${attEventIds.length?`,id.in.(${attEventIds.join(',')})`:''}`).order('start_at')
+      .or(`calendar_type.eq.company,creator_id.eq.${session.user.id}${attEventIds.length?`,id.in.(${attEventIds.join(',')})`:''}`).order('start_at')
     setEvents(evs||[])
     const { data: atts } = await supabase.from('event_attendees')
       .select('*, user:user_id(id,name,grade,color,tc,avatar_url)')
@@ -99,6 +101,7 @@ export default function CalendarPage() {
       await supabase.from('events').update({
         title:form.title, description:form.description, start_at:startAt, end_at:endAt,
         all_day:form.all_day, location:form.location, color:form.color,
+        calendar_type:form.calendar_type,
       }).eq('id', editingEventId)
       await supabase.from('event_attendees').delete().eq('event_id', editingEventId).neq('user_id', profile.id)
       if (form.attendeeIds.length) {
@@ -110,7 +113,8 @@ export default function CalendarPage() {
     } else {
       const { data: ev } = await supabase.from('events').insert({
         title:form.title, description:form.description, start_at:startAt, end_at:endAt,
-        all_day:form.all_day, location:form.location, color:form.color, creator_id:profile.id,
+        all_day:form.all_day, location:form.location, color:form.color,
+        creator_id:profile.id, calendar_type:form.calendar_type,
       }).select().single()
       if (ev && form.attendeeIds.length) {
         await supabase.from('event_attendees').insert(
@@ -136,7 +140,8 @@ export default function CalendarPage() {
 
   function resetForm() {
     setForm({title:'',description:'',start_date:selDate||'',start_time:'09:00',
-      end_date:selDate||'',end_time:'18:00',all_day:false,location:'',color:'#534AB7',attendeeIds:[]})
+      end_date:selDate||'',end_time:'18:00',all_day:false,location:'',color:'#534AB7',attendeeIds:[],
+      calendar_type:'personal'})
   }
 
   function openCreate(dateStr: string) {
@@ -151,7 +156,8 @@ export default function CalendarPage() {
       title:ev.title, description:ev.description||'',
       start_date:ev.start_at.slice(0,10), start_time:ev.start_at.slice(11,16),
       end_date:ev.end_at.slice(0,10), end_time:ev.end_at.slice(11,16),
-      all_day:ev.all_day||false, location:ev.location||'', color:ev.color||'#534AB7', attendeeIds:atts
+      all_day:ev.all_day||false, location:ev.location||'', color:ev.color||'#534AB7',
+      attendeeIds:atts, calendar_type:ev.calendar_type||'personal'
     })
     setEditingEventId(ev.id)
     setEditMode(true); setShowDetail(null); setShowForm(true)
@@ -277,10 +283,11 @@ export default function CalendarPage() {
                     <div className="space-y-0.5">
                       {dayEvents.slice(0,3).map(ev=>(
                         <div key={ev.id}
-                          className="text-xs px-1.5 py-0.5 rounded truncate text-white cursor-pointer hover:opacity-80"
+                          className="text-xs px-1.5 py-0.5 rounded text-white cursor-pointer hover:opacity-80 flex items-center gap-0.5"
                           style={{background:ev.color||'#534AB7'}}
                           onClick={e=>{e.stopPropagation();setShowDetail(ev)}}>
-                          {ev.title}
+                          {ev.calendar_type==='company' && <span style={{fontSize:'9px'}}>🏢</span>}
+                          <span className="truncate">{ev.title}</span>
                         </div>
                       ))}
                       {dayEvents.length>3 && <div className="text-xs text-gray-400 pl-1">+{dayEvents.length-3}개</div>}
@@ -301,6 +308,36 @@ export default function CalendarPage() {
               <div className="text-sm font-semibold text-gray-800">{editMode?'일정 수정':'일정 등록'}</div>
             </div>
             <div className="p-5 space-y-3">
+              {/* 캘린더 유형 선택 */}
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1.5">저장 위치</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button"
+                    onClick={()=>setForm(f=>({...f,calendar_type:'personal'}))}
+                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 transition-all text-left
+                      ${form.calendar_type==='personal'
+                        ? 'border-purple-500 bg-purple-50'
+                        : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                    <span className="text-base">👤</span>
+                    <div>
+                      <div className={`text-xs font-semibold ${form.calendar_type==='personal'?'text-purple-700':'text-gray-700'}`}>내 일정</div>
+                      <div className="text-xs text-gray-400">나만 보는 개인 일정</div>
+                    </div>
+                  </button>
+                  <button type="button"
+                    onClick={()=>setForm(f=>({...f,calendar_type:'company'}))}
+                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 transition-all text-left
+                      ${form.calendar_type==='company'
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                    <span className="text-base">🏢</span>
+                    <div>
+                      <div className={`text-xs font-semibold ${form.calendar_type==='company'?'text-blue-700':'text-gray-700'}`}>솔루션 공유일정</div>
+                      <div className="text-xs text-gray-400">전 직원에게 공개</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">제목 *</label>
                 <input className="input" placeholder="일정 제목" value={form.title}
@@ -397,7 +434,13 @@ export default function CalendarPage() {
             <div className="p-5 border-b border-gray-100 flex items-start gap-3">
               <div className="w-3 h-3 rounded-full mt-1 flex-shrink-0" style={{background:showDetail.color||'#534AB7'}}></div>
               <div className="flex-1">
-                <div className="text-base font-semibold text-gray-800">{showDetail.title}</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="text-base font-semibold text-gray-800">{showDetail.title}</div>
+                  {showDetail.calendar_type==='company'
+                    ? <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-medium">🏢 솔루션 공유일정</span>
+                    : <span className="text-xs bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full font-medium">👤 내 일정</span>
+                  }
+                </div>
                 <div className="text-xs text-gray-400 mt-1">
                   {showDetail.all_day
                     ? `${showDetail.start_at.slice(0,10)} ~ ${showDetail.end_at.slice(0,10)}`
