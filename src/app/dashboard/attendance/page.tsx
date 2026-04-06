@@ -96,7 +96,7 @@ export default function AttendancePage() {
           {label:'평일 시간외',val:totals.ext,c:'text-blue-600'},
           {label:'평일 야간',val:totals.night,c:'text-red-600'},
           {label:'휴일 정규',val:totals.hReg,c:'text-teal-600'},
-          {label:'휴일 시간외',val:totals.hExt,c:'text-amber-600'},
+          {label:'휴일 시간외',val:totals.hEve,c:'text-amber-600'},
           {label:'휴일 야간',val:totals.hNight,c:'text-rose-600'},
         ].map(m=>(
           <div key={m.label} className="card text-center py-2">

@@ -7,7 +7,10 @@ import { Logo } from '@/components/Logo'
 
 const DAYS = ['일','월','화','수','목','금','토']
 const DAYS_SHORT = ['일','월','화','수','목','금','토']
-function todayStr() { return new Date().toISOString().slice(0,10) }
+function todayStr() {
+  const d = new Date()
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+}
 
 export default function HomePage() {
   const router = useRouter()
@@ -79,9 +82,13 @@ export default function HomePage() {
     if (!session) return
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
-    const { data: t } = await supabase.from('attendance')
-      .select('*').eq('user_id', session.user.id).eq('work_date', todayStr()).maybeSingle()
-    setToday(t)
+    const { data: todaySess } = await supabase.from('attendance')
+      .select('*').eq('user_id', session.user.id).eq('work_date', todayStr())
+      .order('session_seq')
+    // 활성 세션(미퇴근) 또는 가장 최근 세션
+    const activeS = (todaySess||[]).find((s:any) => s.check_in && !s.check_out)
+    const lastS = (todaySess||[]).slice(-1)[0]
+    setToday(activeS || lastS || null)
     const now = new Date()
     const start = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`
     const { data: recs } = await supabase.from('attendance').select('reg_hours')
@@ -255,7 +262,7 @@ export default function HomePage() {
         ].filter(Boolean),
       }
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('/api/briefing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

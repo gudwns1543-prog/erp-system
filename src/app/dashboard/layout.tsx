@@ -246,7 +246,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* 사이드바 */}
       <div className="w-52 flex-shrink-0 bg-white border-r border-gray-100 flex flex-col">
         <div className="px-4 pt-5 pb-4 border-b border-gray-100">
-          <div className="flex flex-col items-center gap-1.5 mb-3">
+          <div className="flex flex-col items-center gap-1.5 mb-3 cursor-pointer hover:opacity-80 transition-opacity"
+            onClick={()=>router.push('/dashboard/home')}>
             <Logo size={48} />
             <div className="text-sm font-bold text-gray-700 tracking-wide">(주)솔루션 ERP</div>
           </div>
