@@ -26,6 +26,9 @@ export default function HomePage() {
   const [calMonth, setCalMonth] = useState(new Date().getMonth())
   const [briefing, setBriefing] = useState('')
   const [briefingLoading, setBriefingLoading] = useState(false)
+  const [kecoItems, setKecoItems] = useState<any[]>([])
+  const [kecoLoading, setKecoLoading] = useState(true)
+  const [kecoFilter, setKecoFilter] = useState('전체')
 
   function nowStr() {
     const n = new Date()
@@ -129,6 +132,15 @@ export default function HomePage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // 한국환경공단 게시글 로드
+  useEffect(() => {
+    setKecoLoading(true)
+    fetch('/api/keco')
+      .then(r => r.json())
+      .then(d => { setKecoItems(d.items || []); setKecoLoading(false) })
+      .catch(() => setKecoLoading(false))
+  }, [])
 
   async function loadBriefing() {
     setBriefingLoading(true)
@@ -585,6 +597,67 @@ export default function HomePage() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* 한국환경공단 최신 소식 */}
+      <div className="card mb-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <span className="text-base">🌿</span>
+            <span className="text-sm font-semibold text-gray-800">한국환경공단 최신 소식</span>
+          </div>
+          <a href="https://www.keco.or.kr" target="_blank" rel="noreferrer"
+            className="text-xs text-gray-400 hover:text-purple-600 transition-colors">
+            공단 바로가기 →
+          </a>
+        </div>
+
+        {/* 카테고리 필터 */}
+        <div className="flex gap-1.5 mb-3">
+          {['전체','공지사항','언론보도','보도자료','입찰공고'].map(f => (
+            <button key={f} onClick={() => setKecoFilter(f)}
+              className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
+                kecoFilter === f
+                  ? 'bg-green-600 text-white font-medium'
+                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}>
+              {f}
+            </button>
+          ))}
+        </div>
+
+        {kecoLoading ? (
+          <div className="flex items-center gap-2 py-4 text-gray-400">
+            <div className="animate-spin text-sm">⏳</div>
+            <span className="text-xs">공단 소식을 불러오는 중...</span>
+          </div>
+        ) : kecoItems.length === 0 ? (
+          <div className="text-xs text-gray-400 py-4 text-center">게시글을 불러올 수 없습니다.</div>
+        ) : (
+          <div className="space-y-1">
+            {(kecoFilter === '전체' ? kecoItems : kecoItems.filter(i => i.type === kecoFilter))
+              .slice(0, 8)
+              .map((item, idx) => (
+                <a key={idx} href={item.url} target="_blank" rel="noreferrer"
+                  className="flex items-start gap-2.5 p-2 rounded-lg hover:bg-gray-50 transition-colors group">
+                  <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0 mt-0.5 ${
+                    item.type === '공지사항' ? 'bg-blue-100 text-blue-700' :
+                    item.type === '언론보도' ? 'bg-green-100 text-green-700' :
+                    item.type === '보도자료' ? 'bg-teal-100 text-teal-700' :
+                    'bg-amber-100 text-amber-700'
+                  }`}>{item.type}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-gray-700 group-hover:text-purple-600 transition-colors truncate">
+                      {item.title}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-0.5">{item.date}</div>
+                  </div>
+                  <span className="text-gray-300 group-hover:text-purple-400 text-xs flex-shrink-0">↗</span>
+                </a>
+              ))
+            }
+          </div>
+        )}
       </div>
     </div>
   )
