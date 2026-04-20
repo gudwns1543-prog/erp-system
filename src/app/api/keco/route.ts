@@ -3,66 +3,63 @@ import { NextResponse } from 'next/server'
 const BASE = 'https://www.keco.or.kr'
 
 const BOARDS = [
-  { type: '공지사항', url: `${BASE}/web/lay1/bbs/S1T17C108/A/18/list.do` },
-  { type: '언론보도', url: `${BASE}/web/lay1/bbs/S1T109C110/A/19/list.do` },
-  { type: '보도자료', url: `${BASE}/web/lay1/bbs/S1T109C111/A/20/list.do` },
-  { type: '입찰공고', url: `${BASE}/web/lay1/bbs/S1T115C125/A/23/list.do` },
+  {
+    type: '공지사항',
+    url: `${BASE}/web/lay1/bbs/S1T10C108/A/18/list.do`,
+    viewBase: `${BASE}/web/lay1/bbs/S1T10C108/A/18/view.do`,
+  },
+  {
+    type: '언론보도',
+    url: `${BASE}/web/lay1/bbs/S1T109C110/A/19/list.do`,
+    viewBase: `${BASE}/web/lay1/bbs/S1T109C110/A/19/view.do`,
+  },
+  {
+    type: '보도자료',
+    url: `${BASE}/web/lay1/bbs/S1T109C111/A/20/list.do`,
+    viewBase: `${BASE}/web/lay1/bbs/S1T109C111/A/20/view.do`,
+  },
+  {
+    type: '입찰공고',
+    url: `${BASE}/web/lay1/bbs/S1T115C125/A/23/list.do`,
+    viewBase: `${BASE}/web/lay1/bbs/S1T115C125/A/23/view.do`,
+  },
 ]
 
-function parseList(html: string, type: string, boardUrl: string) {
+function parseBoard(html: string, type: string, viewBase: string) {
   const items: { type: string; title: string; date: string; url: string }[] = []
 
-  // article_seq 패턴으로 게시글 링크 추출
-  const linkPattern = /href="([^"]*article_seq=(\d+)[^"]*)"/g
-  const titlePattern = /<a[^>]*href="[^"]*article_seq=\d+[^"]*"[^>]*>\s*(?:<[^>]+>)*\s*([^<\n]{5,200}?)\s*(?:<\/[^>]+>)*\s*<\/a>/g
-  
-  // 날짜 패턴
-  const datePattern = /(\d{4}-\d{2}-\d{2})/g
+  // 모바일 리스트 영역: <li>...</li> 블록 파싱
+  const liBlocks = html.match(/<li>[\s\S]*?<\/li>/g) || []
 
-  const seqSet = new Set<string>()
-  const links: { seq: string; url: string }[] = []
-  
-  let m
-  while ((m = linkPattern.exec(html)) !== null) {
-    const seq = m[2]
-    if (!seqSet.has(seq)) {
-      seqSet.add(seq)
-      links.push({ seq, url: BASE + m[1].replace(/&amp;/g, '&') })
+  for (const li of liBlocks) {
+    const seqMatch = li.match(/article_seq=(\d+)/)
+    if (!seqMatch) continue
+    const seq = seqMatch[1]
+
+    const dateMatch = li.match(/(\d{4}-\d{2}-\d{2})/)
+    if (!dateMatch) continue
+    const date = dateMatch[1]
+
+    // 태그 제거 후 텍스트 추출
+    const textOnly = li.replace(/<[^>]+>/g, '\n').replace(/\n+/g, '\n').trim()
+    const lines = textOnly.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0)
+
+    // "제목" 키워드 다음 줄이 실제 제목
+    const titleIdx = lines.findIndex((l: string) => l === '제목')
+    if (titleIdx === -1 || titleIdx + 1 >= lines.length) continue
+
+    let title = lines[titleIdx + 1]
+    title = title.replace('최신게시물', '').trim()
+    if (!title || title.length < 3) continue
+
+    const url = `${viewBase}?article_seq=${seq}&cpage=1&rows=10&condition=&keyword=`
+
+    if (!items.find(i => i.url === url)) {
+      items.push({ type, title, date, url })
     }
-  }
 
-  // 제목과 날짜를 순서대로 추출
-  const titles: string[] = []
-  const titleRe = /class="[^"]*title[^"]*"[^>]*>\s*<a[^>]*>([^<]+)<\/a>/g
-  while ((m = titleRe.exec(html)) !== null) {
-    const t = m[1].trim().replace(/\s+/g, ' ')
-    if (t.length > 3) titles.push(t)
+    if (items.length >= 6) break
   }
-
-  // 대안: li 내부 a 태그에서 텍스트 추출
-  if (titles.length === 0) {
-    const liRe = /<li[^>]*>[\s\S]*?article_seq=(\d+)[^"]*"[^>]*>([^<]{5,200})<\/a>/g
-    while ((m = liRe.exec(html)) !== null) {
-      const t = m[2].trim().replace(/\s+/g, ' ')
-      if (t.length > 3 && !titles.includes(t)) titles.push(t)
-    }
-  }
-
-  const dates: string[] = []
-  const dateRe = /(\d{4}-\d{2}-\d{2})/g
-  while ((m = dateRe.exec(html)) !== null) {
-    if (!dates.includes(m[1])) dates.push(m[1])
-  }
-
-  // links와 titles를 매칭
-  links.slice(0, 5).forEach((link, i) => {
-    items.push({
-      type,
-      title: titles[i] || `${type} ${i + 1}`,
-      date: dates[i] || '',
-      url: link.url,
-    })
-  })
 
   return items
 }
@@ -77,21 +74,21 @@ export async function GET() {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
               'Accept': 'text/html,application/xhtml+xml',
               'Accept-Language': 'ko-KR,ko;q=0.9',
+              'Referer': 'https://www.keco.or.kr/',
             },
-            next: { revalidate: 1800 }, // 30분 캐시
+            next: { revalidate: 1800 },
           })
           if (!res.ok) return []
           const html = await res.text()
-          return parseList(html, board.type, board.url)
-        } catch {
+          return parseBoard(html, board.type, board.viewBase)
+        } catch (e) {
+          console.error(`Error fetching ${board.type}:`, e)
           return []
         }
       })
     )
 
-    // 날짜 기준 내림차순 정렬
     const all = results.flat().sort((a, b) => b.date.localeCompare(a.date))
-
     return NextResponse.json({ items: all, updatedAt: new Date().toISOString() })
   } catch (e) {
     return NextResponse.json({ items: [], error: '데이터를 가져올 수 없습니다.' })

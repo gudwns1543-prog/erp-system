@@ -377,33 +377,96 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* AI 업무 브리핑 */}
-      <div className="card mb-5 border-purple-100 bg-gradient-to-r from-purple-50 to-white">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-full bg-purple-600 flex items-center justify-center text-sm">✨</div>
-            <span className="text-sm font-semibold text-gray-800">AI 업무 브리핑</span>
-            <span className="text-xs text-gray-400">오늘의 일정과 할 일을 정리했어요</span>
-          </div>
-          <button onClick={loadBriefing} disabled={briefingLoading}
-            className="text-xs text-purple-600 hover:text-purple-800 disabled:text-gray-400 flex items-center gap-1">
-            {briefingLoading ? '⏳' : '🔄'} {briefingLoading ? '분석 중...' : '새로고침'}
-          </button>
-        </div>
-        {briefingLoading ? (
-          <div className="flex items-center gap-3 py-2">
-            <div className="flex gap-1">
-              <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'0ms'}}/>
-              <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'150ms'}}/>
-              <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'300ms'}}/>
+      {/* AI 브리핑 + 환경공단 소식 2열 */}
+      <div className="grid grid-cols-2 gap-4 mb-5">
+
+        {/* AI 업무 브리핑 */}
+        <div className="card border-purple-100 bg-gradient-to-r from-purple-50 to-white">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-full bg-purple-600 flex items-center justify-center text-sm">✨</div>
+              <span className="text-sm font-semibold text-gray-800">AI 업무 브리핑</span>
+              <span className="text-xs text-gray-400">오늘의 일정과 할 일을 정리했어요</span>
             </div>
-            <span className="text-xs text-gray-400">AI가 오늘의 업무를 분석하고 있어요...</span>
+            <button onClick={loadBriefing} disabled={briefingLoading}
+              className="text-xs text-purple-600 hover:text-purple-800 disabled:text-gray-400 flex items-center gap-1">
+              {briefingLoading ? '⏳' : '🔄'} {briefingLoading ? '분석 중...' : '새로고침'}
+            </button>
           </div>
-        ) : briefing ? (
-          <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{briefing}</div>
-        ) : (
-          <div className="text-sm text-gray-400 py-1">브리핑을 불러오는 중...</div>
-        )}
+          {briefingLoading ? (
+            <div className="flex items-center gap-3 py-2">
+              <div className="flex gap-1">
+                <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'0ms'}}/>
+                <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'150ms'}}/>
+                <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'300ms'}}/>
+              </div>
+              <span className="text-xs text-gray-400">AI가 오늘의 업무를 분석하고 있어요...</span>
+            </div>
+          ) : briefing ? (
+            <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{briefing}</div>
+          ) : (
+            <div className="text-sm text-gray-400 py-1">브리핑을 불러오는 중...</div>
+          )}
+        </div>
+
+        {/* 한국환경공단 최신 소식 */}
+        <div className="card">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🌿</span>
+              <span className="text-sm font-semibold text-gray-800">한국환경공단 최신 소식</span>
+            </div>
+            <a href="https://www.keco.or.kr" target="_blank" rel="noreferrer"
+              className="text-xs text-gray-400 hover:text-green-600 transition-colors">
+              공단 바로가기 →
+            </a>
+          </div>
+          {/* 카테고리 필터 */}
+          <div className="flex gap-1 mb-2 flex-wrap">
+            {['전체','공지사항','언론보도','보도자료','입찰공고'].map(f => (
+              <button key={f} onClick={() => setKecoFilter(f)}
+                className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
+                  kecoFilter === f
+                    ? 'bg-green-600 text-white font-medium'
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                }`}>
+                {f}
+              </button>
+            ))}
+          </div>
+          {kecoLoading ? (
+            <div className="flex items-center gap-2 py-4 text-gray-400">
+              <div className="animate-spin text-sm">⏳</div>
+              <span className="text-xs">공단 소식을 불러오는 중...</span>
+            </div>
+          ) : kecoItems.length === 0 ? (
+            <div className="text-xs text-gray-400 py-4 text-center">게시글을 불러올 수 없습니다.</div>
+          ) : (
+            <div className="space-y-0.5">
+              {(kecoFilter === '전체' ? kecoItems : kecoItems.filter(i => i.type === kecoFilter))
+                .slice(0, 7)
+                .map((item, idx) => (
+                  <a key={idx} href={item.url} target="_blank" rel="noreferrer"
+                    className="flex items-start gap-2 p-1.5 rounded-lg hover:bg-gray-50 transition-colors group">
+                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0 mt-0.5 ${
+                      item.type === '공지사항' ? 'bg-blue-100 text-blue-700' :
+                      item.type === '언론보도' ? 'bg-green-100 text-green-700' :
+                      item.type === '보도자료' ? 'bg-teal-100 text-teal-700' :
+                      'bg-amber-100 text-amber-700'
+                    }`}>{item.type}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-gray-700 group-hover:text-green-600 transition-colors line-clamp-1">
+                        {item.title}
+                      </div>
+                      <div className="text-xs text-gray-400">{item.date}</div>
+                    </div>
+                    <span className="text-gray-300 group-hover:text-green-400 text-xs flex-shrink-0">↗</span>
+                  </a>
+                ))
+              }
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 요약 카드 */}
@@ -599,66 +662,6 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* 한국환경공단 최신 소식 */}
-      <div className="card mb-5">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <span className="text-base">🌿</span>
-            <span className="text-sm font-semibold text-gray-800">한국환경공단 최신 소식</span>
-          </div>
-          <a href="https://www.keco.or.kr" target="_blank" rel="noreferrer"
-            className="text-xs text-gray-400 hover:text-purple-600 transition-colors">
-            공단 바로가기 →
-          </a>
-        </div>
-
-        {/* 카테고리 필터 */}
-        <div className="flex gap-1.5 mb-3">
-          {['전체','공지사항','언론보도','보도자료','입찰공고'].map(f => (
-            <button key={f} onClick={() => setKecoFilter(f)}
-              className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
-                kecoFilter === f
-                  ? 'bg-green-600 text-white font-medium'
-                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-              }`}>
-              {f}
-            </button>
-          ))}
-        </div>
-
-        {kecoLoading ? (
-          <div className="flex items-center gap-2 py-4 text-gray-400">
-            <div className="animate-spin text-sm">⏳</div>
-            <span className="text-xs">공단 소식을 불러오는 중...</span>
-          </div>
-        ) : kecoItems.length === 0 ? (
-          <div className="text-xs text-gray-400 py-4 text-center">게시글을 불러올 수 없습니다.</div>
-        ) : (
-          <div className="space-y-1">
-            {(kecoFilter === '전체' ? kecoItems : kecoItems.filter(i => i.type === kecoFilter))
-              .slice(0, 8)
-              .map((item, idx) => (
-                <a key={idx} href={item.url} target="_blank" rel="noreferrer"
-                  className="flex items-start gap-2.5 p-2 rounded-lg hover:bg-gray-50 transition-colors group">
-                  <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0 mt-0.5 ${
-                    item.type === '공지사항' ? 'bg-blue-100 text-blue-700' :
-                    item.type === '언론보도' ? 'bg-green-100 text-green-700' :
-                    item.type === '보도자료' ? 'bg-teal-100 text-teal-700' :
-                    'bg-amber-100 text-amber-700'
-                  }`}>{item.type}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-gray-700 group-hover:text-purple-600 transition-colors truncate">
-                      {item.title}
-                    </div>
-                    <div className="text-xs text-gray-400 mt-0.5">{item.date}</div>
-                  </div>
-                  <span className="text-gray-300 group-hover:text-purple-400 text-xs flex-shrink-0">↗</span>
-                </a>
-              ))
-            }
-          </div>
-        )}
-      </div>
     </div>
   )
 }
