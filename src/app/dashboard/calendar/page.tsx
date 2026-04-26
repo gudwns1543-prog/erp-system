@@ -40,7 +40,7 @@ export default function CalendarPage() {
   const [tab, setTab] = useState<'calendar'|'invites'>('calendar')
   const [form, setForm] = useState({
     title:'', description:'', start_date:'', start_time:'09:00',
-    end_date:'', end_time:'18:00', all_day:false,
+    end_date:'', end_time:'18:00', all_day:false, time_tbd:false,
     location:'', color:'#534AB7', attendeeIds:[] as string[]
   })
 
@@ -93,8 +93,12 @@ export default function CalendarPage() {
   async function handleSubmit() {
     if (!form.title || !form.start_date) return
     const supabase = createClient()
-    const startAt = form.all_day ? `${form.start_date}T00:00:00` : `${form.start_date}T${form.start_time}:00`
-    const endAt   = form.all_day ? `${form.end_date||form.start_date}T23:59:59` : `${form.end_date||form.start_date}T${form.end_time}:00`
+    const startAt = form.all_day ? `${form.start_date}T00:00:00`
+      : form.time_tbd ? `${form.start_date}T00:00:00`
+      : `${form.start_date}T${form.start_time}:00`
+    const endAt = form.all_day ? `${form.end_date||form.start_date}T23:59:59`
+      : form.time_tbd ? `${form.end_date||form.start_date}T23:59:59`
+      : `${form.end_date||form.start_date}T${form.end_time}:00`
     if (editMode && editingEventId) {
       await supabase.from('events').update({
         title:form.title, description:form.description, start_at:startAt, end_at:endAt,
@@ -136,7 +140,7 @@ export default function CalendarPage() {
 
   function resetForm() {
     setForm({title:'',description:'',start_date:selDate||'',start_time:'09:00',
-      end_date:selDate||'',end_time:'18:00',all_day:false,location:'',color:'#534AB7',
+      end_date:selDate||'',end_time:'18:00',all_day:false,time_tbd:false,location:'',color:'#534AB7',
       attendeeIds: profile?.id ? [profile.id] : []})  // 기본으로 본인 체크
   }
 
@@ -307,10 +311,17 @@ export default function CalendarPage() {
                 <input className="input" placeholder="일정 제목" value={form.title}
                   onChange={e=>setForm(f=>({...f,title:e.target.value}))} />
               </div>
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="allday" checked={form.all_day}
-                  onChange={e=>setForm(f=>({...f,all_day:e.target.checked}))} className="accent-purple-600" />
-                <label htmlFor="allday" className="text-xs text-gray-500 cursor-pointer">종일</label>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" id="allday" checked={form.all_day}
+                    onChange={e=>setForm(f=>({...f,all_day:e.target.checked, time_tbd:false}))} className="accent-purple-600" />
+                  <label htmlFor="allday" className="text-xs text-gray-500 cursor-pointer">종일</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" id="timetbd" checked={form.time_tbd||false}
+                    onChange={e=>setForm(f=>({...f,time_tbd:e.target.checked, all_day:false}))} className="accent-orange-500" />
+                  <label htmlFor="timetbd" className="text-xs text-gray-500 cursor-pointer">시간 미정</label>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -318,7 +329,7 @@ export default function CalendarPage() {
                   <input type="date" className="input" value={form.start_date}
                     onChange={e=>setForm(f=>({...f,start_date:e.target.value}))} />
                 </div>
-                {!form.all_day && (
+                {!form.all_day && !form.time_tbd && (
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">시작 시간</label>
                     <input type="time" className="input" value={form.start_time}
@@ -330,7 +341,7 @@ export default function CalendarPage() {
                   <input type="date" className="input" value={form.end_date}
                     onChange={e=>setForm(f=>({...f,end_date:e.target.value}))} />
                 </div>
-                {!form.all_day && (
+                {!form.all_day && !form.time_tbd && (
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">종료 시간</label>
                     <input type="time" className="input" value={form.end_time}
@@ -405,8 +416,10 @@ export default function CalendarPage() {
                 <div className="text-base font-semibold text-gray-800">{showDetail.title}</div>
                 <div className="text-xs text-gray-400 mt-1">
                   {showDetail.all_day
-                    ? `${showDetail.start_at.slice(0,10)} ~ ${showDetail.end_at.slice(0,10)}`
-                    : `${showDetail.start_at.slice(0,16).replace('T',' ')} ~ ${showDetail.end_at.slice(11,16)}`}
+                    ? `${showDetail.start_at.slice(0,10)} ~ ${showDetail.end_at.slice(0,10)} (종일)`
+                    : showDetail.start_at.slice(11,16) === '00:00' && showDetail.end_at.slice(11,16) === '23:59'
+                      ? `${showDetail.start_at.slice(0,10)} ~ ${showDetail.end_at.slice(0,10)} ⏰ 시간 미정`
+                      : `${showDetail.start_at.slice(0,16).replace('T',' ')} ~ ${showDetail.end_at.slice(11,16)}`}
                 </div>
                 {showDetail.location && <div className="text-xs text-gray-400 mt-0.5">📍 {showDetail.location}</div>}
               </div>
