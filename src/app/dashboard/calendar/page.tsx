@@ -41,7 +41,8 @@ export default function CalendarPage() {
   const [form, setForm] = useState({
     title:'', description:'', start_date:'', start_time:'09:00',
     end_date:'', end_time:'18:00', all_day:false, time_tbd:false,
-    location:'', color:'#534AB7', attendeeIds:[] as string[]
+    location:'', color:'#534AB7', attendeeIds:[] as string[],
+    calendar_type: 'personal' as 'personal'|'company'
   })
 
   const load = useCallback(async () => {
@@ -56,9 +57,12 @@ export default function CalendarPage() {
     setAllUsers(sorted)
     const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
     const attEventIds = (myAtt||[]).map((a:any)=>a.event_id)
+    // 전사 일정(company) + 내가 만든 일정 + 내가 참석자인 일정
+    const orClauses = [`calendar_type.eq.company`, `creator_id.eq.${session.user.id}`]
+    if (attEventIds.length) orClauses.push(`id.in.(${attEventIds.join(',')})`)
     const { data: evs } = await supabase.from('events')
       .select('*, creator:creator_id(name,grade,color,tc)')
-      .or(`creator_id.eq.${session.user.id}${attEventIds.length?`,id.in.(${attEventIds.join(',')})`:''}`).order('start_at')
+      .or(orClauses.join(',')).order('start_at')
     setEvents(evs||[])
     const { data: atts } = await supabase.from('event_attendees')
       .select('*, user:user_id(id,name,grade,color,tc,avatar_url)')
@@ -105,9 +109,10 @@ export default function CalendarPage() {
       await supabase.from('events').update({
         title:form.title, description:form.description, start_at:startAt, end_at:endAt,
         all_day:form.all_day, location:form.location, color:form.color,
+        calendar_type:form.calendar_type,
       }).eq('id', editingEventId)
       await supabase.from('event_attendees').delete().eq('event_id', editingEventId).neq('user_id', profile.id)
-      if (form.attendeeIds.length) {
+      if (form.calendar_type === 'personal' && form.attendeeIds.length) {
         await supabase.from('event_attendees').upsert(
           form.attendeeIds.map(uid=>({event_id:editingEventId, user_id:uid, status:'pending'})),
           {onConflict:'event_id,user_id'}
@@ -117,8 +122,9 @@ export default function CalendarPage() {
       const { data: ev } = await supabase.from('events').insert({
         title:form.title, description:form.description, start_at:startAt, end_at:endAt,
         all_day:form.all_day, location:form.location, color:form.color, creator_id:profile.id,
+        calendar_type:form.calendar_type,
       }).select().single()
-      if (ev && form.attendeeIds.length) {
+      if (ev && form.calendar_type === 'personal' && form.attendeeIds.length) {
         await supabase.from('event_attendees').insert(
           form.attendeeIds.map(uid=>({event_id:ev.id, user_id:uid, status:'pending'}))
         )
@@ -143,7 +149,8 @@ export default function CalendarPage() {
   function resetForm() {
     setForm({title:'',description:'',start_date:selDate||'',start_time:'09:00',
       end_date:selDate||'',end_time:'18:00',all_day:false,time_tbd:false,location:'',color:'#534AB7',
-      attendeeIds: profile?.id ? [profile.id] : []})  // 기본으로 본인 체크
+      attendeeIds: profile?.id ? [profile.id] : [],
+      calendar_type: 'personal'})  // 기본으로 본인 체크
   }
 
   function openCreate(dateStr: string) {
@@ -162,7 +169,8 @@ export default function CalendarPage() {
       start_date:ev.start_at.slice(0,10), start_time:ev.start_at.slice(11,16),
       end_date:ev.end_at.slice(0,10), end_time:ev.end_at.slice(11,16),
       all_day:ev.all_day||false, time_tbd:isTimeTbd,
-      location:ev.location||'', color:ev.color||'#534AB7', attendeeIds:atts
+      location:ev.location||'', color:ev.color||'#534AB7', attendeeIds:atts,
+      calendar_type: ev.calendar_type || 'personal'
     })
     setEditingEventId(ev.id)
     setEditMode(true); setShowDetail(null); setShowForm(true)
@@ -310,6 +318,27 @@ export default function CalendarPage() {
           <div className="bg-white rounded-xl w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="p-5 border-b border-gray-100">
               <div className="text-sm font-semibold text-gray-800">{editMode?'일정 수정':'일정 등록'}</div>
+              {/* 일정 유형 선택 */}
+              <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+                <button type="button"
+                  onClick={()=>setForm(f=>({...f, calendar_type:'personal'}))}
+                  className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-all ${
+                    form.calendar_type==='personal'
+                      ? 'bg-white text-purple-700 shadow-sm'
+                      : 'text-gray-400 hover:text-gray-600'
+                  }`}>
+                  👤 개인 일정
+                </button>
+                <button type="button"
+                  onClick={()=>setForm(f=>({...f, calendar_type:'company'}))}
+                  className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-all ${
+                    form.calendar_type==='company'
+                      ? 'bg-white text-green-700 shadow-sm'
+                      : 'text-gray-400 hover:text-gray-600'
+                  }`}>
+                  🏢 전사 공유
+                </button>
+              </div>
             </div>
             <div className="p-5 space-y-3">
               <div>
@@ -375,6 +404,7 @@ export default function CalendarPage() {
                   ))}
                 </div>
               </div>
+              {form.calendar_type === 'personal' ? (
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-2">
                   참석자 선택 {form.attendeeIds.length>0 && <span className="text-purple-600">({form.attendeeIds.length}명 선택)</span>}
@@ -382,8 +412,8 @@ export default function CalendarPage() {
                 </label>
                 <div className="border border-gray-200 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
                   {[
-                    ...allUsers.filter(u => u.id === profile?.id),           // 본인 최상단
-                    ...allUsers.filter(u => u.id !== profile?.id),           // 나머지 직급순
+                    ...allUsers.filter(u => u.id === profile?.id),
+                    ...allUsers.filter(u => u.id !== profile?.id),
                   ].map(u=>(
                     <label key={u.id}
                       className={`flex items-center gap-3 px-3 py-2 cursor-pointer border-b border-gray-50 last:border-0 transition-colors
@@ -406,6 +436,19 @@ export default function CalendarPage() {
                   ))}
                 </div>
               </div>
+              ) : (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm">🏢</span>
+                  <span className="text-xs font-semibold text-green-700">전사 공유 일정</span>
+                </div>
+                <div className="text-xs text-green-600 leading-relaxed">
+                  모든 직원의 캘린더에 자동으로 표시되고,<br/>
+                  각 직원의 AI 브리핑에 자동으로 포함됩니다.<br/>
+                  <span className="text-green-500 mt-1 block">마감기한, 공지성 일정 등에 활용하세요.</span>
+                </div>
+              </div>
+              )}
             </div>
             <div className="p-4 border-t border-gray-100 flex gap-2 justify-end">
               <button onClick={()=>{setShowForm(false);setEditMode(false);setEditingEventId(null);resetForm()}} className="btn-secondary text-sm">취소</button>
@@ -430,6 +473,11 @@ export default function CalendarPage() {
                       ? `${showDetail.start_at.slice(0,10)} ~ ${showDetail.end_at.slice(0,10)} ⏰ 시간 미정`
                       : `${showDetail.start_at.slice(0,16).replace('T',' ')} ~ ${showDetail.end_at.slice(11,16)}`}
                 </div>
+                {showDetail.calendar_type === 'company' && (
+                  <span className="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full mt-1">
+                    🏢 전사 공유 일정
+                  </span>
+                )}
                 {showDetail.location && <div className="text-xs text-gray-400 mt-0.5">📍 {showDetail.location}</div>}
               </div>
             </div>
