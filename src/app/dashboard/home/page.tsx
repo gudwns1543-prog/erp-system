@@ -111,10 +111,14 @@ export default function HomePage() {
     // 이번달 일정
     const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
     const attIds = (myAtt||[]).map((a:any)=>a.event_id)
-    const { data: evs } = await supabase.from('events')
-      .select('id,title,start_at,end_at,color,creator_id,created_at')
-      .or('creator_id.eq.'+session.user.id+(attIds.length?',id.in.('+attIds.join(',')+')'  :'')).order('start_at')
-    setAllEvents(evs||[])
+    let evs: any[] = []
+    if (attIds.length > 0) {
+      const { data } = await supabase.from('events')
+        .select('id,title,start_at,end_at,color,creator_id,created_at')
+        .in('id', attIds).order('start_at')  // 참석자인 일정만
+      evs = data || []
+    }
+    setAllEvents(evs)
     if (p?.role === 'director') {
       const { data: apps } = await supabase.from('approvals')
         .select('*, requester:requester_id(name,color,tc,avatar_url)')
@@ -206,21 +210,21 @@ export default function HomePage() {
         ? '🎉 오늘이 급여일입니다!'
         : `${nextPayMonth}월 ${payDay}일 급여일까지 ${daysToPayday}일 남았습니다`
 
-      // 다가오는 30일 일정
+      // 다가오는 30일 일정 - 내가 실제 참석자인 일정만 (대리등록 제외)
       const next30 = new Date(todayDate); next30.setDate(todayDate.getDate() + 30)
       const next30str = next30.toISOString().slice(0,10) + 'T23:59:59'
-      const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
+      const { data: myAtt } = await supabase.from('event_attendees')
+        .select('event_id').eq('user_id', session.user.id)
       const attIds = (myAtt||[]).map((a: any) => a.event_id)
-      let eventsQuery = supabase.from('events')
-        .select('title,start_at,location').order('start_at')
-        .gte('start_at', today).lte('start_at', next30str)
+      let events: any[] = []
       if (attIds.length > 0) {
-        eventsQuery = eventsQuery.or('creator_id.eq.' + session.user.id + ',id.in.(' + attIds.join(',') + ')')
-      } else {
-        eventsQuery = eventsQuery.eq('creator_id', session.user.id)
+        const { data } = await supabase.from('events')
+          .select('title,start_at,location').order('start_at')
+          .gte('start_at', today).lte('start_at', next30str)
+          .in('id', attIds)  // 참석자로 등록된 일정만 (creator여도 attendee 아니면 제외)
+        events = data || []
       }
-      const { data: events } = await eventsQuery
-      const eventList = (events||[]).slice(0,10).map((e: any) =>
+      const eventList = events.slice(0,10).map((e: any) =>
         e.start_at.slice(5,10).replace('-','/') + ' ' + e.start_at.slice(11,16) + ' ' + e.title + (e.location ? ' @ ' + e.location : '')
       )
 
