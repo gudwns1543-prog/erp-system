@@ -222,11 +222,16 @@ export default function HomePage() {
         .gte('start_at', today).lte('start_at', next30str)
         .or(orClauses.join(','))
       const events = evData || []
-      const eventList = events.slice(0,10).map((e: any) =>
-        e.start_at.slice(5,10).replace('-','/') + ' ' + e.start_at.slice(11,16) + ' ' + e.title +
-        (e.calendar_type==='company' ? ' [전사]' : '') +
-        (e.location ? ' @ ' + e.location : '')
-      )
+      const eventList = events.slice(0,10).map((e: any) => {
+        const evDate = e.start_at.slice(0,10)
+        const evDay = new Date(evDate + 'T00:00:00')
+        const todayMidnight = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate())
+        const diffDays = Math.round((evDay.getTime() - todayMidnight.getTime()) / 86400000)
+        const dayLabel = diffDays === 0 ? '오늘' : diffDays === 1 ? '내일' : diffDays === 2 ? '모레' : diffDays + '일 후'
+        const dateLabel = `${e.start_at.slice(5,10).replace('-','/')}(${days[evDay.getDay()]})`
+        const timeLabel = e.start_at.slice(11,16) === '00:00' ? '시간미정' : e.start_at.slice(11,16)
+        return `[${dayLabel}/${dateLabel} ${timeLabel}] ${e.title}${e.calendar_type==='company'?' [전사]':''}${e.location?' @ '+e.location:''}`
+      })
 
       // 대기 결재
       const pendingCol = p?.role === 'director' ? 'approver_id' : 'requester_id'
