@@ -136,7 +136,8 @@ export default function CalendarPage() {
 
   function resetForm() {
     setForm({title:'',description:'',start_date:selDate||'',start_time:'09:00',
-      end_date:selDate||'',end_time:'18:00',all_day:false,location:'',color:'#534AB7',attendeeIds:[]})
+      end_date:selDate||'',end_time:'18:00',all_day:false,location:'',color:'#534AB7',
+      attendeeIds: profile?.id ? [profile.id] : []})  // 기본으로 본인 체크
   }
 
   function openCreate(dateStr: string) {
@@ -359,10 +360,11 @@ export default function CalendarPage() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-2">
-                  참석자 초대 {form.attendeeIds.length>0 && <span className="text-purple-600">({form.attendeeIds.length}명 선택)</span>}
+                  참석자 선택 {form.attendeeIds.length>0 && <span className="text-purple-600">({form.attendeeIds.length}명 선택)</span>}
+                  <span className="text-xs text-gray-400 ml-1">· 본인 포함 여부 선택 가능</span>
                 </label>
                 <div className="border border-gray-200 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
-                  {allUsers.filter(u=>u.id!==profile?.id).map(u=>(
+                  {allUsers.map(u=>(
                     <label key={u.id}
                       className={`flex items-center gap-3 px-3 py-2 cursor-pointer border-b border-gray-50 last:border-0 transition-colors
                         ${form.attendeeIds.includes(u.id)?'bg-purple-50':'hover:bg-gray-50'}`}>
@@ -374,9 +376,12 @@ export default function CalendarPage() {
                       <span className="text-sm font-medium text-gray-800 w-16 flex-shrink-0">{u.name}</span>
                       <span className="text-xs text-gray-500 flex-shrink-0">{u.grade}</span>
                       <span className="text-xs text-gray-300 truncate flex-1">{u.dept}</span>
-                      {form.attendeeIds.includes(u.id) && (
-                        <span className="text-xs text-purple-600 font-medium flex-shrink-0">✓ 선택됨</span>
-                      )}
+                      {u.id === profile?.id
+                        ? <span className="text-xs text-blue-500 font-medium flex-shrink-0">나</span>
+                        : form.attendeeIds.includes(u.id) && (
+                          <span className="text-xs text-purple-600 font-medium flex-shrink-0">✓ 선택됨</span>
+                        )
+                      }
                     </label>
                   ))}
                 </div>
@@ -419,6 +424,11 @@ export default function CalendarPage() {
                   <Avatar u={showDetail.creator} />
                   <span className="text-sm text-gray-700">{(showDetail.creator as any)?.name}</span>
                   <span className="text-xs text-gray-400">{(showDetail.creator as any)?.grade}</span>
+                  {/* 등록자가 참석자 목록에 있으면 참석 표시 */}
+                  {attendees.find(a=>a.event_id===showDetail.id && (a.user as any)?.id===showDetail.creator_id)
+                    ? <span className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-full">참석</span>
+                    : <span className="text-xs bg-gray-50 text-gray-400 px-1.5 py-0.5 rounded-full">대리등록</span>
+                  }
                 </div>
               </div>
               {attendees.filter(a=>a.event_id===showDetail.id).length > 0 && (
@@ -430,6 +440,9 @@ export default function CalendarPage() {
                         <div className="flex items-center gap-2">
                           <Avatar u={a.user} />
                           <span className="text-sm text-gray-700">{(a.user as any)?.name}</span>
+                          {(a.user as any)?.id === showDetail.creator_id &&
+                            <span className="text-xs text-blue-400">(등록자)</span>
+                          }
                         </div>
                         <span className={`text-xs px-2 py-0.5 rounded-full
                           ${a.status==='accepted'?'bg-green-50 text-green-700':
