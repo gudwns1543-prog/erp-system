@@ -51,7 +51,9 @@ export default function CalendarPage() {
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
     const { data: users } = await supabase.from('profiles').select('id,name,grade,dept,color,tc,avatar_url').eq('status','active')
-    setAllUsers(users||[])
+    // 직급 순 정렬
+    const sorted = [...(users||[])].sort((a,b) => (GRADE_ORDER[a.grade||'']||99) - (GRADE_ORDER[b.grade||'']||99))
+    setAllUsers(sorted)
     const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
     const attEventIds = (myAtt||[]).map((a:any)=>a.event_id)
     const { data: evs } = await supabase.from('events')
@@ -375,7 +377,10 @@ export default function CalendarPage() {
                   <span className="text-xs text-gray-400 ml-1">· 본인 포함 여부 선택 가능</span>
                 </label>
                 <div className="border border-gray-200 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
-                  {allUsers.map(u=>(
+                  {[
+                    ...allUsers.filter(u => u.id === profile?.id),           // 본인 최상단
+                    ...allUsers.filter(u => u.id !== profile?.id),           // 나머지 직급순
+                  ].map(u=>(
                     <label key={u.id}
                       className={`flex items-center gap-3 px-3 py-2 cursor-pointer border-b border-gray-50 last:border-0 transition-colors
                         ${form.attendeeIds.includes(u.id)?'bg-purple-50':'hover:bg-gray-50'}`}>
