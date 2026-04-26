@@ -154,11 +154,15 @@ export default function CalendarPage() {
 
   function openEdit(ev: any) {
     const atts = attendees.filter((a:any)=>a.event_id===ev.id).map((a:any)=>a.user_id)
+    // 시간 미정 판별: 00:00~23:59이고 종일 아닌 경우
+    const isTimeTbd = !ev.all_day &&
+      ev.start_at.slice(11,16) === '00:00' && ev.end_at.slice(11,16) === '23:59'
     setForm({
       title:ev.title, description:ev.description||'',
       start_date:ev.start_at.slice(0,10), start_time:ev.start_at.slice(11,16),
       end_date:ev.end_at.slice(0,10), end_time:ev.end_at.slice(11,16),
-      all_day:ev.all_day||false, location:ev.location||'', color:ev.color||'#534AB7', attendeeIds:atts
+      all_day:ev.all_day||false, time_tbd:isTimeTbd,
+      location:ev.location||'', color:ev.color||'#534AB7', attendeeIds:atts
     })
     setEditingEventId(ev.id)
     setEditMode(true); setShowDetail(null); setShowForm(true)
