@@ -93,13 +93,21 @@ export default function HomePage() {
     const { data: recs } = await supabase.from('attendance').select('reg_hours')
       .eq('user_id', session.user.id).gte('work_date', start)
     const monthReg = (recs||[]).reduce((a:number,r:any)=>a+(r.reg_hours||0),0)
+    // 잔여 연차 - 승인된 연차 차감하여 정확히 계산
+    const { data: usedLeaveData } = await supabase.from('approvals')
+      .select('type').eq('requester_id', session.user.id).eq('status','approved')
+      .in('type',['연차','반차(오전)','반차(오후)'])
+      .gte('start_date', new Date().getFullYear() + '-01-01')
+    const usedLeaveCount = (usedLeaveData||[]).reduce((a:number, l:any) =>
+      a + (l.type.includes('반차') ? 0.5 : 1), 0)
+    const remainLeave = (p?.annual_leave || 0) - usedLeaveCount
     let pendingCount = 0
     if (p?.role === 'director') {
       const { count } = await supabase.from('approvals').select('*',{count:'exact',head:true})
         .eq('approver_id', session.user.id).eq('status','pending')
       pendingCount = count||0
     }
-    setStats({ monthReg, remainLeave: p?.annual_leave||0, pendingApprovals: pendingCount })
+    setStats({ monthReg, remainLeave, pendingApprovals: pendingCount })
     // 이번달 일정
     const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
     const attIds = (myAtt||[]).map((a:any)=>a.event_id)
