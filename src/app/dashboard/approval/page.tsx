@@ -5,11 +5,14 @@ import { isHoliday, classifyWork, minutesToHours } from '@/lib/attendance'
 
 // 두 날짜 사이의 모든 날짜 배열 반환
 function getDateRange(start: string, end: string): string[] {
-  const dates = []
-  const cur = new Date(start + 'T00:00:00')
-  const endD = new Date(end + 'T00:00:00')
+  const dates: string[] = []
+  const cur = new Date(start + 'T12:00:00')
+  const endD = new Date(end + 'T12:00:00')
   while (cur <= endD) {
-    dates.push(cur.toISOString().slice(0,10))
+    const y = cur.getFullYear()
+    const m = String(cur.getMonth()+1).padStart(2,'0')
+    const d = String(cur.getDate()).padStart(2,'0')
+    dates.push(`${y}-${m}-${d}`)
     cur.setDate(cur.getDate() + 1)
   }
   return dates
@@ -139,8 +142,8 @@ export default function ApprovalPage() {
           if (existingEv && existingEv.length > 0) continue // 해당 날짜만 스킵
           const { data: ev, error: evError } = await supabase.from('events').insert({
             title: `[${approval.type}] ${(approval.requester as any)?.name || ''}`,
-            start_at: `${workDate}T${startTime}:00`,
-            end_at: `${workDate}T${endTime}:00`,
+            start_at: `${workDate}T${startTime}:00+09:00`,
+            end_at: `${workDate}T${endTime}:00+09:00`,
             color: typeColors[approval.type] || '#6B7280',
             creator_id: approval.requester_id,
             calendar_type: 'company',

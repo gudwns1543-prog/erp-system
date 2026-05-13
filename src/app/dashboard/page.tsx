@@ -42,8 +42,8 @@ export default function DashboardPage() {
     const sun = new Date(mon); sun.setDate(mon.getDate()+6)
     const { data: week } = await supabase.from('attendance')
       .select('*').eq('user_id', session.user.id)
-      .gte('work_date', mon.toISOString().slice(0,10))
-      .lte('work_date', sun.toISOString().slice(0,10))
+      .gte('work_date', `${mon.getFullYear()}-${String(mon.getMonth()+1).padStart(2,'0')}-${String(mon.getDate()).padStart(2,'0')}`)
+      .lte('work_date', `${sun.getFullYear()}-${String(sun.getMonth()+1).padStart(2,'0')}-${String(sun.getDate()).padStart(2,'0')}`)
     setWeekData(week || [])
 
     const year = new Date().getFullYear()
@@ -130,7 +130,7 @@ export default function DashboardPage() {
     const now = new Date(); const dow = now.getDay()
     const mon = new Date(now); mon.setDate(now.getDate()-(dow===0?6:dow-1))
     const dt = new Date(mon); dt.setDate(mon.getDate()+i)
-    const ds = dt.toISOString().slice(0,10)
+    const ds = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`
     const daySessions = weekData.filter(w=>w.work_date===ds)
     // 같은 날 여러 세션 합산
     const totals = daySessions.reduce((a:any,s:any)=>({

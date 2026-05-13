@@ -18,10 +18,14 @@ const TYPE_TIMES: Record<string, {startTime:string, endTime:string}> = {
 
 function getDateRange(start: string, end: string): string[] {
   const dates: string[] = []
-  const cur = new Date(start + 'T00:00:00')
-  const endD = new Date(end + 'T00:00:00')
+  const cur = new Date(start + 'T12:00:00')  // 정오 기준 - 타임존 버그 방지
+  const endD = new Date(end + 'T12:00:00')
   while (cur <= endD) {
-    dates.push(cur.toISOString().slice(0,10))
+    // toISOString() 대신 로컬 날짜 직접 조합
+    const y = cur.getFullYear()
+    const m = String(cur.getMonth()+1).padStart(2,'0')
+    const d = String(cur.getDate()).padStart(2,'0')
+    dates.push(`${y}-${m}-${d}`)
     cur.setDate(cur.getDate() + 1)
   }
   return dates
@@ -431,8 +435,11 @@ export default function LeavePage() {
         )
 
         function getDayEvents(ds: string) {
-          // 정확히 해당 날짜에 시작하는 이벤트만 (하루씩 등록된 연차 이벤트)
-          return calEvents.filter(e => e.start_at.slice(0,10) === ds)
+          return calEvents.filter(e => {
+            const d = new Date(e.start_at)
+            const kst = new Date(d.getTime() + 9*60*60*1000)
+            return kst.toISOString().slice(0,10) === ds
+          })
         }
 
         function selectDate(ds: string) {
@@ -456,7 +463,9 @@ export default function LeavePage() {
           }
         }
 
-        const todayStr = new Date().toISOString().slice(0,10)
+        // 타임존 버그 방지 - 로컬 날짜 사용
+        const _now = new Date()
+        const todayStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`
 
         return (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">

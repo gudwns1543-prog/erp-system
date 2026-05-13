@@ -24,6 +24,12 @@ function toLocalDateStr(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`
 }
 
+function toKSTDate(utcStr: string): string {
+  const d = new Date(utcStr)
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
+  return kst.toISOString().slice(0, 10)
+}
+
 export default function CalendarPage() {
   const [profile, setProfile] = useState<any>(null)
   const [allUsers, setAllUsers] = useState<any[]>([])
@@ -82,7 +88,7 @@ export default function CalendarPage() {
   const today = toLocalDateStr(new Date())
 
   function getEventsForDate(dateStr: string) {
-    return events.filter(e => e.start_at.slice(0,10) <= dateStr && dateStr <= e.end_at.slice(0,10))
+    return events.filter(e => toKSTDate(e.start_at) <= dateStr && dateStr <= toKSTDate(e.end_at))
   }
 
   function canDelete(event: any) {
@@ -167,8 +173,8 @@ export default function CalendarPage() {
       ev.start_at.slice(11,16) === '00:00' && ev.end_at.slice(11,16) === '23:59'
     setForm({
       title:ev.title, description:ev.description||'',
-      start_date:ev.start_at.slice(0,10), start_time:ev.start_at.slice(11,16),
-      end_date:ev.end_at.slice(0,10), end_time:ev.end_at.slice(11,16),
+      start_date:toKSTDate(ev.start_at), start_time:ev.start_at.slice(11,16),
+      end_date:toKSTDate(ev.end_at), end_time:ev.end_at.slice(11,16),
       all_day:ev.all_day||false, time_tbd:isTimeTbd,
       location:ev.location||'', color:ev.color||'#534AB7', attendeeIds:atts,
       calendar_type: ev.calendar_type || 'personal'
@@ -469,9 +475,9 @@ export default function CalendarPage() {
                 <div className="text-base font-semibold text-gray-800">{showDetail.title}</div>
                 <div className="text-xs text-gray-400 mt-1">
                   {showDetail.all_day
-                    ? `${showDetail.start_at.slice(0,10)} ~ ${showDetail.end_at.slice(0,10)} (종일)`
+                    ? `${toKSTDate(showDetail.start_at)} ~ ${toKSTDate(showDetail.end_at)} (종일)`
                     : showDetail.start_at.slice(11,16) === '00:00' && showDetail.end_at.slice(11,16) === '23:59'
-                      ? `${showDetail.start_at.slice(0,10)} ~ ${showDetail.end_at.slice(0,10)} ⏰ 시간 미정`
+                      ? `${toKSTDate(showDetail.start_at)} ~ ${toKSTDate(showDetail.end_at)} ⏰ 시간 미정`
                       : `${showDetail.start_at.slice(0,16).replace('T',' ')} ~ ${showDetail.end_at.slice(11,16)}`}
                 </div>
                 {showDetail.calendar_type === 'company' && (

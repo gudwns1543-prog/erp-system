@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
-import { sortByGrade } from '@/lib/attendance'
+import { sortByGrade, isHoliday } from '@/lib/attendance'
 
 export default function AnnualPage() {
   const [profile, setProfile] = useState<any>(null)
@@ -53,14 +53,14 @@ export default function AnnualPage() {
         days = 0.5
       } else {
         // 연차: 주말/공휴일 제외한 실제 근무일만 계산
-        const start = new Date(l.start_date + 'T00:00:00')
-        const end = new Date((l.end_date || l.start_date) + 'T00:00:00')
+        const start = new Date(l.start_date + 'T12:00:00')
+        const end = new Date((l.end_date || l.start_date) + 'T12:00:00')
         let count = 0
         const cur = new Date(start)
         while (cur <= end) {
-          const ds = cur.toISOString().slice(0,10)
           const dow = cur.getDay()
-          if (dow !== 0 && dow !== 6) count++ // 주말 제외 (공휴일은 별도 처리)
+          const ds = `${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`
+          if (dow !== 0 && dow !== 6 && !isHoliday(ds)) count++
           cur.setDate(cur.getDate() + 1)
         }
         days = count
@@ -95,8 +95,8 @@ export default function AnnualPage() {
 
   const Avatar = ({u}:{u:any}) => (
     u?.avatar_url
-      ? <img src={u.avatar_url} className="w-12 h-12 rounded-full object-cover flex-shrink-0" alt="" />
-      : <div className="w-12 h-12 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+      ? <img src={u.avatar_url} className="w-16 h-16 rounded-full object-cover object-top flex-shrink-0" alt="" />
+      : <div className="w-16 h-16 rounded-full flex items-center justify-center text-base font-bold flex-shrink-0"
           style={{background:u?.color||'#EEEDFE',color:u?.tc||'#3C3489'}}>{u?.name?.[0]}</div>
   )
 

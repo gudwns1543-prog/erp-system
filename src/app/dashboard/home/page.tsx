@@ -14,6 +14,13 @@ function todayStr() {
 
 const leaveNotes = ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가']
 
+// UTC timestamp → KST 날짜 문자열 (YYYY-MM-DD)
+function toKSTDate(utcStr: string): string {
+  const d = new Date(utcStr)
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
+  return kst.toISOString().slice(0, 10)
+}
+
 export default function HomePage() {
   const router = useRouter()
   const [profile, setProfile] = useState<any>(null)
@@ -226,13 +233,13 @@ export default function HomePage() {
         .or(orClauses.join(','))
       const events = evData || []
       const eventList = events.slice(0,10).map((e: any) => {
-        const evDate = e.start_at.slice(0,10)
+        const evDate = toKSTDate(e.start_at)
         const evDay = new Date(evDate + 'T00:00:00')
         const todayMidnight = new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate())
         const diffDays = Math.round((evDay.getTime() - todayMidnight.getTime()) / 86400000)
         const dayLabel = diffDays === 0 ? '오늘' : diffDays === 1 ? '내일' : diffDays === 2 ? '모레' : diffDays + '일 후'
-        const dateLabel = `${e.start_at.slice(5,10).replace('-','/')}(${days[evDay.getDay()]})`
-        const timeLabel = e.start_at.slice(11,16) === '00:00' ? '시간미정' : e.start_at.slice(11,16)
+        const dateLabel = `${toKSTDate(e.start_at).slice(5,10).replace('-','/')}(${days[evDay.getDay()]})`
+        const timeLabel = e.start_at.slice(11,16) === '00:00' ? '시간미정' : e.start_at.slice(11,16)  // 시간은 UTC 그대로 (09:00 기준)
         return `[${dayLabel}/${dateLabel} ${timeLabel}] ${e.title}${e.calendar_type==='company'?' [전사]':''}${e.location?' @ '+e.location:''}`
       })
 
@@ -340,7 +347,7 @@ export default function HomePage() {
   const todayDate = todayStr()
 
   function getEventsForDate(ds: string) {
-    return allEvents.filter((e:any) => e.start_at.slice(0,10) <= ds && ds <= e.end_at.slice(0,10))
+    return allEvents.filter((e:any) => toKSTDate(e.start_at) <= ds && ds <= toKSTDate(e.end_at))
   }
   function prevMonth() { if(calMonth===0){setCalYear(y=>y-1);setCalMonth(11)}else setCalMonth(m=>m-1) }
   function nextMonth() { if(calMonth===11){setCalYear(y=>y+1);setCalMonth(0)}else setCalMonth(m=>m+1) }
