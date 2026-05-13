@@ -115,7 +115,13 @@ export default function LeavePage() {
     if (!start) return 0
     if (type === '연차') {
       const dates = getDateRange(start, end || start)
-      return dates.filter(d => !isWeekend(d) && !isHoliday(d)).length
+      // 주말 + 공휴일 + 이미 승인된 연차 날짜 제외
+      const alreadyApproved = new Set(
+        myRequests
+          .filter((r:any) => r.status === 'approved' && ['연차','반차(오전)','반차(오후)','반반차'].includes(r.type))
+          .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date))
+      )
+      return dates.filter(d => !isWeekend(d) && !isHoliday(d) && !alreadyApproved.has(d)).length
     } else if (type === '반차(오전)' || type === '반차(오후)') {
       return 0.5
     } else if (type === '반반차') {
@@ -298,6 +304,7 @@ export default function LeavePage() {
 
   const approverName = approvers.find(a=>a.id===form.approverId)?.name || '-'
   const isMultiDay = ['연차','병가','출장','특별휴가'].includes(form.type)
+  const needsTime = ['반차(오전)','반차(오후)','반반차','출장','외근','병가'].includes(form.type) // 연차/특별휴가는 시간 불필요
 
   const tabs = [
     {key:'apply', label:'신청하기'},
@@ -373,7 +380,7 @@ export default function LeavePage() {
             </div>
 
             {/* 시작일 + 시작시간 */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className={`grid gap-3 ${needsTime ? 'grid-cols-2' : 'grid-cols-1'}`}>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">시작일 *</label>
                 <button type="button"
@@ -382,31 +389,35 @@ export default function LeavePage() {
                   {form.start || '날짜 선택 📅'}
                 </button>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">시작 시간</label>
-                <input type="time" className="input" value={form.startTime}
-                  onChange={e=>setForm(f=>({...f,startTime:e.target.value}))} />
-              </div>
+              {needsTime && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">시작 시간</label>
+                  <input type="time" className="input" value={form.startTime}
+                    onChange={e=>setForm(f=>({...f,startTime:e.target.value}))} />
+                </div>
+              )}
             </div>
 
-            {/* 종료일 + 종료시간 */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">
-                  종료일 {!isMultiDay && <span className="text-gray-300">(당일이면 생략)</span>}
-                </label>
-                <button type="button"
-                  onClick={()=>{ setCalYear(form.end?new Date(form.end).getFullYear():form.start?new Date(form.start).getFullYear():new Date().getFullYear()); setCalMonth(form.end?new Date(form.end).getMonth():form.start?new Date(form.start).getMonth():new Date().getMonth()); setShowCal('end') }}
-                  className={`input w-full text-left ${form.end?'text-gray-800':'text-gray-400'}`}>
-                  {form.end || '날짜 선택 📅'}
-                </button>
+            {/* 종료일 + 종료시간 - 반차/반반차는 종료일 불필요 */}
+            {!['반차(오전)','반차(오후)','반반차'].includes(form.type) && (
+              <div className={`grid gap-3 ${needsTime ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">종료일</label>
+                  <button type="button"
+                    onClick={()=>{ setCalYear(form.end?new Date(form.end).getFullYear():form.start?new Date(form.start).getFullYear():new Date().getFullYear()); setCalMonth(form.end?new Date(form.end).getMonth():form.start?new Date(form.start).getMonth():new Date().getMonth()); setShowCal('end') }}
+                    className={`input w-full text-left ${form.end?'text-gray-800':'text-gray-400'}`}>
+                    {form.end || '날짜 선택 📅'}
+                  </button>
+                </div>
+                {needsTime && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">종료 시간</label>
+                    <input type="time" className="input" value={form.endTime}
+                      onChange={e=>setForm(f=>({...f,endTime:e.target.value}))} />
+                  </div>
+                )}
               </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">종료 시간</label>
-                <input type="time" className="input" value={form.endTime}
-                  onChange={e=>setForm(f=>({...f,endTime:e.target.value}))} />
-              </div>
-            </div>
+            )}
 
             {/* 유형별 안내 */}
             {['반반차','반차(오전)','반차(오후)'].includes(form.type) && (
@@ -464,28 +475,52 @@ export default function LeavePage() {
           return calEvents.filter(e => e.start_at.slice(0,10) <= ds && e.end_at.slice(0,10) >= ds)
         }
 
+        // 이미 승인된 연차 날짜
+        const approvedDates = new Set(
+          myRequests
+            .filter((r:any) => r.status === 'approved' && ['연차','반차(오전)','반차(오후)','반반차'].includes(r.type))
+            .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date))
+        )
+
         function selectDate(ds: string) {
           const dow = new Date(ds + 'T00:00:00').getDay()
-          if (dow === 0 || dow === 6) return // 주말 선택 불가
+          if (dow === 0 || dow === 6) return
+          if (approvedDates.has(ds) && form.type === '연차') return // 이미 승인된 날은 선택 불가
           if (showCal === 'start') {
-            setForm(f=>({...f, start:ds, end:f.end && f.end < ds ? ds : f.end}))
+            setForm(f=>({...f, start:ds, end:''}))
+            // 연차는 시작일 선택 후 종료일 모드로 자동 전환
+            if (['연차','병가','출장','특별휴가'].includes(form.type)) {
+              setShowCal('end')
+            } else {
+              setShowCal(null)
+            }
           } else {
-            if (form.start && ds < form.start) return
+            if (form.start && ds < form.start) {
+              // 종료일이 시작일보다 이전이면 시작일로 재설정
+              setForm(f=>({...f, start:ds, end:''}))
+              setShowCal('end')
+              return
+            }
             setForm(f=>({...f, end:ds}))
+            setLeaveError('')
+            setShowCal(null)
           }
-          setLeaveError('')
-          setShowCal(null)
         }
 
         return (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg">
               <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-gray-800">
-                    {showCal === 'start' ? '시작일' : '종료일'} 선택
-                  </span>
-                  <span className="text-xs text-gray-400">주말은 선택 불가</span>
+                <div className="flex items-center gap-3">
+                  <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${showCal==='start'?'bg-purple-600 text-white':'bg-gray-100 text-gray-400'}`}>
+                    1 시작일
+                  </div>
+                  {['연차','병가','출장','특별휴가'].includes(form.type) && (
+                    <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${showCal==='end'?'bg-purple-600 text-white':'bg-gray-100 text-gray-400'}`}>
+                      2 종료일
+                    </div>
+                  )}
+                  <span className="text-xs text-gray-400">주말·이미승인된날 선택불가</span>
                 </div>
                 <button onClick={()=>setShowCal(null)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
               </div>
@@ -517,26 +552,31 @@ export default function LeavePage() {
                   const inRange = form.start && form.end && cell.date > form.start && cell.date < form.end
                   const isToday = cell.date === new Date().toISOString().slice(0,10)
                   const dayEvs = getDayEvents(cell.date)
+                  const isAlreadyApproved = approvedDates.has(cell.date) && form.type === '연차'
                   const isEndDisabled = showCal === 'end' && form.start && cell.date < form.start
 
                   return (
                     <button key={idx} type="button"
-                      onClick={()=>!isWeekend && !isHol && !isEndDisabled && selectDate(cell.date!)}
-                      disabled={isWeekend || isHol || !!isEndDisabled}
+                      onClick={()=>!isWeekend && !isHol && !isEndDisabled && !isAlreadyApproved && selectDate(cell.date!)}
+                      disabled={isWeekend || isHol || !!isEndDisabled || isAlreadyApproved}
                       className={`h-14 rounded-lg flex flex-col items-center pt-1 transition-colors relative
-                        ${isStart||isEnd ? 'bg-purple-600 text-white' :
+                        ${isStart ? 'bg-purple-600 text-white' :
+                          isEnd ? 'bg-purple-600 text-white' :
                           inRange ? 'bg-purple-50' :
+                          isAlreadyApproved ? 'bg-red-50 cursor-not-allowed' :
                           isWeekend||isHol ? 'opacity-30 cursor-not-allowed' :
                           isEndDisabled ? 'opacity-20 cursor-not-allowed' :
                           'hover:bg-gray-100 cursor-pointer'}
                       `}>
                       <span className={`text-xs font-medium ${
                         isStart||isEnd ? 'text-white' :
+                        isAlreadyApproved ? 'text-red-400' :
                         dow===0||isHol ? 'text-red-500' :
                         dow===6 ? 'text-blue-500' :
                         isToday ? 'text-purple-600 font-bold' : 'text-gray-700'
                       }`}>{cell.day}</span>
-                      {isToday && !isStart && !isEnd && <div className="w-1 h-1 rounded-full bg-purple-400 mt-0.5"/>}
+                      {isAlreadyApproved && <span className="text-red-300" style={{fontSize:'7px'}}>승인됨</span>}
+                      {isToday && !isStart && !isEnd && !isAlreadyApproved && <div className="w-1 h-1 rounded-full bg-purple-400 mt-0.5"/>}
                       <div className="flex flex-col gap-0.5 w-full px-0.5 mt-0.5">
                         {dayEvs.slice(0,2).map((e:any,i:number)=>(
                           <div key={i} className="text-center rounded text-white truncate"

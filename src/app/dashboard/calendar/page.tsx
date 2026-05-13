@@ -58,6 +58,7 @@ export default function CalendarPage() {
     const { data: myAtt } = await supabase.from('event_attendees').select('event_id').eq('user_id', session.user.id)
     const attEventIds = (myAtt||[]).map((a:any)=>a.event_id)
     // 전사 일정(company) + 내가 만든 일정 + 내가 참석자인 일정
+    // 결재 승인으로 생성된 이벤트는 calendar_type=company라서 자동 포함
     const orClauses = [`calendar_type.eq.company`, `creator_id.eq.${session.user.id}`]
     if (attEventIds.length) orClauses.push(`id.in.(${attEventIds.join(',')})`)
     const { data: evs } = await supabase.from('events')
