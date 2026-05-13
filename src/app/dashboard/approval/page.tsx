@@ -67,6 +67,20 @@ export default function ApprovalPage() {
     const supabase = createClient()
     await supabase.from('approvals').update({status, updated_at: new Date().toISOString()}).eq('id', id)
 
+    // 반려 시 - 퇴근시간수정 요청이면 attendance의 check_out 되돌림 (재요청 가능하게)
+    if (status === 'rejected') {
+      const { data: approval } = await supabase.from('approvals')
+        .select('type, requester_id, start_date').eq('id', id).single()
+      if (approval && approval.type === '퇴근시간수정') {
+        // 본인이 입력했던 check_out 지우고 note도 비움 → 다시 미퇴근 팝업 뜨도록
+        await supabase.from('attendance')
+          .update({ check_out: null, reg_hours: 0, ext_hours: 0, night_hours: 0, note: null })
+          .eq('user_id', approval.requester_id)
+          .eq('work_date', approval.start_date)
+          .eq('note', '수정요청중')
+      }
+    }
+
     if (status === 'approved') {
       // DB에서 직접 조회 (state 캐시 문제 방지)
       const { data: approval } = await supabase.from('approvals')
@@ -156,6 +170,15 @@ export default function ApprovalPage() {
             })
           }
         }
+      }
+
+      // 퇴근시간수정 승인: attendance의 note를 '본인수정완료'로 변경
+      if (approval && approval.type === '퇴근시간수정') {
+        await supabase.from('attendance')
+          .update({ note: '본인수정완료' })
+          .eq('user_id', approval.requester_id)
+          .eq('work_date', approval.start_date)
+          .in('note', ['수정요청중', '야간자동컷오프'])
       }
     }
 

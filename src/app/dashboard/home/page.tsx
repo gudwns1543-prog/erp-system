@@ -71,6 +71,9 @@ export default function HomePage() {
   const [briefingLoading, setBriefingLoading] = useState(false)
   const [kecoItems, setKecoItems] = useState<any[]>([])
   const [kecoLoading, setKecoLoading] = useState(true)
+  // 어제 미퇴근 세션 (퇴근 시간 사후 입력용)
+  const [unclockedSession, setUnclockedSession] = useState<any>(null)
+  const [pickedCheckoutTime, setPickedCheckoutTime] = useState('')
   const [kecoFilter, setKecoFilter] = useState('전체')
 
   function nowStr() {
@@ -79,6 +82,16 @@ export default function HomePage() {
   }
 
   async function handleCheckIn() {
+    // 저녁식사 시간(18:00 ~ 19:00) 출근 차단
+    const now = new Date()
+    const hour = now.getHours()
+    const minute = now.getMinutes()
+    const totalMin = hour * 60 + minute
+    if (totalMin >= 18 * 60 && totalMin < 19 * 60) {
+      alert('🍱 지금은 저녁식사 시간입니다.\n19:00 이후에 다시 출근해 주세요.')
+      return
+    }
+
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
@@ -118,6 +131,60 @@ export default function HomePage() {
     handleCheckIn()
   }
 
+  // 어제 미퇴근 시간 사후 수정 요청
+  async function submitUnclockedFix() {
+    if (!unclockedSession || !pickedCheckoutTime) return
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session || !profile) return
+
+    // 입력한 시각 검증: 어제 check_in 이후여야 함
+    const inSec = unclockedSession.check_in.split(':').map(Number)
+    const outSec = pickedCheckoutTime.split(':').map(Number)
+    const inMin = inSec[0] * 60 + inSec[1]
+    const outMin = outSec[0] * 60 + outSec[1]
+    // 익일로 넘어간 경우(00~06시): outMin이 작은 게 정상 (자정 넘김)
+    // 그 외 경우: outMin이 inMin보다 커야 함
+    const isOvernight = outMin < 12 * 60 // 12시 이전 = 익일로 간주
+    if (!isOvernight && outMin <= inMin) {
+      alert('퇴근 시간은 출근 시간 이후여야 합니다.')
+      return
+    }
+
+    // 결재자 찾기 (박팔주 우선)
+    const { data: dirs } = await supabase.from('profiles').select('id,name').eq('role','director')
+    const sortedDirs = (dirs||[]).slice().sort((a:any,b:any)=>{
+      if (a.name==='박팔주') return -1
+      if (b.name==='박팔주') return 1
+      return (a.name||'').localeCompare(b.name||'')
+    })
+    const approverId = sortedDirs[0]?.id
+
+    // attendance에 본인이 입력한 시각 기록 + note 변경 (결재 전까지 임시 표시)
+    await supabase.from('attendance').update({
+      check_out: pickedCheckoutTime + ':00',
+      note: '수정요청중',
+    }).eq('id', unclockedSession.id)
+
+    // 결재자에게 알림 (approvals 테이블에 type='퇴근시간수정' 으로 기록)
+    if (approverId) {
+      await supabase.from('approvals').insert({
+        type: '퇴근시간수정',
+        requester_id: session.user.id,
+        approver_id: approverId,
+        start_date: unclockedSession.work_date,
+        end_date: unclockedSession.work_date,
+        status: 'pending',
+        reason: `${unclockedSession.work_date} 퇴근 시간 사후 입력: ${unclockedSession.check_in.slice(0,5)} → ${pickedCheckoutTime}${outMin < 12*60 ? ' (익일)' : ''}`,
+      })
+    }
+
+    alert(`✅ 퇴근시간 수정 요청을 보냈습니다.\n결재자: ${sortedDirs[0]?.name || '없음'}\n승인 시 정식으로 반영됩니다.`)
+    setUnclockedSession(null)
+    setPickedCheckoutTime('')
+    load()
+  }
+
   const load = useCallback(async () => {
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
@@ -132,6 +199,37 @@ export default function HomePage() {
     const activeS = leaveS || (todaySess||[]).find((s:any) => s.check_in && !s.check_out)
     const lastS = (todaySess||[]).slice(-1)[0]
     setToday(activeS || lastS || null)
+
+    // 어제 미퇴근 세션 체크 (퇴근 시간 사후 입력 팝업)
+    // 야간자동컷오프된 건도 본인이 수정/승인 요청을 안 했다면 보여줌
+    const yesterday = new Date()
+    yesterday.setDate(yesterday.getDate() - 1)
+    const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth()+1).padStart(2,'0')}-${String(yesterday.getDate()).padStart(2,'0')}`
+    const { data: yesterdaySess } = await supabase.from('attendance')
+      .select('id, check_in, check_out, note').eq('user_id', session.user.id).eq('work_date', yesterdayStr)
+      .order('created_at', {ascending: true})
+    // 가장 마지막 세션이 미퇴근(자동컷오프 포함, 단 본인 수정 안 한 경우)이면 팝업
+    if (yesterdaySess && yesterdaySess.length > 0) {
+      const lastY = yesterdaySess[yesterdaySess.length - 1]
+      const isYesterdayUnclocked =
+        !lastY.check_out || // 퇴근 미기록
+        lastY.note === '야간자동컷오프' // 야간 컷오프된 상태 (본인 확인 필요)
+      // '본인 수정완료' note가 있으면 이미 처리한 것
+      const alreadyHandled = lastY.note === '본인수정완료' || lastY.note === '수정요청중'
+      if (isYesterdayUnclocked && !alreadyHandled && lastY.check_in) {
+        // 기본 추천 시각: 어제 check_in 이후 합리적 시각 (예: 22:00 또는 check_in + 4h 중 큰 값)
+        const inSec = lastY.check_in.split(':').map(Number)
+        const inMin = inSec[0] * 60 + inSec[1]
+        const recommendMin = Math.max(inMin + 240, 22 * 60) // 출근 + 4h 또는 22시 중 큰 값
+        const recH = Math.min(Math.floor(recommendMin / 60), 30) // 익일 06시까지 = 30시
+        const recM = recommendMin % 60
+        // 시각을 HH:MM 형식으로 (30시 → 익일 06시 표현은 input type=time이 불가능 → 24시간 표시법으로)
+        // input type=time은 24시 못 넘어서 일단 23:59까지만
+        const finalH = Math.min(recH, 23)
+        setPickedCheckoutTime(`${String(finalH).padStart(2,'0')}:${String(recM).padStart(2,'0')}`)
+        setUnclockedSession({ ...lastY, work_date: yesterdayStr })
+      }
+    }
     const now = new Date()
     const start = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`
     const { data: recs } = await supabase.from('attendance').select('reg_hours')
@@ -776,6 +874,43 @@ export default function HomePage() {
           </div>
         </div>
       </div>
+
+      {/* 어제 퇴근 미기록 알림 모달 */}
+      {unclockedSession && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div className="p-5 border-b border-gray-100">
+              <div className="text-base font-bold text-gray-800">⏰ 어제 퇴근을 안 찍으셨네요</div>
+              <div className="text-xs text-gray-500 mt-1">
+                {unclockedSession.work_date} 출근 {unclockedSession.check_in?.slice(0,5)}
+                {unclockedSession.note === '야간자동컷오프' && <span className="ml-1 text-amber-600">(시스템 자동 컷오프 됨)</span>}
+              </div>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="text-sm text-gray-700">
+                실제 퇴근하신 시간을 입력해 주세요.<br />
+                <span className="text-xs text-gray-500">결재자 승인 후 정식 반영됩니다.</span>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">퇴근 시간</label>
+                <input type="time" className="input"
+                  value={pickedCheckoutTime}
+                  onChange={e=>setPickedCheckoutTime(e.target.value)} />
+                <div className="text-xs text-gray-400 mt-1">
+                  💡 자정 넘긴 야근은 00:00 ~ 07:00 사이로 입력 (예: 02:30)
+                </div>
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100 flex gap-2 justify-end">
+              <button onClick={()=>{ setUnclockedSession(null); setPickedCheckoutTime('') }}
+                className="btn-secondary text-sm">나중에</button>
+              <button onClick={submitUnclockedFix} className="btn-primary text-sm">
+                결재자에게 승인 요청
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   )
