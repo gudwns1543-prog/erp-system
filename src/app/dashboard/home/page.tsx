@@ -638,7 +638,9 @@ export default function HomePage() {
                   const typeName = m ? m[2] : ''
                   const personName = m ? m[3] : ''
                   const isPending = status === '신청중'
-                  const typeShort = typeName.replace(/[()]/g, '')
+                  const typeShort = typeName === '반차(오전)' ? '오전반차'
+                    : typeName === '반차(오후)' ? '오후반차'
+                    : typeName.replace(/[()]/g, '')
                   const displayText = isApproval ? `${personName}-${typeShort}` : ev.title
 
                   return (

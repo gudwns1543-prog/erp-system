@@ -421,119 +421,112 @@ export default function LeavePage() {
       {tab==='apply' && (
         <div className="space-y-4">
           {/* 상단: 연차 현황 카드 + 신청서 (좌우 2단) */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* 연차 잔여 현황 카드 - 항상 표시 */}
-          <div className="card border-purple-100 bg-purple-50/50">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-sm">📅</span>
-                <span className="text-sm font-semibold text-gray-700">내 연차 현황</span>
-              </div>
-              <div className="grid grid-cols-4 gap-2 mb-3">
-                <div className="bg-white rounded-lg p-2 text-center border border-purple-100">
-                  <div className="text-xs text-gray-400 mb-1">총 연차</div>
-                  <div className="text-base font-bold text-gray-700">{totalLeave}<span className="text-xs font-normal text-gray-400">H</span></div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {/* 연차 잔여 현황 카드 - 컴팩트 1줄 */}
+          <div className="card border-purple-100 bg-purple-50/50 py-2.5 px-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-gray-700">📅 내 연차</span>
                 </div>
-                <div className="bg-white rounded-lg p-2 text-center border border-red-100">
-                  <div className="text-xs text-gray-400 mb-1">승인됨</div>
-                  <div className="text-base font-bold text-red-500">{usedApprovedLeave}<span className="text-xs font-normal text-gray-400">H</span></div>
-                </div>
-                <div className="bg-white rounded-lg p-2 text-center border border-amber-100">
-                  <div className="text-xs text-gray-400 mb-1">신청중</div>
-                  <div className="text-base font-bold text-amber-500">{usedPendingLeave}<span className="text-xs font-normal text-gray-400">H</span></div>
-                </div>
-                <div className={`rounded-lg p-2 text-center border ${remainLeave <= 0 ? 'bg-red-50 border-red-200' : 'bg-white border-green-100'}`}>
-                  <div className="text-xs text-gray-400 mb-1">잔여</div>
-                  <div className={`text-base font-bold ${remainLeave <= 0 ? 'text-red-500' : 'text-green-600'}`}>{remainLeave}<span className="text-xs font-normal text-gray-400">H</span></div>
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="text-gray-500">총 <strong className="text-gray-700 text-sm">{totalLeave}</strong>H</span>
+                  <span className="text-gray-300">|</span>
+                  <span className="text-gray-500">승인 <strong className="text-red-500 text-sm">{usedApprovedLeave}</strong>H</span>
+                  <span className="text-gray-300">|</span>
+                  <span className="text-gray-500">신청중 <strong className="text-amber-500 text-sm">{usedPendingLeave}</strong>H</span>
+                  <span className="text-gray-300">|</span>
+                  <span className="text-gray-500">잔여 <strong className={`text-sm ${remainLeave <= 0 ? 'text-red-500' : 'text-green-600'}`}>{remainLeave}</strong>H</span>
                 </div>
               </div>
               {leaveTypeSelected && form.start && reqDays > 0 && (
-                <div className={`flex items-center justify-between text-xs px-3 py-2 rounded-lg ${afterLeave < 0 ? 'bg-red-100 text-red-700' : 'bg-green-50 text-green-700'}`}>
-                  <span>이번 신청: <strong>{reqDays}H</strong> 사용</span>
+                <div className={`flex items-center justify-between text-xs px-2.5 py-1.5 rounded mt-2 ${afterLeave < 0 ? 'bg-red-100 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                  <span>이번 신청: <strong>{reqDays}H</strong></span>
                   <span>신청 후 잔여: <strong>{afterLeave}H</strong> {afterLeave < 0 ? '⚠️ 부족' : '✅'}</span>
                 </div>
               )}
               {!leaveTypeSelected && (
-                <div className="text-xs text-gray-500 bg-white/70 rounded-lg px-3 py-2 border border-purple-100">
-                  💡 현재 선택한 유형({form.type})은 연차에서 차감되지 않습니다.
+                <div className="text-xs text-gray-500 mt-1.5">
+                  💡 {form.type}은 연차에서 차감되지 않습니다.
                 </div>
               )}
               {leaveError && (
-                <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-1">
+                <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2.5 py-1.5 mt-1.5">
                   ⚠️ {leaveError}
                 </div>
               )}
             </div>
 
-          <div className="card">
-            <div className="text-sm font-medium text-gray-700 mb-4">휴가·출장 신청서</div>
-            <form onSubmit={handleApplyClick} className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">신청 유형</label>
-                <select className="input" value={form.type} onChange={e=>handleTypeChange(e.target.value)}>
-                  {TYPES.map(t=><option key={t}>{t}</option>)}
-                </select>
+          <div className="card py-3 px-3">
+            <div className="text-sm font-semibold text-gray-700 mb-2">📋 휴가·출장 신청</div>
+            <form onSubmit={handleApplyClick} className="space-y-2">
+              {/* 유형 + 시작일 + 종료일 가로 배치 */}
+              <div className={`grid gap-2 ${!['반차(오전)','반차(오후)','반반차'].includes(form.type) ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-0.5">유형</label>
+                  <select className="input py-1.5 text-sm" value={form.type} onChange={e=>handleTypeChange(e.target.value)}>
+                    {TYPES.map(t=><option key={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-0.5">시작일</label>
+                  <div className={`input py-1.5 text-sm w-full ${form.start?'text-gray-800 bg-purple-50 border-purple-200':'text-gray-400'}`}>
+                    {form.start || '👉 캘린더에서 선택'}
+                  </div>
+                </div>
+                {!['반차(오전)','반차(오후)','반반차'].includes(form.type) && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-0.5">종료일</label>
+                    <div className={`input py-1.5 text-sm w-full ${form.end?'text-gray-800 bg-purple-50 border-purple-200':'text-gray-400'}`}>
+                      {form.end || '👉 캘린더에서 선택'}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* 유형별 안내 */}
+              {/* 시간 입력 (출장/외근/반반차일 때만) */}
+              {needsTime && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-0.5">시작 시간</label>
+                    <input type="time" className="input py-1.5 text-sm" value={form.startTime}
+                      onChange={e=>setForm(f=>({...f,startTime:e.target.value}))} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-0.5">종료 시간</label>
+                    <input type="time" className="input py-1.5 text-sm" value={form.endTime}
+                      onChange={e=>setForm(f=>({...f,endTime:e.target.value}))} />
+                  </div>
+                </div>
+              )}
+
+              {/* 유형별 안내 (반차/반반차일 때) */}
               {['반반차','반차(오전)','반차(오후)'].includes(form.type) && (
-                <div className="text-xs text-purple-600 bg-purple-50 px-3 py-2 rounded-lg">
-                  {form.type === '반반차' && '⏰ 반반차: 날짜 선택 후 시작·종료 시간을 직접 입력하세요 (연차 2H)'}
+                <div className="text-xs text-purple-600 bg-purple-50 px-2 py-1 rounded">
+                  {form.type === '반반차' && '⏰ 반반차: 날짜 선택 후 시간 입력 (연차 2H)'}
                   {form.type === '반차(오전)' && '⏰ 오전반차: 09:00 ~ 13:00 (연차 4H)'}
                   {form.type === '반차(오후)' && '⏰ 오후반차: 14:00 ~ 18:00 (연차 4H)'}
                 </div>
               )}
 
-              {/* 시작일 */}
-              <div className={`grid gap-3 ${needsTime ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              {/* 결재자 + 사유 가로 */}
+              <div className="grid grid-cols-[140px_1fr] gap-2">
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">시작일 *</label>
-                  <div className={`input w-full ${form.start?'text-gray-800 bg-purple-50 border-purple-200':'text-gray-400'}`}>
-                    {form.start || '👉 오른쪽 캘린더에서 클릭'}
-                  </div>
+                  <label className="block text-xs font-medium text-gray-500 mb-0.5">결재자</label>
+                  <select className="input py-1.5 text-sm" value={form.approverId}
+                    onChange={e=>setForm(f=>({...f,approverId:e.target.value}))}>
+                    {approvers.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
                 </div>
-                {needsTime && (
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">시작 시간</label>
-                    <input type="time" className="input" value={form.startTime}
-                      onChange={e=>setForm(f=>({...f,startTime:e.target.value}))} />
-                  </div>
-                )}
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-0.5">사유</label>
+                  <input type="text" className="input py-1.5 text-sm"
+                    placeholder="사유를 입력하세요"
+                    value={form.reason} onChange={e=>setForm(f=>({...f,reason:e.target.value}))} />
+                </div>
               </div>
 
-              {/* 종료일 - 반차/반반차는 불필요 */}
-              {!['반차(오전)','반차(오후)','반반차'].includes(form.type) && (
-                <div className={`grid gap-3 ${needsTime ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">종료일</label>
-                    <div className={`input w-full ${form.end?'text-gray-800 bg-purple-50 border-purple-200':'text-gray-400'}`}>
-                      {form.end || '👉 오른쪽 캘린더에서 클릭'}
-                    </div>
-                  </div>
-                  {needsTime && (
-                    <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">종료 시간</label>
-                      <input type="time" className="input" value={form.endTime}
-                        onChange={e=>setForm(f=>({...f,endTime:e.target.value}))} />
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">결재자</label>
-                <select className="input" value={form.approverId}
-                  onChange={e=>setForm(f=>({...f,approverId:e.target.value}))}>
-                  {approvers.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">사유</label>
-                <textarea className="input resize-none" rows={3}
-                  placeholder="사유를 상세히 입력해 주세요..."
-                  value={form.reason} onChange={e=>setForm(f=>({...f,reason:e.target.value}))} />
-              </div>
-              <div className="flex justify-end">
-                <button type="submit" className="btn-primary">결재 상신</button>
+              <div className="flex justify-end pt-1">
+                <button type="submit" className="btn-primary text-sm px-4 py-1.5">결재 상신</button>
               </div>
             </form>
           </div>
@@ -737,8 +730,10 @@ export default function LeavePage() {
                             const typeName = m ? m[2] : ''
                             const personName = m ? m[3] : (e.title||'')
                             const isPending = status === '신청중'
-                            // 유형 표시 약어: 괄호 제거 (반차(오전)→반차오전)
-                            const typeShort = typeName.replace(/[()]/g, '')
+                            // 유형 표시: 반차(오전)→오전반차, 반차(오후)→오후반차, 반반차→반반차
+                            const typeShort = typeName === '반차(오전)' ? '오전반차'
+                              : typeName === '반차(오후)' ? '오후반차'
+                              : typeName.replace(/[()]/g, '')
                             const displayText = typeShort ? `${personName}-${typeShort}` : personName
                             return (
                               <div key={i} className="rounded truncate font-bold text-gray-900 text-center"
@@ -771,20 +766,12 @@ export default function LeavePage() {
                 {/* 하단 - 범례 + 선택 정보 + 초기화 */}
                 <div className="px-4 pb-4 border-t border-gray-50 pt-3">
                   <div className="flex gap-3 mb-2 flex-wrap text-sm text-gray-600">
-                    <span className="flex items-center gap-1.5">
-                      <span className="px-2 py-0.5 rounded font-bold text-gray-900" style={{backgroundColor:'#FEF3C7',border:'1px solid #FCD34D',fontSize:'11px'}}>박형준</span>
-                      = 신청중
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <span className="px-2 py-0.5 rounded font-bold text-gray-900" style={{backgroundColor:'#DBEAFE',border:'1px solid #93C5FD',fontSize:'11px'}}>박형준</span>
-                      = 확정(승인)
-                    </span>
-                  </div>
-                  <div className="flex gap-3 mb-3 flex-wrap">
+                    <span className="px-2 py-0.5 rounded font-bold text-gray-900" style={{backgroundColor:'#FEF3C7',border:'1px solid #FCD34D',fontSize:'11px'}}>신청중</span>
+                    <span className="px-2 py-0.5 rounded font-bold text-gray-900" style={{backgroundColor:'#DBEAFE',border:'1px solid #93C5FD',fontSize:'11px'}}>승인</span>
                     <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-purple-600 inline-block"/>선택</span>
                     <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-purple-100 border border-purple-200 inline-block"/>선택 구간</span>
                     <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-red-100 border border-red-200 inline-block"/>선택불가(초과)</span>
-                    <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-blue-50 border border-blue-200 inline-block"/>토요일</span>
+                    <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-blue-50 border border-blue-200 inline-block"/>토</span>
                     <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-red-50 border border-red-200 inline-block"/>일·공휴일</span>
                   </div>
                   <div className="flex items-center justify-between">
