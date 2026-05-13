@@ -19,7 +19,7 @@ const TYPE_TIMES: Record<string, {startTime:string, endTime:string}> = {
 // 날짜별 이미 사용한 연차 일수 계산 (연차=1, 반차=0.5, 반반차=0.25)
 function getDayUsage(date: string, requests: any[]): number {
   const typeDay: Record<string,number> = {
-    '연차':1,'반차(오전)':0.5,'반차(오후)':0.5,'반반차':0.25
+    '연차':8,'반차(오전)':4,'반차(오후)':4,'반반차':2
   }
   return requests
     .filter((r:any) => ['approved','pending'].includes(r.status) && typeDay[r.type])
@@ -79,6 +79,8 @@ export default function LeavePage() {
   const [alert, setAlert] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
   const [showDetail, setShowDetail] = useState<any>(null)
+  const [sortKey, setSortKey] = useState<'created_at'|'start_date'|'type'>('created_at')
+  const [sortAsc, setSortAsc] = useState(false)
   const [conflictModal, setConflictModal] = useState<any>(null)
   const [pendingCancelIds, setPendingCancelIds] = useState<string[]>([])
   const [showCal, setShowCal] = useState<'start'|'end'|null>(null)
@@ -112,7 +114,7 @@ export default function LeavePage() {
       setAllRequests(a||[])
     }
     // 잔여 연차 계산
-    const annualLeave = p?.annual_leave || 15
+    const annualLeave = p?.annual_leave || 120
     setTotalLeave(annualLeave)
     const thisYear = new Date().getFullYear()
     const { data: usedApprovals } = await supabase.from('approvals')
@@ -183,23 +185,23 @@ export default function LeavePage() {
   useEffect(() => { load() }, [load])
 
   // 신청 연차 일수 계산 (승인됨/대기중 제외)
-  function calcRequestDays(type: string, start: string, end: string): number {
+  function calcRequestHours(type: string, start: string, end: string): number {
     if (!start) return 0
-    const typeDay: Record<string,number> = {'연차':1,'반차(오전)':0.5,'반차(오후)':0.5,'반반차':0.25}
-    const requestingDays = typeDay[type] || 0
+    const typeDay: Record<string,number> = {'연차':8,'반차(오전)':4,'반차(오후)':4,'반반차':2}
+    const requestingHours = typeDay[type] || 0
     if (type === '연차') {
       const dates = getDateRange(start, end || start)
-      return dates.filter(d => {
+      const workDays = dates.filter(d => {
         const dw = new Date(d + 'T00:00:00').getDay()
         if (dw === 0 || dw === 6 || isHoliday(d)) return false
-        // 이미 사용량 계산 - 신청하는 날 기존 사용량 + 신청량 <= 1 이어야 카운트
         const existing = getDayUsage(d, myRequests)
-        return existing + requestingDays <= 1
+        return existing + requestingHours <= 8
       }).length
+      return workDays * 8
     } else if (type === '반차(오전)' || type === '반차(오후)') {
-      return 0.5
+      return 4
     } else if (type === '반반차') {
-      return 0.25
+      return 2
     }
     return 0
   }
@@ -215,22 +217,22 @@ export default function LeavePage() {
     if (!form.start || !form.approverId) return
     const leaveTypes = ['연차','반차(오전)','반차(오후)','반반차']
     if (leaveTypes.includes(form.type)) {
-      const reqDays = calcRequestDays(form.type, form.start, form.end)
+      const reqDays = calcRequestHours(form.type, form.start, form.end)
       if (reqDays > remainLeave) {
-        setLeaveError(`잔여 연차가 부족합니다. (신청: ${reqDays}일, 잔여: ${remainLeave}일)`)
+        setLeaveError(`잔여 연차가 부족합니다. (신청: ${reqDays}H, 잔여: ${remainLeave}H)`)
         return
       }
       setLeaveError('')
       // 겹치는 기존 pending 건 찾기
       const typeDay: Record<string,number> = {'연차':1,'반차(오전)':0.5,'반차(오후)':0.5,'반반차':0.25}
-      const requestingDays = typeDay[form.type] || 0
+      const requestingHours = typeDay[form.type] || 0
       const reqDates = getDateRange(form.start, form.end || form.start)
         .filter(d => { const dw=new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
       const conflictingRequests = myRequests.filter((r:any) => {
         if (r.status !== 'pending') return false
         const rDates = getDateRange(r.start_date, r.end_date||r.start_date)
           .filter(d => { const dw=new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
-        return rDates.some(d => reqDates.includes(d) && getDayUsage(d, myRequests) + requestingDays > 1)
+        return rDates.some(d => reqDates.includes(d) && getDayUsage(d, myRequests) + requestingHours > 8)
       })
       if (conflictingRequests.length > 0) {
         setConflictModal({ conflicts: conflictingRequests, proceed: false })
@@ -353,7 +355,7 @@ export default function LeavePage() {
   const isMultiDay = ['연차','병가','출장','특별휴가'].includes(form.type)
   const needsTime = ['출장','외근','반반차'].includes(form.type)
   const leaveTypeSelected = ['연차','반차(오전)','반차(오후)','반반차'].includes(form.type)
-  const reqDays = calcRequestDays(form.type, form.start, form.end)
+  const reqDays = calcRequestHours(form.type, form.start, form.end)
   const afterLeave = remainLeave - reqDays
   // state에서 직접 사용
 
@@ -390,15 +392,15 @@ export default function LeavePage() {
               <div className="grid grid-cols-4 gap-2 mb-3">
                 <div className="bg-white rounded-lg p-2 text-center border border-purple-100">
                   <div className="text-xs text-gray-400 mb-1">총 연차</div>
-                  <div className="text-base font-bold text-gray-700">{totalLeave}<span className="text-xs font-normal text-gray-400">일</span></div>
+                  <div className="text-base font-bold text-gray-700">{totalLeave}<span className="text-xs font-normal text-gray-400">H</span></div>
                 </div>
                 <div className="bg-white rounded-lg p-2 text-center border border-red-100">
                   <div className="text-xs text-gray-400 mb-1">승인됨</div>
-                  <div className="text-base font-bold text-red-500">{usedApprovedLeave}<span className="text-xs font-normal text-gray-400">일</span></div>
+                  <div className="text-base font-bold text-red-500">{usedApprovedLeave}<span className="text-xs font-normal text-gray-400">H</span></div>
                 </div>
                 <div className="bg-white rounded-lg p-2 text-center border border-amber-100">
                   <div className="text-xs text-gray-400 mb-1">신청중</div>
-                  <div className="text-base font-bold text-amber-500">{usedPendingLeave}<span className="text-xs font-normal text-gray-400">일</span></div>
+                  <div className="text-base font-bold text-amber-500">{usedPendingLeave}<span className="text-xs font-normal text-gray-400">H</span></div>
                 </div>
                 <div className={`rounded-lg p-2 text-center border ${remainLeave <= 0 ? 'bg-red-50 border-red-200' : 'bg-white border-green-100'}`}>
                   <div className="text-xs text-gray-400 mb-1">잔여</div>
@@ -407,8 +409,8 @@ export default function LeavePage() {
               </div>
               {form.start && reqDays > 0 && (
                 <div className={`flex items-center justify-between text-xs px-3 py-2 rounded-lg ${afterLeave < 0 ? 'bg-red-100 text-red-700' : 'bg-green-50 text-green-700'}`}>
-                  <span>이번 신청: <strong>{reqDays}일</strong> 사용</span>
-                  <span>신청 후 잔여: <strong>{afterLeave}일</strong> {afterLeave < 0 ? '⚠️ 부족' : '✅'}</span>
+                  <span>이번 신청: <strong>{reqDays}H</strong> 사용</span>
+                  <span>신청 후 잔여: <strong>{afterLeave}H</strong> {afterLeave < 0 ? '⚠️ 부족' : '✅'}</span>
                 </div>
               )}
               {leaveError && (
@@ -432,9 +434,9 @@ export default function LeavePage() {
               {/* 유형별 안내 */}
               {['반반차','반차(오전)','반차(오후)'].includes(form.type) && (
                 <div className="text-xs text-purple-600 bg-purple-50 px-3 py-2 rounded-lg">
-                  {form.type === '반반차' && '⏰ 반반차: 날짜 선택 후 시작·종료 시간을 직접 입력하세요 (연차 0.25일)'}
-                  {form.type === '반차(오전)' && '⏰ 오전반차: 09:00 ~ 13:00 (연차 0.5일)'}
-                  {form.type === '반차(오후)' && '⏰ 오후반차: 14:00 ~ 18:00 (연차 0.5일)'}
+                  {form.type === '반반차' && '⏰ 반반차: 날짜 선택 후 시작·종료 시간을 직접 입력하세요 (연차 2H)'}
+                  {form.type === '반차(오전)' && '⏰ 오전반차: 09:00 ~ 13:00 (연차 4H)'}
+                  {form.type === '반차(오후)' && '⏰ 오후반차: 14:00 ~ 18:00 (연차 4H)'}
                 </div>
               )}
 
@@ -500,7 +502,23 @@ export default function LeavePage() {
       )}
 
       {tab==='all' && profile?.role==='director' && renderTable(allRequests, true)}
-      {tab==='mine' && renderTable(myRequests)}
+      {tab==='mine' && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xs text-gray-400">정렬:</span>
+            {([['created_at','신청일'],['start_date','사용일자'],['type','유형']] as const).map(([key,label])=>(
+              <button key={key} onClick={()=>{ if(sortKey===key) setSortAsc(a=>!a); else { setSortKey(key); setSortAsc(false) } }}
+                className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${sortKey===key?'bg-purple-600 text-white border-purple-600':'border-gray-200 text-gray-500 hover:border-purple-400'}`}>
+                {label} {sortKey===key?(sortAsc?'↑':'↓'):''}
+              </button>
+            ))}
+          </div>
+          {renderTable([...myRequests].sort((a,b)=>{
+            const va = a[sortKey]||'', vb = b[sortKey]||''
+            return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va)
+          }))}
+        </div>
+      )}
 
       {/* 캘린더 날짜 선택 모달 */}
       {showCal && (()=>{
@@ -524,9 +542,9 @@ export default function LeavePage() {
 
         // 신청하려는 유형의 사용량
         const typeDay: Record<string,number> = {
-          '연차':1,'반차(오전)':0.5,'반차(오후)':0.5,'반반차':0.25
+          '연차':8,'반차(오전)':4,'반차(오후)':4,'반반차':2
         }
-        const requestingDays = typeDay[form.type] || 0
+        const requestingHours = typeDay[form.type] || 0
 
         // 날짜별 이미 사용량 계산 → 추가하면 1일 초과하는 날짜 차단
         const blockedDates = new Set<string>()
@@ -540,7 +558,7 @@ export default function LeavePage() {
           })
         allWorkDates.forEach(d => {
           const usage = getDayUsage(d, myRequests)
-          if (usage + requestingDays > 1) blockedDates.add(d)
+          if (usage + requestingHours > 8) blockedDates.add(d)
         })
 
         // 표시용 - 승인/신청중 날짜와 유형
@@ -760,7 +778,7 @@ export default function LeavePage() {
                   <div className="text-xs text-gray-500">
                     {form.start && <span>시작: <strong className="text-purple-600">{form.start}</strong></span>}
                     {form.end && form.end !== form.start && <span className="ml-2">종료: <strong className="text-purple-600">{form.end}</strong></span>}
-                    {form.start && reqDays > 0 && <span className="ml-2 text-green-600 font-medium">→ {reqDays}일 사용</span>}
+                    {form.start && reqDays > 0 && <span className="ml-2 text-green-600 font-medium">→ {reqDays}H 사용</span>}
                   </div>
                   <div className="flex gap-2">
                     <button type="button" onClick={()=>{ setForm(f=>({...f,start:'',end:''})); setShowCal('start') }}
@@ -824,7 +842,7 @@ export default function LeavePage() {
                 {label:'종료', val:`${form.end||form.start}${(needsTime||form.type==='반반차')?' '+form.endTime:''}`},
                 {label:'결재자', val:approverName},
                 {label:'사유', val:form.reason||'(없음)'},
-                ...(leaveTypeSelected && reqDays > 0 ? [{label:'사용 연차', val:`${reqDays}일 (잔여: ${afterLeave}일)`}] : []),
+                ...(leaveTypeSelected && reqDays > 0 ? [{label:'사용 연차', val:`${reqDays}H (잔여: ${afterLeave}H)`}] : []),
               ].map(item=>(
                 <div key={item.label} className="flex gap-3">
                   <span className="text-xs font-medium text-gray-400 w-16 flex-shrink-0 pt-0.5">{item.label}</span>

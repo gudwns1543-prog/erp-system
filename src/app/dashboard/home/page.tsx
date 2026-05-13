@@ -103,13 +103,26 @@ export default function HomePage() {
     const { data: recs } = await supabase.from('attendance').select('reg_hours')
       .eq('user_id', session.user.id).gte('work_date', start)
     const monthReg = (recs||[]).reduce((a:number,r:any)=>a+(r.reg_hours||0),0)
-    // 잔여 연차 - 승인된 연차 차감하여 정확히 계산
+    // 잔여 연차 - 시간 단위로 정확히 계산
     const { data: usedLeaveData } = await supabase.from('approvals')
-      .select('type').eq('requester_id', session.user.id).eq('status','approved')
-      .in('type',['연차','반차(오전)','반차(오후)'])
+      .select('type, start_date, end_date').eq('requester_id', session.user.id)
+      .in('status',['approved','pending'])
+      .in('type',['연차','반차(오전)','반차(오후)','반반차'])
       .gte('start_date', new Date().getFullYear() + '-01-01')
-    const usedLeaveCount = (usedLeaveData||[]).reduce((a:number, l:any) =>
-      a + (l.type.includes('반차') ? 0.5 : 1), 0)
+    const usedLeaveCount = (usedLeaveData||[]).reduce((a:number, l:any) => {
+      if (l.type === '반반차') return a + 2
+      if (l.type.includes('반차')) return a + 4
+      // 연차: 근무일 수 × 8H
+      const cur = new Date(l.start_date + 'T12:00:00')
+      const end = new Date((l.end_date||l.start_date) + 'T12:00:00')
+      let workDays = 0
+      while (cur <= end) {
+        const dw = cur.getDay()
+        if (dw !== 0 && dw !== 6) workDays++
+        cur.setDate(cur.getDate() + 1)
+      }
+      return a + workDays * 8
+    }, 0)
     const remainLeave = (p?.annual_leave || 0) - usedLeaveCount
     let pendingCount = 0
     if (p?.role === 'director') {
@@ -334,7 +347,7 @@ export default function HomePage() {
         직원정보: (p?.name||'') + ' ' + (p?.grade||'') + ' / ' + (p?.dept||''),
         오늘출퇴근: attendStatus,
         이번달근태: thisMonth + '월 ' + workDays + '일 출근 / 정규 ' + monthReg + 'h / 초과 ' + monthExt + 'h',
-        잔여연차: remainLeave + '일 (사용 ' + usedLeave + '일 / 기본 ' + (p?.annual_leave||0) + '일)',
+        잔여연차: remainLeave + 'H (사용 ' + usedLeave + 'H / 기본 ' + (p?.annual_leave||0) + 'H)',
         급여일안내: paydayMsg,
         향후30일일정: eventList.length ? eventList : ['등록된 일정 없음'],
         결재현황: approvalList.length ? approvalList : ['대기중인 결재 없음'],

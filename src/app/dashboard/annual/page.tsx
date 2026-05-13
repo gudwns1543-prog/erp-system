@@ -48,11 +48,11 @@ export default function AnnualPage() {
       if (!map[l.requester_id]) map[l.requester_id] = { used: 0, history: [] }
       let days = 0
       if (l.type === '반반차') {
-        days = 0.25
+        days = 2  // 2H
       } else if (l.type === '반차(오전)' || l.type === '반차(오후)') {
-        days = 0.5
+        days = 4  // 4H
       } else {
-        // 연차: 주말/공휴일 제외한 실제 근무일만 계산
+        // 연차: 주말/공휴일 제외한 실제 근무일 x 8H
         const start = new Date(l.start_date + 'T12:00:00')
         const end = new Date((l.end_date || l.start_date) + 'T12:00:00')
         let count = 0
@@ -63,7 +63,7 @@ export default function AnnualPage() {
           if (dow !== 0 && dow !== 6 && !isHoliday(ds)) count++
           cur.setDate(cur.getDate() + 1)
         }
-        days = count
+        days = count * 8  // 8H/일
       }
       map[l.requester_id].used += days
       map[l.requester_id].history.push({ ...l, days })
@@ -86,7 +86,7 @@ export default function AnnualPage() {
   async function addExtraLeave() {
     if (!addModal || addDays <= 0) return
     const supabase = createClient()
-    const newTotal = (addModal.annual_leave || 0) + addDays
+    const newTotal = (addModal.annual_leave || 0) + addDays  // 시간 단위
     await supabase.from('profiles').update({ annual_leave: newTotal }).eq('id', addModal.id)
     setAddModal(null); setAddDays(0); setAddReason('')
     setAlert(addModal.name + '님에게 ' + addDays + '일 추가 지급 완료')
@@ -154,7 +154,7 @@ export default function AnnualPage() {
               <div className="text-sm font-medium text-gray-700 mb-3">사용 이력 ({new Date().getFullYear()}년)</div>
               <table className="w-full text-sm">
                 <thead><tr className="border-b border-gray-100">
-                  {['유형','시작일','종료일','사용일수'].map(h=>(
+                  {['유형','시작일','종료일','사용H'].map(h=>(
                     <th key={h} className="pb-2 text-left text-xs font-medium text-gray-400 pr-4">{h}</th>
                   ))}
                 </tr></thead>
@@ -204,7 +204,7 @@ export default function AnnualPage() {
                         </div>
                       ) : (
                         <div className="flex items-center gap-2">
-                          <span className="font-medium">{base}일</span>
+                          <span className="font-medium">{base}H</span>
                           <button onClick={()=>{setEditingId(u.id);setEditVal(base)}}
                             className="text-xs text-gray-400 hover:text-purple-600">✏️</button>
                         </div>
@@ -213,10 +213,10 @@ export default function AnnualPage() {
                     <td className="py-2 pr-4">
                       <button onClick={()=>setHistoryModal({user:u, data})}
                         className="text-amber-600 font-medium hover:underline hover:text-amber-700 cursor-pointer">
-                        {data.used}일
+                        {data.used}H
                       </button>
                     </td>
-                    <td className={`py-2 pr-4 font-semibold ${remain<=3?'text-red-600':'text-teal-600'}`}>{remain}일</td>
+                    <td className={`py-2 pr-4 font-semibold ${remain<=24?'text-red-600':'text-teal-600'}`}>{remain}H</td>
                     <td className="py-2 pr-4">
                       <div className="flex items-center gap-2">
                         <div className="w-20 h-1.5 bg-gray-100 rounded-full overflow-hidden">
@@ -247,7 +247,7 @@ export default function AnnualPage() {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <div className="text-sm font-semibold text-gray-800">{historyModal.user.name}님 연차 사용내역</div>
-                <div className="text-xs text-gray-400 mt-0.5">올해 총 {historyModal.data.used}일 사용</div>
+                <div className="text-xs text-gray-400 mt-0.5">올해 총 {historyModal.data.used}H 사용</div>
               </div>
               <button onClick={()=>setHistoryModal(null)} className="text-gray-400 hover:text-gray-600">✕</button>
             </div>
@@ -270,7 +270,7 @@ export default function AnnualPage() {
                       </div>
                       {h.reason && <div className="text-xs text-gray-400">{h.reason}</div>}
                     </div>
-                    <div className="text-sm font-bold text-amber-600 flex-shrink-0 ml-2">-{h.days}일</div>
+                    <div className="text-sm font-bold text-amber-600 flex-shrink-0 ml-2">-{h.days}H</div>
                   </div>
                 ))}
               </div>
