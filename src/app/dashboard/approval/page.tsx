@@ -114,7 +114,7 @@ export default function ApprovalPage() {
           }
         }
 
-        // 캘린더 자동등록 - 전사 공유 (다른 직원들도 볼 수 있게)
+        // 캘린더 자동등록
         const typeColors: Record<string,string> = {
           '연차':'#EF4444','반차(오전)':'#F97316','반차(오후)':'#F97316',
           '반반차':'#FBBF24','출장':'#3B82F6','병가':'#8B5CF6',
@@ -122,16 +122,15 @@ export default function ApprovalPage() {
         }
         const startTime = approval.start_time || '09:00'
         const endTime = approval.end_time || '18:00'
-        const { data: ev, error: evError } = await supabase.from('events').insert({
+        const { data: ev } = await supabase.from('events').insert({
           title: `[${approval.type}] ${(approval.requester as any)?.name || ''}`,
           start_at: `${approval.start_date}T${startTime}:00`,
           end_at: `${(approval.end_date||approval.start_date)}T${endTime}:00`,
           color: typeColors[approval.type] || '#6B7280',
           creator_id: approval.requester_id,
-          calendar_type: 'company',  // ★ 전사 공유 - 모든 직원이 캘린더에서 확인 가능
+          calendar_type: 'personal',
           is_locked: true,
         }).select().single()
-        if (evError) console.error('캘린더 자동등록 오류:', evError)
         if (ev) {
           await supabase.from('event_attendees').insert({
             event_id: ev.id, user_id: approval.requester_id, status: 'accepted'

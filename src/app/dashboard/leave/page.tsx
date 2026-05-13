@@ -47,6 +47,10 @@ export default function LeavePage() {
   const [alert, setAlert] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
   const [showDetail, setShowDetail] = useState<any>(null)
+  const [showCal, setShowCal] = useState<'start'|'end'|null>(null)
+  const [calYear, setCalYear] = useState(new Date().getFullYear())
+  const [calMonth, setCalMonth] = useState(new Date().getMonth())
+  const [calEvents, setCalEvents] = useState<any[]>([])
   const [remainLeave, setRemainLeave] = useState(0)       // 잔여 연차 (일)
   const [usedLeave, setUsedLeave] = useState(0)            // 사용 연차 (일)
   const [totalLeave, setTotalLeave] = useState(0)          // 총 연차 (일)
@@ -96,6 +100,12 @@ export default function LeavePage() {
     })
     setUsedLeave(used)
     setRemainLeave(annualLeave - used)
+
+    // 캘린더 이벤트 로드 (전사 공유 + 본인 일정)
+    const { data: evs } = await supabase.from('events')
+      .select('title,start_at,end_at,color,calendar_type')
+      .or('calendar_type.eq.company,creator_id.eq.' + session.user.id)
+    setCalEvents(evs||[])
   }, [form.approverId])
 
   useEffect(() => { load() }, [load])
@@ -366,8 +376,11 @@ export default function LeavePage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">시작일 *</label>
-                <input type="date" className="input" value={form.start}
-                  onChange={e=>{ setForm(f=>({...f,start:e.target.value,end:f.end||e.target.value})); setLeaveError('') }} required />
+                <button type="button"
+                  onClick={()=>{ setCalYear(form.start?new Date(form.start).getFullYear():new Date().getFullYear()); setCalMonth(form.start?new Date(form.start).getMonth():new Date().getMonth()); setShowCal('start') }}
+                  className={`input w-full text-left ${form.start?'text-gray-800':'text-gray-400'}`}>
+                  {form.start || '날짜 선택 📅'}
+                </button>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">시작 시간</label>
@@ -382,9 +395,11 @@ export default function LeavePage() {
                 <label className="block text-xs font-medium text-gray-500 mb-1">
                   종료일 {!isMultiDay && <span className="text-gray-300">(당일이면 생략)</span>}
                 </label>
-                <input type="date" className="input" value={form.end}
-                  onChange={e=>{ setForm(f=>({...f,end:e.target.value})); setLeaveError('') }}
-                  min={form.start} />
+                <button type="button"
+                  onClick={()=>{ setCalYear(form.end?new Date(form.end).getFullYear():form.start?new Date(form.start).getFullYear():new Date().getFullYear()); setCalMonth(form.end?new Date(form.end).getMonth():form.start?new Date(form.start).getMonth():new Date().getMonth()); setShowCal('end') }}
+                  className={`input w-full text-left ${form.end?'text-gray-800':'text-gray-400'}`}>
+                  {form.end || '날짜 선택 📅'}
+                </button>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">종료 시간</label>
@@ -425,6 +440,127 @@ export default function LeavePage() {
 
       {tab==='all' && profile?.role==='director' && <RequestTable data={allRequests} showRequester />}
       {tab==='mine' && <RequestTable data={myRequests} />}
+
+      {/* 캘린더 날짜 선택 모달 */}
+      {showCal && (() => {
+        const DAYS = ['일','월','화','수','목','금','토']
+        const firstDay = new Date(calYear, calMonth, 1).getDay()
+        const daysInMonth = new Date(calYear, calMonth+1, 0).getDate()
+        const prevDays = new Date(calYear, calMonth, 0).getDate()
+        const cells: {date:string|null, day:number, isCurrentMonth:boolean}[] = []
+        for (let i = 0; i < firstDay; i++) {
+          cells.push({date:null, day:prevDays-firstDay+1+i, isCurrentMonth:false})
+        }
+        for (let d = 1; d <= daysInMonth; d++) {
+          const ds = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+          cells.push({date:ds, day:d, isCurrentMonth:true})
+        }
+        const remaining = 42 - cells.length
+        for (let i = 1; i <= remaining; i++) {
+          cells.push({date:null, day:i, isCurrentMonth:false})
+        }
+
+        function getDayEvents(ds: string) {
+          return calEvents.filter(e => e.start_at.slice(0,10) <= ds && e.end_at.slice(0,10) >= ds)
+        }
+
+        function selectDate(ds: string) {
+          const dow = new Date(ds + 'T00:00:00').getDay()
+          if (dow === 0 || dow === 6) return // 주말 선택 불가
+          if (showCal === 'start') {
+            setForm(f=>({...f, start:ds, end:f.end && f.end < ds ? ds : f.end}))
+          } else {
+            if (form.start && ds < form.start) return
+            setForm(f=>({...f, end:ds}))
+          }
+          setLeaveError('')
+          setShowCal(null)
+        }
+
+        return (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg">
+              <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-gray-800">
+                    {showCal === 'start' ? '시작일' : '종료일'} 선택
+                  </span>
+                  <span className="text-xs text-gray-400">주말은 선택 불가</span>
+                </div>
+                <button onClick={()=>setShowCal(null)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
+              </div>
+              {/* 월 네비게이션 */}
+              <div className="flex items-center justify-between px-4 py-2 border-b border-gray-50">
+                <button onClick={()=>{ if(calMonth===0){setCalMonth(11);setCalYear(y=>y-1)}else setCalMonth(m=>m-1) }}
+                  className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500">‹</button>
+                <span className="text-sm font-semibold text-gray-700">{calYear}년 {calMonth+1}월</span>
+                <button onClick={()=>{ if(calMonth===11){setCalMonth(0);setCalYear(y=>y+1)}else setCalMonth(m=>m+1) }}
+                  className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500">›</button>
+              </div>
+              {/* 요일 헤더 */}
+              <div className="grid grid-cols-7 px-3 pt-2">
+                {DAYS.map((d,i)=>(
+                  <div key={d} className={`text-center text-xs font-medium py-1.5 ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-400'}`}>{d}</div>
+                ))}
+              </div>
+              {/* 날짜 그리드 */}
+              <div className="grid grid-cols-7 px-3 pb-3 gap-y-1">
+                {cells.map((cell, idx) => {
+                  if (!cell.date || !cell.isCurrentMonth) {
+                    return <div key={idx} className="h-14 flex items-start justify-center pt-1"><span className="text-xs text-gray-200">{cell.day}</span></div>
+                  }
+                  const dow = new Date(cell.date + 'T00:00:00').getDay()
+                  const isWeekend = dow === 0 || dow === 6
+                  const isHol = isHoliday(cell.date)
+                  const isStart = form.start === cell.date
+                  const isEnd = form.end === cell.date
+                  const inRange = form.start && form.end && cell.date > form.start && cell.date < form.end
+                  const isToday = cell.date === new Date().toISOString().slice(0,10)
+                  const dayEvs = getDayEvents(cell.date)
+                  const isEndDisabled = showCal === 'end' && form.start && cell.date < form.start
+
+                  return (
+                    <button key={idx} type="button"
+                      onClick={()=>!isWeekend && !isHol && !isEndDisabled && selectDate(cell.date!)}
+                      disabled={isWeekend || isHol || !!isEndDisabled}
+                      className={`h-14 rounded-lg flex flex-col items-center pt-1 transition-colors relative
+                        ${isStart||isEnd ? 'bg-purple-600 text-white' :
+                          inRange ? 'bg-purple-50' :
+                          isWeekend||isHol ? 'opacity-30 cursor-not-allowed' :
+                          isEndDisabled ? 'opacity-20 cursor-not-allowed' :
+                          'hover:bg-gray-100 cursor-pointer'}
+                      `}>
+                      <span className={`text-xs font-medium ${
+                        isStart||isEnd ? 'text-white' :
+                        dow===0||isHol ? 'text-red-500' :
+                        dow===6 ? 'text-blue-500' :
+                        isToday ? 'text-purple-600 font-bold' : 'text-gray-700'
+                      }`}>{cell.day}</span>
+                      {isToday && !isStart && !isEnd && <div className="w-1 h-1 rounded-full bg-purple-400 mt-0.5"/>}
+                      <div className="flex flex-col gap-0.5 w-full px-0.5 mt-0.5">
+                        {dayEvs.slice(0,2).map((e:any,i:number)=>(
+                          <div key={i} className="text-center rounded text-white truncate"
+                            style={{fontSize:'8px', backgroundColor: e.color||'#534AB7', padding:'0 2px'}}>
+                            {e.title}
+                          </div>
+                        ))}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+              {/* 선택된 날짜 표시 */}
+              <div className="px-4 pb-4 border-t border-gray-50 pt-3 flex items-center justify-between">
+                <div className="text-xs text-gray-500">
+                  {form.start && <span>시작: <strong className="text-purple-600">{form.start}</strong></span>}
+                  {form.end && form.end !== form.start && <span className="ml-2">종료: <strong className="text-purple-600">{form.end}</strong></span>}
+                </div>
+                <button onClick={()=>setShowCal(null)} className="btn-secondary text-xs px-3 py-1.5">확인</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* 상신 확인 모달 */}
       {showConfirm && (
