@@ -301,14 +301,38 @@ export default function CalendarPage() {
                       )}
                     </div>
                     <div className="space-y-1">
-                      {dayEvents.slice(0,3).map(ev=>(
-                        <div key={ev.id}
-                          className="px-1.5 py-0.5 rounded truncate text-white cursor-pointer hover:opacity-80 font-medium"
-                          style={{background:ev.color||'#534AB7',fontSize:'13px',lineHeight:'18px'}}
-                          onClick={e=>{e.stopPropagation();setShowDetail(ev)}}>
-                          {ev.title}
-                        </div>
-                      ))}
+                      {dayEvents.slice(0,3).map(ev=>{
+                        // title 형식 "[상태] 유형 이름" 이면 결재 이벤트 → 이름-유형 형식 + 노랑/파랑 색상
+                        const m = String(ev.title||'').match(/^\[([^\]]+)\]\s+(\S+)\s+(.+)$/)
+                        const isApproval = !!m
+                        const status = m ? m[1] : ''
+                        const typeName = m ? m[2] : ''
+                        const personName = m ? m[3] : ''
+                        const isPending = status === '신청중'
+                        const typeShort = typeName.replace(/[()]/g, '')
+                        const displayText = isApproval ? `${personName}-${typeShort}` : ev.title
+                        return (
+                          <div key={ev.id}
+                            className="px-1.5 py-0.5 rounded truncate cursor-pointer hover:opacity-80 font-bold"
+                            title={ev.title}
+                            style={isApproval ? {
+                              backgroundColor: isPending ? '#FEF3C7' : '#DBEAFE',
+                              border: isPending ? '1px solid #FCD34D' : '1px solid #93C5FD',
+                              color: '#111827',
+                              fontSize:'13px',
+                              lineHeight:'18px',
+                            } : {
+                              background:ev.color||'#534AB7',
+                              color:'#fff',
+                              fontSize:'13px',
+                              lineHeight:'18px',
+                              fontWeight:500,
+                            }}
+                            onClick={e=>{e.stopPropagation();setShowDetail(ev)}}>
+                            {displayText}
+                          </div>
+                        )
+                      })}
                       {dayEvents.length>3 && <div className="text-gray-500 font-medium pl-1" style={{fontSize:'12px'}}>+{dayEvents.length-3}개</div>}
                     </div>
                   </div>

@@ -629,11 +629,36 @@ export default function HomePage() {
                   const evTime = ev.updated_at || ev.created_at
                   const isNew = evTime && new Date(evTime).getTime() > new Date(lastChecked).getTime()
                     && ev.creator_id !== profile?.id // 내가 만든 건 NEW 표시 안 함
+
+                  // title 형식 "[상태] 유형 이름" 이면 결재 이벤트 → 이름-유형 형식 + 노랑/파랑 색상
+                  // 그 외 일반 일정(생일, 회사 이벤트 등)은 기존 색상 그대로
+                  const m = String(ev.title||'').match(/^\[([^\]]+)\]\s+(\S+)\s+(.+)$/)
+                  const isApproval = !!m
+                  const status = m ? m[1] : ''
+                  const typeName = m ? m[2] : ''
+                  const personName = m ? m[3] : ''
+                  const isPending = status === '신청중'
+                  const typeShort = typeName.replace(/[()]/g, '')
+                  const displayText = isApproval ? `${personName}-${typeShort}` : ev.title
+
                   return (
                     <div key={ev.id}
-                      className="text-white rounded px-1.5 mb-1 flex items-center gap-1"
-                      style={{background:ev.color||'#534AB7',fontSize:'12px',lineHeight:'20px',fontWeight:500}}>
-                      <span className="truncate flex-1">{ev.title}</span>
+                      className="rounded px-1.5 mb-1 flex items-center gap-1 truncate font-bold"
+                      title={ev.title}
+                      style={isApproval ? {
+                        backgroundColor: isPending ? '#FEF3C7' : '#DBEAFE',
+                        border: isPending ? '1px solid #FCD34D' : '1px solid #93C5FD',
+                        color: '#111827',
+                        fontSize:'12px',
+                        lineHeight:'18px',
+                      } : {
+                        background:ev.color||'#534AB7',
+                        color:'#fff',
+                        fontSize:'12px',
+                        lineHeight:'20px',
+                        fontWeight:500,
+                      }}>
+                      <span className="truncate flex-1">{displayText}</span>
                       {isNew && (
                         <span className="flex-shrink-0 rounded px-1 font-bold"
                           style={{fontSize:'10px',background:'#ef4444',color:'#facc15',border:'1px solid #dc2626'}}>
