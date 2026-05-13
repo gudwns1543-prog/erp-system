@@ -5,6 +5,15 @@ import { isHoliday, classifyWork, minutesToHours } from '@/lib/attendance'
 
 const TYPES = ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가']
 
+// 공휴일 이름 (캘린더 셀 표시용) - calendar 페이지와 동일
+const HOLIDAY_NAMES_LEAVE: Record<string,string> = {
+  '2026-01-01':'신정','2026-02-16':'설날연휴','2026-02-17':'설날',
+  '2026-02-18':'설날연휴','2026-03-01':'삼일절','2026-05-05':'어린이날',
+  '2026-05-25':'부처님오신날','2026-06-03':'현충일',
+  '2026-08-17':'광복절대체','2026-09-24':'추석연휴','2026-09-25':'추석',
+  '2026-09-26':'추석연휴','2026-10-05':'개천절대체','2026-10-09':'한글날','2026-12-25':'성탄절',
+}
+
 const TYPE_TIMES: Record<string, {startTime:string, endTime:string}> = {
   '연차':       { startTime:'09:00', endTime:'18:00' },
   '반차(오전)': { startTime:'09:00', endTime:'13:00' },
@@ -101,8 +110,14 @@ export default function LeavePage() {
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
     const { data: dirs } = await supabase.from('profiles').select('id,name').eq('role','director')
-    setApprovers(dirs||[])
-    if (dirs?.[0] && !form.approverId) setForm(f=>({...f, approverId: dirs[0].id}))
+    // 박팔주를 기본 결재자로 우선 배치 (있으면 맨 앞으로)
+    const sortedDirs = (dirs||[]).slice().sort((a:any, b:any) => {
+      if (a.name === '박팔주') return -1
+      if (b.name === '박팔주') return 1
+      return (a.name||'').localeCompare(b.name||'')
+    })
+    setApprovers(sortedDirs)
+    if (sortedDirs[0] && !form.approverId) setForm(f=>({...f, approverId: sortedDirs[0].id}))
     const { data: mine } = await supabase.from('approvals')
       .select('*, approver:approver_id(name), requester:requester_id(name,dept,color,tc)')
       .eq('requester_id', session.user.id).order('created_at',{ascending:false})
@@ -636,7 +651,7 @@ export default function LeavePage() {
 
         return (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl">
               {/* 헤더 */}
               <div className="p-4 border-b border-gray-100 flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -669,14 +684,15 @@ export default function LeavePage() {
               </div>
 
               {/* 요일 헤더 */}
-              <div className="grid grid-cols-7 px-3 pt-2">
+              <div className="grid grid-cols-7 px-3 pt-2 gap-x-1">
                 {DAYS.map((d,i)=>(
-                  <div key={d} className={`text-center text-sm font-bold py-2 ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-500'}`}>{d}</div>
+                  <div key={d} className={`text-center text-sm font-bold py-2 rounded
+                    ${i===0?'text-red-500 bg-red-50':i===6?'text-blue-500 bg-blue-50':'text-gray-600 bg-gray-50'}`}>{d}</div>
                 ))}
               </div>
 
               {/* 날짜 그리드 */}
-              <div className="grid grid-cols-7 px-3 pb-3 gap-y-1">
+              <div className="grid grid-cols-7 px-3 pb-3 gap-1">
                 {cells.map((cell, idx) => {
                   if (!cell.date || !cell.isCurrentMonth) {
                     // 이전/다음달이지만 선택 범위에 포함된 날짜는 연보라 표시
@@ -696,14 +712,16 @@ export default function LeavePage() {
                     new Date(prevDate+'T00:00:00').getDay() !== 0 &&
                     new Date(prevDate+'T00:00:00').getDay() !== 6
                   if (!cell.isCurrentMonth) return (
-                    <div key={idx} className={`h-20 flex items-start justify-center pt-1.5 rounded-lg ${prevInRange?'bg-purple-50':''}`}>
-                      <span className={`text-sm ${prevInRange?'text-purple-300':'text-gray-200'}`}>{cell.day}</span>
+                    <div key={idx} className={`h-24 flex items-start justify-center pt-2 rounded-lg ${prevInRange?'bg-purple-50':''}`}>
+                      <span className={`text-base ${prevInRange?'text-purple-300':'text-gray-200'}`}>{cell.day}</span>
                     </div>
                   )
                   }
                   const dow = new Date(cell.date! + 'T00:00:00').getDay()
-                  const isWknd = dow === 0 || dow === 6
-                  const isHol = isHoliday(cell.date!)
+                  const isSun = dow === 0
+                  const isSat = dow === 6
+                  const isWknd = isSun || isSat
+                  const isHol = HOLIDAY_NAMES_LEAVE[cell.date!] // 평일 공휴일만 별도 판정
                   const isBlocked = blockedDates.has(cell.date!) // 하루 1일 초과 → 선택불가
                   const isStart = form.start === cell.date
                   const isEnd = form.end === cell.date
@@ -714,38 +732,47 @@ export default function LeavePage() {
                   // 단일 데이터 소스: dayEvs (calEvents 기반, [상태] 유형 누구 형식 통일)
                   const dayEvs = getDayEvents(cell.date!)
                   const isEndDisabled = showCal === 'end' && !!form.start && !form.end && cell.date! < form.start
-                  const isDisabled = isWknd || isHol || isBlocked || !!isEndDisabled
+                  const isDisabled = isWknd || !!isHol || isBlocked || !!isEndDisabled
+
+                  // 배경색: 토요일=파랑, 일요일/공휴일=빨강 (home과 동일)
+                  let bgClass = 'hover:bg-gray-100 cursor-pointer'
+                  if (isStart||isEnd) bgClass = 'bg-purple-600 shadow-md'
+                  else if (isBlocked) bgClass = 'bg-red-100 cursor-not-allowed'
+                  else if (isInRangeWorkDay) bgClass = 'bg-purple-100'
+                  else if (isSat) bgClass = 'bg-blue-50/60 cursor-not-allowed'
+                  else if (isSun || isHol) bgClass = 'bg-red-50 cursor-not-allowed'
+                  else if (isEndDisabled) bgClass = 'opacity-20 cursor-not-allowed'
+
+                  // 글자색: 토요일=파랑, 일요일/공휴일=빨강
+                  let txtClass = 'text-gray-700'
+                  if (isStart||isEnd) txtClass = 'text-white font-bold'
+                  else if (isBlocked) txtClass = 'text-red-500 font-bold'
+                  else if (isInRangeWorkDay) txtClass = 'text-purple-700 font-bold'
+                  else if (isSat) txtClass = 'text-blue-500'
+                  else if (isSun || isHol) txtClass = 'text-red-400'
+                  else if (isToday) txtClass = 'text-purple-600 font-bold'
 
                   return (
                     <button key={idx} type="button"
                       onClick={()=>!isDisabled && selectDate(cell.date!)}
                       disabled={isDisabled}
-                      className={`h-20 rounded-lg flex flex-col items-center pt-1.5 transition-colors relative overflow-hidden
-                        ${isStart||isEnd ? 'bg-purple-600 shadow-md' :
-                          isBlocked ? 'bg-red-100 cursor-not-allowed' :
-                          isInRangeWorkDay ? 'bg-purple-100' :
-                          isWknd||isHol ? 'bg-gray-50 opacity-40 cursor-not-allowed' :
-                          isEndDisabled ? 'opacity-20 cursor-not-allowed' :
-                          'hover:bg-gray-100 cursor-pointer'}
-                      `}>
-                      <span className={`text-sm font-semibold ${
-                        isStart||isEnd ? 'text-white font-bold' :
-                        isBlocked ? 'text-red-500 font-bold' :
-                        isInRangeWorkDay ? 'text-purple-700 font-bold' :
-                        dow===0||isHol ? 'text-gray-400' :
-                        dow===6 ? 'text-gray-400' :
-                        isToday ? 'text-purple-600 font-bold' : 'text-gray-700'
-                      }`}>{cell.day}</span>
-                      <div className="flex flex-col gap-0.5 w-full px-1 mt-0.5">
+                      className={`h-24 rounded-lg flex flex-col items-center pt-1.5 transition-colors relative overflow-hidden ${bgClass}`}>
+                      <div className="flex items-center gap-1">
+                        <span className={`text-base font-bold ${txtClass}`}>{cell.day}</span>
+                        {isHol && !isStart && !isEnd && (
+                          <span className="text-red-400 font-semibold" style={{fontSize:'10px'}}>{isHol}</span>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-0.5 w-full px-1 mt-1">
                         {/* 단일 dayEvs 로직 - 상태/유형/누구 형식 통일 */}
                         {!isStart && !isEnd && dayEvs.slice(0,2).map((e:any,i:number)=>(
                           <div key={i} className="text-center rounded text-white truncate font-medium"
-                            style={{fontSize:'11px', backgroundColor: e.color||'#534AB7', padding:'1px 3px', lineHeight:'14px'}}>
+                            style={{fontSize:'13px', backgroundColor: e.color||'#534AB7', padding:'2px 4px', lineHeight:'16px'}}>
                             {e.title}
                           </div>
                         ))}
                         {!isStart && !isEnd && dayEvs.length > 2 && (
-                          <div className="text-center text-gray-500 font-medium" style={{fontSize:'10px',lineHeight:'12px'}}>
+                          <div className="text-center text-gray-500 font-medium" style={{fontSize:'11px',lineHeight:'13px'}}>
                             +{dayEvs.length - 2}
                           </div>
                         )}
