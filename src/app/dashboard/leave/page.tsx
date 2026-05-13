@@ -122,12 +122,16 @@ export default function LeavePage() {
       const alreadyApproved = new Set(
         myRequests
           .filter((r:any) => r.status === 'approved' && ['연차','반차(오전)','반차(오후)','반반차'].includes(r.type))
-          .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date))
+          .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date)
+            .filter(d => { const dw = new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
+          )
       )
       const alreadyPending = new Set(
         myRequests
           .filter((r:any) => r.status === 'pending')
-          .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date))
+          .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date)
+            .filter(d => { const dw = new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
+          )
       )
       const dates = getDateRange(start, end || start)
       return dates.filter(d => {
@@ -410,19 +414,25 @@ export default function LeavePage() {
           cells.push({date:null, day:i, isCurrentMonth:false})
         }
 
+        // 주말/공휴일 제외하고 실제 근무일만 승인/대기 날짜로 처리
         const approvedDates = new Set(
           myRequests
             .filter((r:any) => r.status === 'approved')
-            .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date))
+            .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date)
+              .filter(d => { const dw = new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
+            )
         )
         const pendingDates = new Set(
           myRequests
             .filter((r:any) => r.status === 'pending')
-            .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date))
+            .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date)
+              .filter(d => { const dw = new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
+            )
         )
 
         function getDayEvents(ds: string) {
-          return calEvents.filter(e => e.start_at.slice(0,10) <= ds && e.end_at.slice(0,10) >= ds)
+          // 정확히 해당 날짜에 시작하는 이벤트만 (하루씩 등록된 연차 이벤트)
+          return calEvents.filter(e => e.start_at.slice(0,10) === ds)
         }
 
         function selectDate(ds: string) {
