@@ -730,14 +730,24 @@ export default function HomePage() {
                   const isNew = evTime && new Date(evTime).getTime() > new Date(lastChecked).getTime()
                     && ev.creator_id !== profile?.id // 내가 만든 건 NEW 표시 안 함
 
-                  // title 형식 "[상태] 유형 이름" 이면 결재 이벤트 → 이름-유형 형식 + 노랑/파랑 색상
-                  // 그 외 일반 일정(생일, 회사 이벤트 등)은 기존 색상 그대로
-                  const m = String(ev.title||'').match(/^\[([^\]]+)\]\s+(\S+)\s+(.+)$/)
-                  const isApproval = !!m
-                  const status = m ? m[1] : ''
-                  const typeName = m ? m[2] : ''
-                  const personName = m ? m[3] : ''
-                  const isPending = status === '신청중'
+                  // title 매칭: 새 형식 "[상태] 유형 이름" 또는 옛날 형식 "[유형] 이름"
+                  const matchNew = String(ev.title||'').match(/^\[([^\]]+)\]\s+(\S+)\s+(.+)$/)
+                  const matchOld = !matchNew ? String(ev.title||'').match(/^\[(\S+)\]\s+(.+)$/) : null
+                  let isApproval = false
+                  let isPending = false
+                  let typeName = ''
+                  let personName = ''
+                  if (matchNew) {
+                    isApproval = true
+                    isPending = matchNew[1] === '신청중'
+                    typeName = matchNew[2]
+                    personName = matchNew[3]
+                  } else if (matchOld && ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가'].includes(matchOld[1])) {
+                    isApproval = true
+                    isPending = false
+                    typeName = matchOld[1]
+                    personName = matchOld[2]
+                  }
                   const typeShort = typeName === '반차(오전)' ? '오전반차'
                     : typeName === '반차(오후)' ? '오후반차'
                     : typeName.replace(/[()]/g, '')

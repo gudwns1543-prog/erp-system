@@ -349,13 +349,26 @@ export default function CalendarPage() {
                     </div>
                     <div className="space-y-1">
                       {dayEvents.slice(0,3).map(ev=>{
-                        // title 형식 "[상태] 유형 이름" 이면 결재 이벤트 → 이름-유형 형식 + 노랑/파랑 색상
-                        const m = String(ev.title||'').match(/^\[([^\]]+)\]\s+(\S+)\s+(.+)$/)
-                        const isApproval = !!m
-                        const status = m ? m[1] : ''
-                        const typeName = m ? m[2] : ''
-                        const personName = m ? m[3] : ''
-                        const isPending = status === '신청중'
+                        // title 매칭: 새 형식 "[상태] 유형 이름" 또는 옛날 형식 "[유형] 이름"
+                        const matchNew = String(ev.title||'').match(/^\[([^\]]+)\]\s+(\S+)\s+(.+)$/)
+                        const matchOld = !matchNew ? String(ev.title||'').match(/^\[(\S+)\]\s+(.+)$/) : null
+                        let isApproval = false
+                        let isPending = false
+                        let typeName = ''
+                        let personName = ''
+                        if (matchNew) {
+                          // 새 형식: "[승인] 연차 박형준"
+                          isApproval = true
+                          isPending = matchNew[1] === '신청중'
+                          typeName = matchNew[2]
+                          personName = matchNew[3]
+                        } else if (matchOld && ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가'].includes(matchOld[1])) {
+                          // 옛날 형식: "[연차] 박형준"
+                          isApproval = true
+                          isPending = false // 옛날 형식은 events에 들어왔으니 승인된 것
+                          typeName = matchOld[1]
+                          personName = matchOld[2]
+                        }
                         const typeShort = typeName === '반차(오전)' ? '오전반차'
                           : typeName === '반차(오후)' ? '오후반차'
                           : typeName.replace(/[()]/g, '')

@@ -724,13 +724,23 @@ export default function LeavePage() {
                         </div>
                         <div className="flex flex-col gap-0.5 w-full px-1 mt-1">
                           {dayEvs.slice(0,2).map((e:any,i:number)=>{
-                            // title 형식: "[상태] 유형 이름" → 파싱
-                            const m = String(e.title||'').match(/^\[([^\]]+)\]\s+(\S+)\s+(.+)$/)
-                            const status = m ? m[1] : ''
-                            const typeName = m ? m[2] : ''
-                            const personName = m ? m[3] : (e.title||'')
-                            const isPending = status === '신청중'
-                            // 유형 표시: 반차(오전)→오전반차, 반차(오후)→오후반차, 반반차→반반차
+                            // title 매칭: 새 형식 "[상태] 유형 이름" 또는 옛날 형식 "[유형] 이름"
+                            const matchNew = String(e.title||'').match(/^\[([^\]]+)\]\s+(\S+)\s+(.+)$/)
+                            const matchOld = !matchNew ? String(e.title||'').match(/^\[(\S+)\]\s+(.+)$/) : null
+                            let isPending = false
+                            let typeName = ''
+                            let personName = ''
+                            if (matchNew) {
+                              isPending = matchNew[1] === '신청중'
+                              typeName = matchNew[2]
+                              personName = matchNew[3]
+                            } else if (matchOld && ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가'].includes(matchOld[1])) {
+                              isPending = false
+                              typeName = matchOld[1]
+                              personName = matchOld[2]
+                            } else {
+                              personName = e.title || ''
+                            }
                             const typeShort = typeName === '반차(오전)' ? '오전반차'
                               : typeName === '반차(오후)' ? '오후반차'
                               : typeName.replace(/[()]/g, '')

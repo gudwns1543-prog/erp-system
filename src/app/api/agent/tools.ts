@@ -103,6 +103,49 @@ export const tools = [
       required: ['approval_id','action'],
     },
   },
+  {
+    name: 'update_approval',
+    description: '본인이 신청한 결재를 수정합니다. pending(신청중) 상태인 것만 수정 가능. approval_id가 없으면 get_my_approvals(type=sent, status=pending)로 먼저 조회해서 가장 최근 것을 찾아주세요.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        approval_id: { type: 'string', description: '수정할 결재 ID' },
+        type: {
+          type: 'string',
+          enum: ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가'],
+          description: '변경할 유형 (생략시 변경 안 함)',
+        },
+        start_date: { type: 'string', description: '변경할 시작일 YYYY-MM-DD (생략시 변경 안 함)' },
+        end_date: { type: 'string', description: '변경할 종료일 YYYY-MM-DD (생략시 변경 안 함)' },
+        start_time: { type: 'string', description: '변경할 시작 시각 HH:MM (생략시 변경 안 함)' },
+        end_time: { type: 'string', description: '변경할 종료 시각 HH:MM (생략시 변경 안 함)' },
+        reason: { type: 'string', description: '변경할 사유 (생략시 변경 안 함)' },
+      },
+      required: ['approval_id'],
+    },
+  },
+  {
+    name: 'delete_approval',
+    description: '본인이 신청한 결재를 삭제합니다. pending(신청중) 상태인 것만 삭제 가능. 이미 승인된 건은 삭제 불가.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        approval_id: { type: 'string', description: '삭제할 결재 ID' },
+      },
+      required: ['approval_id'],
+    },
+  },
+  {
+    name: 'delete_calendar_event',
+    description: '본인이 생성한 일정을 삭제합니다.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        event_id: { type: 'string', description: '삭제할 일정 ID' },
+      },
+      required: ['event_id'],
+    },
+  },
 ]
 
 // ─── 실행 컨텍스트 타입 ──────
@@ -290,6 +333,63 @@ export async function executeTool(name: string, input: any, ctx: Ctx): Promise<a
         .eq('approver_id', userId)
       if (error) return { 오류: error.message }
       return { 성공: true, 메시지: action === 'approved' ? '✅ 승인 완료' : '❌ 반려 완료' }
+    }
+
+    // 9) 결재 수정 (본인이 신청한 pending 건만)
+    case 'update_approval': {
+      // 먼저 그 결재가 본인 거고 pending인지 확인
+      const { data: existing } = await supabase.from('approvals')
+        .select('id, type, start_date, end_date, status, requester_id, reason')
+        .eq('id', input.approval_id).maybeSingle()
+      if (!existing) return { 오류: '결재를 찾을 수 없습니다.' }
+      if (existing.requester_id !== userId) return { 오류: '본인이 신청한 결재만 수정할 수 있습니다.' }
+      if (existing.status !== 'pending') return { 오류: '이미 처리된 결재는 수정할 수 없습니다. 새로 신청하거나 결재자에게 반려 요청해주세요.' }
+
+      const updateData: any = {}
+      if (input.type) updateData.type = input.type
+      if (input.start_date) updateData.start_date = input.start_date
+      if (input.end_date) updateData.end_date = input.end_date
+      if (input.start_time) updateData.start_time = input.start_time
+      if (input.end_time) updateData.end_time = input.end_time
+      if (input.reason) updateData.reason = input.reason
+      if (Object.keys(updateData).length === 0) return { 오류: '변경할 항목이 없습니다.' }
+      updateData.updated_at = new Date().toISOString()
+
+      const { data, error } = await supabase.from('approvals')
+        .update(updateData).eq('id', input.approval_id).select().single()
+      if (error) return { 오류: error.message }
+      return {
+        성공: true,
+        메시지: `✅ 결재 수정 완료`,
+        변경전: { 유형: existing.type, 시작: existing.start_date, 종료: existing.end_date, 사유: existing.reason },
+        변경후: { 유형: data.type, 시작: data.start_date, 종료: data.end_date, 사유: data.reason },
+      }
+    }
+
+    // 10) 결재 삭제 (본인이 신청한 pending 건만)
+    case 'delete_approval': {
+      const { data: existing } = await supabase.from('approvals')
+        .select('id, type, start_date, status, requester_id')
+        .eq('id', input.approval_id).maybeSingle()
+      if (!existing) return { 오류: '결재를 찾을 수 없습니다.' }
+      if (existing.requester_id !== userId) return { 오류: '본인이 신청한 결재만 삭제할 수 있습니다.' }
+      if (existing.status !== 'pending') return { 오류: '이미 처리된 결재는 삭제할 수 없습니다.' }
+
+      const { error } = await supabase.from('approvals').delete().eq('id', input.approval_id)
+      if (error) return { 오류: error.message }
+      return { 성공: true, 메시지: `🗑️ ${existing.type} 신청(${existing.start_date}) 삭제 완료` }
+    }
+
+    // 11) 일정 삭제 (본인이 생성한 것만)
+    case 'delete_calendar_event': {
+      const { data: existing } = await supabase.from('events')
+        .select('id, title, creator_id')
+        .eq('id', input.event_id).maybeSingle()
+      if (!existing) return { 오류: '일정을 찾을 수 없습니다.' }
+      if (existing.creator_id !== userId) return { 오류: '본인이 만든 일정만 삭제할 수 있습니다.' }
+      const { error } = await supabase.from('events').delete().eq('id', input.event_id)
+      if (error) return { 오류: error.message }
+      return { 성공: true, 메시지: `🗑️ "${existing.title}" 일정 삭제 완료` }
     }
 
     default:
