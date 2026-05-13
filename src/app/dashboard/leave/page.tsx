@@ -92,7 +92,6 @@ export default function LeavePage() {
   const [sortAsc, setSortAsc] = useState(false)
   const [conflictModal, setConflictModal] = useState<any>(null)
   const [pendingCancelIds, setPendingCancelIds] = useState<string[]>([])
-  const [showCal, setShowCal] = useState<'start'|'end'|null>(null)
   const [calYear, setCalYear] = useState(new Date().getFullYear())
   const [calMonth, setCalMonth] = useState(new Date().getMonth())
   const [calEvents, setCalEvents] = useState<any[]>([])
@@ -405,7 +404,7 @@ export default function LeavePage() {
   ]
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6 max-w-7xl mx-auto">
       <h1 className="text-lg font-semibold text-gray-800 mb-5">휴가·출장 신청</h1>
       {alert && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{alert}</div>}
 
@@ -420,7 +419,9 @@ export default function LeavePage() {
       </div>
 
       {tab==='apply' && (
-        <div className="max-w-lg space-y-3">
+        <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-5">
+          {/* 좌측: 신청 폼 */}
+          <div className="space-y-3">
           {/* 연차 잔여 현황 카드 */}
           {leaveTypeSelected && (
             <div className="card border-purple-100 bg-purple-50/50">
@@ -483,11 +484,9 @@ export default function LeavePage() {
               <div className={`grid gap-3 ${needsTime ? 'grid-cols-2' : 'grid-cols-1'}`}>
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">시작일 *</label>
-                  <button type="button"
-                    onClick={()=>{ setCalYear(form.start?new Date(form.start+'T00:00:00').getFullYear():new Date().getFullYear()); setCalMonth(form.start?new Date(form.start+'T00:00:00').getMonth():new Date().getMonth()); setShowCal('start') }}
-                    className={`input w-full text-left ${form.start?'text-gray-800':'text-gray-400'}`}>
-                    {form.start || '날짜 선택 📅'}
-                  </button>
+                  <div className={`input w-full ${form.start?'text-gray-800 bg-purple-50 border-purple-200':'text-gray-400'}`}>
+                    {form.start || '👉 오른쪽 캘린더에서 클릭'}
+                  </div>
                 </div>
                 {needsTime && (
                   <div>
@@ -503,11 +502,9 @@ export default function LeavePage() {
                 <div className={`grid gap-3 ${needsTime ? 'grid-cols-2' : 'grid-cols-1'}`}>
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">종료일</label>
-                    <button type="button"
-                      onClick={()=>{ setCalYear(form.end?new Date(form.end+'T00:00:00').getFullYear():form.start?new Date(form.start+'T00:00:00').getFullYear():new Date().getFullYear()); setCalMonth(form.end?new Date(form.end+'T00:00:00').getMonth():form.start?new Date(form.start+'T00:00:00').getMonth():new Date().getMonth()); setShowCal('end') }}
-                      className={`input w-full text-left ${form.end?'text-gray-800':'text-gray-400'}`}>
-                      {form.end || '날짜 선택 📅'}
-                    </button>
+                    <div className={`input w-full ${form.end?'text-gray-800 bg-purple-50 border-purple-200':'text-gray-400'}`}>
+                      {form.end || '👉 오른쪽 캘린더에서 클릭'}
+                    </div>
                   </div>
                   {needsTime && (
                     <div>
@@ -537,6 +534,241 @@ export default function LeavePage() {
               </div>
             </form>
           </div>
+          </div>
+          {/* 우측: 인라인 캘린더 (항상 표시) */}
+          {(()=>{
+            const DAYS = ['일','월','화','수','목','금','토']
+            const firstDay = new Date(calYear, calMonth, 1).getDay()
+            const daysInMonth = new Date(calYear, calMonth+1, 0).getDate()
+            const prevDays = new Date(calYear, calMonth, 0).getDate()
+            type Cell = {date:string|null, day:number, isCurrentMonth:boolean}
+            const cells: Cell[] = []
+            for (let i = 0; i < firstDay; i++) {
+              cells.push({date:null, day:prevDays-firstDay+1+i, isCurrentMonth:false})
+            }
+            for (let d = 1; d <= daysInMonth; d++) {
+              const ds = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+              cells.push({date:ds, day:d, isCurrentMonth:true})
+            }
+            const remaining = 42 - cells.length
+            for (let i = 1; i <= remaining; i++) {
+              cells.push({date:null, day:i, isCurrentMonth:false})
+            }
+
+            // 신청하려는 유형의 사용량
+            const typeDay: Record<string,number> = {
+              '연차':8,'반차(오전)':4,'반차(오후)':4,'반반차':2
+            }
+            const requestingHours = typeDay[form.type] || 0
+
+            // 날짜별 이미 사용량 계산 → 추가하면 1일 초과하는 날짜 차단
+            const blockedDates = new Set<string>()
+            const allWorkDates = new Set<string>()
+            myRequests
+              .filter((r:any) => ['approved','pending'].includes(r.status))
+              .forEach((r:any) => {
+                getDateRange(r.start_date, r.end_date||r.start_date)
+                  .filter(d => { const dw=new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
+                  .forEach(d => allWorkDates.add(d))
+              })
+            allWorkDates.forEach(d => {
+              const usage = getDayUsage(d, myRequests)
+              if (usage + requestingHours > 8) blockedDates.add(d)
+            })
+
+            function getDayEvents(ds: string) {
+              return calEvents.filter(e => {
+                const d = new Date(e.start_at)
+                const kst = new Date(d.getTime() + 9*60*60*1000)
+                return kst.toISOString().slice(0,10) === ds
+              }).sort((a,b) => {
+                const aMe = (a as any).isMe ? 0 : 1
+                const bMe = (b as any).isMe ? 0 : 1
+                return aMe - bMe
+              })
+            }
+
+            const isSingleDay = ['반차(오전)','반차(오후)','반반차'].includes(form.type)
+            const isHalfHalf = form.type === '반반차'
+
+            // 캘린더 활성 모드: 시작일 미선택 → start, 시작일만 → end, 둘 다 → start 재선택
+            const activeMode: 'start' | 'end' = (form.start && !form.end) ? 'end' : 'start'
+
+            function selectDate(ds: string) {
+              const dow = new Date(ds + 'T00:00:00').getDay()
+              if (dow === 0 || dow === 6) return
+              if (isHoliday(ds)) return
+              if (blockedDates.has(ds)) return
+
+              if (isSingleDay) {
+                setForm(f=>({...f, start:ds, end:ds}))
+                setLeaveError('')
+              } else if (!form.start || (form.start && form.end)) {
+                setForm(f=>({...f, start:ds, end:''}))
+              } else {
+                if (ds < form.start) {
+                  setForm(f=>({...f, start:ds, end:''}))
+                  return
+                }
+                setForm(f=>({...f, end:ds}))
+                setLeaveError('')
+              }
+            }
+
+            const _now = new Date()
+            const todayStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`
+
+            return (
+              <div className="card overflow-hidden p-0">
+                {/* 헤더: 가이드 + 상태 표시 */}
+                <div className="p-3 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {isSingleDay ? (
+                      <div className="px-2.5 py-1 rounded-full text-xs font-medium bg-purple-600 text-white">
+                        {isHalfHalf ? '날짜 선택 후 시간 입력' : '날짜 선택 (1일)'}
+                      </div>
+                    ) : (
+                      <>
+                        <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${activeMode==='start' && !form.end?'bg-purple-600 text-white':form.start?'bg-purple-100 text-purple-700':'bg-gray-100 text-gray-400'}`}>
+                          {form.start && !form.end ? '✓ 시작일 선택됨' : form.start && form.end ? '① 시작' : '① 시작일 클릭'}
+                        </div>
+                        <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${activeMode==='end'?'bg-purple-600 text-white':form.end?'bg-purple-100 text-purple-700':'bg-gray-100 text-gray-400'}`}>
+                          {form.end ? '✓ 종료일 선택됨' : '② 종료일'}
+                        </div>
+                      </>
+                    )}
+                    <span className="text-xs text-gray-400">주말·승인·신청중 불가</span>
+                  </div>
+                </div>
+
+                {/* 월 네비게이션 */}
+                <div className="flex items-center justify-between px-4 py-2 border-b border-gray-50">
+                  <button type="button" onClick={()=>{ if(calMonth===0){setCalMonth(11);setCalYear(y=>y-1)}else setCalMonth(m=>m-1) }}
+                    className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500">‹</button>
+                  <span className="text-base font-semibold text-gray-700">{calYear}년 {calMonth+1}월</span>
+                  <button type="button" onClick={()=>{ if(calMonth===11){setCalMonth(0);setCalYear(y=>y+1)}else setCalMonth(m=>m+1) }}
+                    className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500">›</button>
+                </div>
+
+                {/* 요일 헤더 */}
+                <div className="grid grid-cols-7 px-3 pt-2 gap-x-1">
+                  {DAYS.map((d,i)=>(
+                    <div key={d} className={`text-center text-sm font-bold py-2 rounded
+                      ${i===0?'text-red-500 bg-red-50':i===6?'text-blue-500 bg-blue-50':'text-gray-600 bg-gray-50'}`}>{d}</div>
+                  ))}
+                </div>
+
+                {/* 날짜 그리드 */}
+                <div className="grid grid-cols-7 px-3 pb-3 gap-1">
+                  {cells.map((cell, idx) => {
+                    if (!cell.date || !cell.isCurrentMonth) {
+                      const prevDate = cell.isCurrentMonth ? null : (() => {
+                        if (cell.day > 20) {
+                          const m = calMonth === 0 ? 12 : calMonth
+                          const y = calMonth === 0 ? calYear-1 : calYear
+                          return `${y}-${String(m).padStart(2,'0')}-${String(cell.day).padStart(2,'0')}`
+                        } else {
+                          const m = calMonth === 11 ? 1 : calMonth+2
+                          const y = calMonth === 11 ? calYear+1 : calYear
+                          return `${y}-${String(m).padStart(2,'0')}-${String(cell.day).padStart(2,'0')}`
+                        }
+                      })()
+                      const prevInRange = prevDate && form.start && form.end &&
+                        prevDate > form.start && prevDate < form.end &&
+                        new Date(prevDate+'T00:00:00').getDay() !== 0 &&
+                        new Date(prevDate+'T00:00:00').getDay() !== 6
+                      return (
+                        <div key={idx} className={`h-24 flex items-start justify-center pt-2 rounded-lg ${prevInRange?'bg-purple-50':''}`}>
+                          <span className={`text-base ${prevInRange?'text-purple-300':'text-gray-200'}`}>{cell.day}</span>
+                        </div>
+                      )
+                    }
+                    const dow = new Date(cell.date! + 'T00:00:00').getDay()
+                    const isSun = dow === 0
+                    const isSat = dow === 6
+                    const isWknd = isSun || isSat
+                    const isHol = HOLIDAY_NAMES_LEAVE[cell.date!]
+                    const isBlocked = blockedDates.has(cell.date!)
+                    const isStart = form.start === cell.date
+                    const isEnd = form.end === cell.date
+                    const inRange = !!(form.start && form.end && cell.date! > form.start && cell.date! < form.end)
+                    const isWorkDay = !isWknd && !isHol
+                    const isInRangeWorkDay = inRange && isWorkDay
+                    const isToday = cell.date === todayStr
+                    const dayEvs = getDayEvents(cell.date!)
+                    const isEndDisabled = activeMode === 'end' && !!form.start && !form.end && cell.date! < form.start
+                    const isDisabled = isWknd || !!isHol || isBlocked || !!isEndDisabled
+
+                    let bgClass = 'hover:bg-gray-100 cursor-pointer'
+                    if (isStart||isEnd) bgClass = 'bg-purple-600 shadow-md'
+                    else if (isBlocked) bgClass = 'bg-red-100 cursor-not-allowed'
+                    else if (isInRangeWorkDay) bgClass = 'bg-purple-100'
+                    else if (isSat) bgClass = 'bg-blue-50/60 cursor-not-allowed'
+                    else if (isSun || isHol) bgClass = 'bg-red-50 cursor-not-allowed'
+                    else if (isEndDisabled) bgClass = 'opacity-20 cursor-not-allowed'
+
+                    let txtClass = 'text-gray-700'
+                    if (isStart||isEnd) txtClass = 'text-white font-bold'
+                    else if (isBlocked) txtClass = 'text-red-500 font-bold'
+                    else if (isInRangeWorkDay) txtClass = 'text-purple-700 font-bold'
+                    else if (isSat) txtClass = 'text-blue-500'
+                    else if (isSun || isHol) txtClass = 'text-red-400'
+                    else if (isToday) txtClass = 'text-purple-600 font-bold'
+
+                    return (
+                      <button key={idx} type="button"
+                        onClick={()=>!isDisabled && selectDate(cell.date!)}
+                        disabled={isDisabled}
+                        className={`h-24 rounded-lg flex flex-col items-center pt-1.5 transition-colors relative overflow-hidden ${bgClass}`}>
+                        <div className="flex items-center gap-1">
+                          <span className={`text-base font-bold ${txtClass}`}>{cell.day}</span>
+                          {isHol && !isStart && !isEnd && (
+                            <span className="text-red-400 font-semibold" style={{fontSize:'10px'}}>{isHol}</span>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-0.5 w-full px-1 mt-1">
+                          {!isStart && !isEnd && dayEvs.slice(0,2).map((e:any,i:number)=>(
+                            <div key={i} className="text-center rounded text-white truncate font-medium"
+                              style={{fontSize:'13px', backgroundColor: e.color||'#534AB7', padding:'2px 4px', lineHeight:'16px'}}>
+                              {e.title}
+                            </div>
+                          ))}
+                          {!isStart && !isEnd && dayEvs.length > 2 && (
+                            <div className="text-center text-gray-500 font-medium" style={{fontSize:'11px',lineHeight:'13px'}}>
+                              +{dayEvs.length - 2}
+                            </div>
+                          )}
+                        </div>
+                        {isToday && !isStart && !isEnd && !isBlocked && <div className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-0.5"/>}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* 하단 - 범례 + 선택 정보 + 초기화 */}
+                <div className="px-4 pb-4 border-t border-gray-50 pt-3">
+                  <div className="flex gap-3 mb-3 flex-wrap">
+                    <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-purple-600 inline-block"/>선택</span>
+                    <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-purple-100 border border-purple-200 inline-block"/>선택 구간</span>
+                    <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-red-100 border border-red-200 inline-block"/>선택불가(초과)</span>
+                    <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-blue-50 border border-blue-200 inline-block"/>토요일</span>
+                    <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-red-50 border border-red-200 inline-block"/>일·공휴일</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-gray-600">
+                      {form.start && <span>시작: <strong className="text-purple-600">{form.start}</strong></span>}
+                      {form.end && form.end !== form.start && <span className="ml-2">종료: <strong className="text-purple-600">{form.end}</strong></span>}
+                      {form.start && reqDays > 0 && <span className="ml-2 text-green-600 font-bold">→ {reqDays}H 사용</span>}
+                    </div>
+                    {(form.start || form.end) && (
+                      <button type="button" onClick={()=>{ setForm(f=>({...f,start:'',end:''})) }}
+                        className="btn-secondary text-sm px-3 py-1.5">🔄 초기화</button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
         </div>
       )}
 
@@ -559,255 +791,6 @@ export default function LeavePage() {
         </div>
       )}
 
-      {/* 캘린더 날짜 선택 모달 */}
-      {showCal && (()=>{
-        const DAYS = ['일','월','화','수','목','금','토']
-        const firstDay = new Date(calYear, calMonth, 1).getDay()
-        const daysInMonth = new Date(calYear, calMonth+1, 0).getDate()
-        const prevDays = new Date(calYear, calMonth, 0).getDate()
-        type Cell = {date:string|null, day:number, isCurrentMonth:boolean}
-        const cells: Cell[] = []
-        for (let i = 0; i < firstDay; i++) {
-          cells.push({date:null, day:prevDays-firstDay+1+i, isCurrentMonth:false})
-        }
-        for (let d = 1; d <= daysInMonth; d++) {
-          const ds = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
-          cells.push({date:ds, day:d, isCurrentMonth:true})
-        }
-        const remaining = 42 - cells.length
-        for (let i = 1; i <= remaining; i++) {
-          cells.push({date:null, day:i, isCurrentMonth:false})
-        }
-
-        // 신청하려는 유형의 사용량
-        const typeDay: Record<string,number> = {
-          '연차':8,'반차(오전)':4,'반차(오후)':4,'반반차':2
-        }
-        const requestingHours = typeDay[form.type] || 0
-
-        // 날짜별 이미 사용량 계산 → 추가하면 1일 초과하는 날짜 차단
-        const blockedDates = new Set<string>()
-        const allWorkDates = new Set<string>()
-        myRequests
-          .filter((r:any) => ['approved','pending'].includes(r.status))
-          .forEach((r:any) => {
-            getDateRange(r.start_date, r.end_date||r.start_date)
-              .filter(d => { const dw=new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
-              .forEach(d => allWorkDates.add(d))
-          })
-        allWorkDates.forEach(d => {
-          const usage = getDayUsage(d, myRequests)
-          if (usage + requestingHours > 8) blockedDates.add(d)
-        })
-
-        // 내 신청은 calEvents(dayEvs)에 isMe로 이미 포함됨 - 단일 데이터 소스 사용
-        // blockedDates만 셀 차단용으로 유지
-
-        function getDayEvents(ds: string) {
-          return calEvents.filter(e => {
-            const d = new Date(e.start_at)
-            const kst = new Date(d.getTime() + 9*60*60*1000)
-            return kst.toISOString().slice(0,10) === ds
-          }).sort((a,b) => {
-            // 내 건 먼저, 신청중 먼저
-            const aMe = (a as any).isMe ? 0 : 1
-            const bMe = (b as any).isMe ? 0 : 1
-            return aMe - bMe
-          })
-        }
-
-        const isSingleDay = ['반차(오전)','반차(오후)','반반차'].includes(form.type)
-        const isHalfHalf = form.type === '반반차'
-
-        function selectDate(ds: string) {
-          const dow = new Date(ds + 'T00:00:00').getDay()
-          if (dow === 0 || dow === 6) return
-          if (isHoliday(ds)) return
-          if (blockedDates.has(ds)) return // 하루 1일 초과 차단
-
-          if (isSingleDay) {
-            // 반차/반반차: 날짜 1개만 선택 후 닫기
-            setForm(f=>({...f, start:ds, end:ds}))
-            setLeaveError('')
-            setShowCal(null)
-          } else if (!form.start || (form.start && form.end)) {
-            // 연차 등: 첫 클릭 → 시작일
-            setForm(f=>({...f, start:ds, end:''}))
-            setShowCal('end')
-          } else {
-            // 두 번째 클릭 → 종료일
-            if (ds < form.start) {
-              setForm(f=>({...f, start:ds, end:''}))
-              return
-            }
-            setForm(f=>({...f, end:ds}))
-            setLeaveError('')
-          }
-        }
-
-        // 타임존 버그 방지 - 로컬 날짜 사용
-        const _now = new Date()
-        const todayStr = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}-${String(_now.getDate()).padStart(2,'0')}`
-
-        return (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl">
-              {/* 헤더 */}
-              <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {isSingleDay ? (
-                    <div className="px-2.5 py-1 rounded-full text-xs font-medium bg-purple-600 text-white">
-                      {isHalfHalf ? '날짜 선택 후 시간 입력' : '날짜 선택 (1일)'}
-                    </div>
-                  ) : (
-                    <>
-                      <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${!form.start||(form.start&&form.end)?'bg-purple-600 text-white':'bg-gray-100 text-gray-400'}`}>
-                        {!form.start||(form.start&&form.end) ? '① 시작일 클릭' : '✓ 시작일 선택됨'}
-                      </div>
-                      <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${form.start&&!form.end?'bg-purple-600 text-white':'bg-gray-100 text-gray-400'}`}>
-                        {form.start&&!form.end ? '② 종료일 클릭' : form.end ? '✓ 종료일 선택됨' : '② 종료일'}
-                      </div>
-                    </>
-                  )}
-                  <span className="text-xs text-gray-400">주말·승인·신청중 불가</span>
-                </div>
-                <button onClick={()=>setShowCal(null)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
-              </div>
-
-              {/* 월 네비게이션 */}
-              <div className="flex items-center justify-between px-4 py-2 border-b border-gray-50">
-                <button type="button" onClick={()=>{ if(calMonth===0){setCalMonth(11);setCalYear(y=>y-1)}else setCalMonth(m=>m-1) }}
-                  className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500">‹</button>
-                <span className="text-sm font-semibold text-gray-700">{calYear}년 {calMonth+1}월</span>
-                <button type="button" onClick={()=>{ if(calMonth===11){setCalMonth(0);setCalYear(y=>y+1)}else setCalMonth(m=>m+1) }}
-                  className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500">›</button>
-              </div>
-
-              {/* 요일 헤더 */}
-              <div className="grid grid-cols-7 px-3 pt-2 gap-x-1">
-                {DAYS.map((d,i)=>(
-                  <div key={d} className={`text-center text-sm font-bold py-2 rounded
-                    ${i===0?'text-red-500 bg-red-50':i===6?'text-blue-500 bg-blue-50':'text-gray-600 bg-gray-50'}`}>{d}</div>
-                ))}
-              </div>
-
-              {/* 날짜 그리드 */}
-              <div className="grid grid-cols-7 px-3 pb-3 gap-1">
-                {cells.map((cell, idx) => {
-                  if (!cell.date || !cell.isCurrentMonth) {
-                    // 이전/다음달이지만 선택 범위에 포함된 날짜는 연보라 표시
-                  const prevDate = cell.isCurrentMonth ? null : (() => {
-                    if (cell.day > 20) { // 이전달
-                      const m = calMonth === 0 ? 12 : calMonth
-                      const y = calMonth === 0 ? calYear-1 : calYear
-                      return `${y}-${String(m).padStart(2,'0')}-${String(cell.day).padStart(2,'0')}`
-                    } else { // 다음달
-                      const m = calMonth === 11 ? 1 : calMonth+2
-                      const y = calMonth === 11 ? calYear+1 : calYear
-                      return `${y}-${String(m).padStart(2,'0')}-${String(cell.day).padStart(2,'0')}`
-                    }
-                  })()
-                  const prevInRange = prevDate && form.start && form.end &&
-                    prevDate > form.start && prevDate < form.end &&
-                    new Date(prevDate+'T00:00:00').getDay() !== 0 &&
-                    new Date(prevDate+'T00:00:00').getDay() !== 6
-                  if (!cell.isCurrentMonth) return (
-                    <div key={idx} className={`h-24 flex items-start justify-center pt-2 rounded-lg ${prevInRange?'bg-purple-50':''}`}>
-                      <span className={`text-base ${prevInRange?'text-purple-300':'text-gray-200'}`}>{cell.day}</span>
-                    </div>
-                  )
-                  }
-                  const dow = new Date(cell.date! + 'T00:00:00').getDay()
-                  const isSun = dow === 0
-                  const isSat = dow === 6
-                  const isWknd = isSun || isSat
-                  const isHol = HOLIDAY_NAMES_LEAVE[cell.date!] // 평일 공휴일만 별도 판정
-                  const isBlocked = blockedDates.has(cell.date!) // 하루 1일 초과 → 선택불가
-                  const isStart = form.start === cell.date
-                  const isEnd = form.end === cell.date
-                  const inRange = !!(form.start && form.end && cell.date! > form.start && cell.date! < form.end)
-                  const isWorkDay = !isWknd && !isHol
-                  const isInRangeWorkDay = inRange && isWorkDay
-                  const isToday = cell.date === todayStr
-                  // 단일 데이터 소스: dayEvs (calEvents 기반, [상태] 유형 누구 형식 통일)
-                  const dayEvs = getDayEvents(cell.date!)
-                  const isEndDisabled = showCal === 'end' && !!form.start && !form.end && cell.date! < form.start
-                  const isDisabled = isWknd || !!isHol || isBlocked || !!isEndDisabled
-
-                  // 배경색: 토요일=파랑, 일요일/공휴일=빨강 (home과 동일)
-                  let bgClass = 'hover:bg-gray-100 cursor-pointer'
-                  if (isStart||isEnd) bgClass = 'bg-purple-600 shadow-md'
-                  else if (isBlocked) bgClass = 'bg-red-100 cursor-not-allowed'
-                  else if (isInRangeWorkDay) bgClass = 'bg-purple-100'
-                  else if (isSat) bgClass = 'bg-blue-50/60 cursor-not-allowed'
-                  else if (isSun || isHol) bgClass = 'bg-red-50 cursor-not-allowed'
-                  else if (isEndDisabled) bgClass = 'opacity-20 cursor-not-allowed'
-
-                  // 글자색: 토요일=파랑, 일요일/공휴일=빨강
-                  let txtClass = 'text-gray-700'
-                  if (isStart||isEnd) txtClass = 'text-white font-bold'
-                  else if (isBlocked) txtClass = 'text-red-500 font-bold'
-                  else if (isInRangeWorkDay) txtClass = 'text-purple-700 font-bold'
-                  else if (isSat) txtClass = 'text-blue-500'
-                  else if (isSun || isHol) txtClass = 'text-red-400'
-                  else if (isToday) txtClass = 'text-purple-600 font-bold'
-
-                  return (
-                    <button key={idx} type="button"
-                      onClick={()=>!isDisabled && selectDate(cell.date!)}
-                      disabled={isDisabled}
-                      className={`h-24 rounded-lg flex flex-col items-center pt-1.5 transition-colors relative overflow-hidden ${bgClass}`}>
-                      <div className="flex items-center gap-1">
-                        <span className={`text-base font-bold ${txtClass}`}>{cell.day}</span>
-                        {isHol && !isStart && !isEnd && (
-                          <span className="text-red-400 font-semibold" style={{fontSize:'10px'}}>{isHol}</span>
-                        )}
-                      </div>
-                      <div className="flex flex-col gap-0.5 w-full px-1 mt-1">
-                        {/* 단일 dayEvs 로직 - 상태/유형/누구 형식 통일 */}
-                        {!isStart && !isEnd && dayEvs.slice(0,2).map((e:any,i:number)=>(
-                          <div key={i} className="text-center rounded text-white truncate font-medium"
-                            style={{fontSize:'13px', backgroundColor: e.color||'#534AB7', padding:'2px 4px', lineHeight:'16px'}}>
-                            {e.title}
-                          </div>
-                        ))}
-                        {!isStart && !isEnd && dayEvs.length > 2 && (
-                          <div className="text-center text-gray-500 font-medium" style={{fontSize:'11px',lineHeight:'13px'}}>
-                            +{dayEvs.length - 2}
-                          </div>
-                        )}
-                      </div>
-                      {isToday && !isStart && !isEnd && !isBlocked && <div className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-0.5"/>}
-                    </button>
-                  )
-                })}
-              </div>
-
-              {/* 하단 - 범례 + 선택 정보 + 버튼 */}
-              <div className="px-4 pb-4 border-t border-gray-50 pt-3">
-                <div className="flex gap-3 mb-3 flex-wrap">
-                  <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-purple-600 inline-block"/>선택</span>
-                  <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-purple-100 border border-purple-200 inline-block"/>선택 구간</span>
-                  <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-red-100 border border-red-200 inline-block"/>선택불가(초과)</span>
-                  <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-gray-100 opacity-50 inline-block"/>주말·공휴일</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="text-sm text-gray-600">
-                    {form.start && <span>시작: <strong className="text-purple-600">{form.start}</strong></span>}
-                    {form.end && form.end !== form.start && <span className="ml-2">종료: <strong className="text-purple-600">{form.end}</strong></span>}
-                    {form.start && reqDays > 0 && <span className="ml-2 text-green-600 font-bold">→ {reqDays}H 사용</span>}
-                  </div>
-                  <div className="flex gap-2">
-                    <button type="button" onClick={()=>{ setForm(f=>({...f,start:'',end:''})); setShowCal('start') }}
-                      className="btn-secondary text-sm px-3 py-1.5">🔄 초기화</button>
-                    <button type="button" onClick={()=>setShowCal(null)} className="btn-primary text-sm px-4 py-1.5">확인</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )
-      })()}
 
       {/* 겹치는 기존 신청 건 처리 모달 */}
       {conflictModal && (
