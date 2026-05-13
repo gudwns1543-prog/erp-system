@@ -875,12 +875,13 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* 어제 퇴근 미기록 알림 모달 */}
+      {/* 어제 퇴근 미기록 알림 모달 - 강제 (닫을 수 없음) */}
       {unclockedSession && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
-            <div className="p-5 border-b border-gray-100">
-              <div className="text-base font-bold text-gray-800">⏰ 어제 퇴근을 안 찍으셨네요</div>
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md border-2 border-amber-300">
+            <div className="p-5 border-b border-gray-100 bg-amber-50 rounded-t-xl">
+              <div className="text-base font-bold text-gray-800">⚠️ 처리가 필요합니다</div>
+              <div className="text-sm text-gray-700 mt-1 font-medium">어제 퇴근을 안 찍으셨습니다</div>
               <div className="text-xs text-gray-500 mt-1">
                 {unclockedSession.work_date} 출근 {unclockedSession.check_in?.slice(0,5)}
                 {unclockedSession.note === '야간자동컷오프' && <span className="ml-1 text-amber-600">(시스템 자동 컷오프 됨)</span>}
@@ -888,11 +889,11 @@ export default function HomePage() {
             </div>
             <div className="p-5 space-y-3">
               <div className="text-sm text-gray-700">
-                실제 퇴근하신 시간을 입력해 주세요.<br />
+                실제 퇴근하신 시간을 입력해야 진행할 수 있습니다.<br />
                 <span className="text-xs text-gray-500">결재자 승인 후 정식 반영됩니다.</span>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">퇴근 시간</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">퇴근 시간 *</label>
                 <input type="time" className="input"
                   value={pickedCheckoutTime}
                   onChange={e=>setPickedCheckoutTime(e.target.value)} />
@@ -900,11 +901,14 @@ export default function HomePage() {
                   💡 자정 넘긴 야근은 00:00 ~ 07:00 사이로 입력 (예: 02:30)
                 </div>
               </div>
+              <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                ⚠️ 이 항목을 처리하지 않으면 출근을 비롯한 다른 작업을 진행할 수 없습니다.
+              </div>
             </div>
-            <div className="px-5 py-3 border-t border-gray-100 flex gap-2 justify-end">
-              <button onClick={()=>{ setUnclockedSession(null); setPickedCheckoutTime('') }}
-                className="btn-secondary text-sm">나중에</button>
-              <button onClick={submitUnclockedFix} className="btn-primary text-sm">
+            <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
+              <button onClick={submitUnclockedFix}
+                disabled={!pickedCheckoutTime}
+                className="btn-primary text-sm disabled:opacity-50 disabled:cursor-not-allowed">
                 결재자에게 승인 요청
               </button>
             </div>

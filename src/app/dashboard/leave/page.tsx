@@ -723,7 +723,7 @@ export default function LeavePage() {
                           )}
                         </div>
                         <div className="flex flex-col gap-0.5 w-full px-1 mt-1">
-                          {!isStart && !isEnd && dayEvs.slice(0,2).map((e:any,i:number)=>{
+                          {dayEvs.slice(0,2).map((e:any,i:number)=>{
                             // title 형식: "[상태] 유형 이름" → 파싱
                             const m = String(e.title||'').match(/^\[([^\]]+)\]\s+(\S+)\s+(.+)$/)
                             const status = m ? m[1] : ''
@@ -735,12 +735,15 @@ export default function LeavePage() {
                               : typeName === '반차(오후)' ? '오후반차'
                               : typeName.replace(/[()]/g, '')
                             const displayText = typeShort ? `${personName}-${typeShort}` : personName
+                            // 시작/종료일(보라 배경)일 때는 박스 안에 보이도록 흰색 테두리 강조
+                            const onSelected = isStart || isEnd
                             return (
-                              <div key={i} className="rounded truncate font-bold text-gray-900 text-center"
+                              <div key={i} className="rounded truncate font-bold text-center"
                                 title={e.title}
                                 style={{
-                                  backgroundColor: isPending ? '#FEF3C7' : '#DBEAFE', // amber-100 / blue-100
-                                  border: isPending ? '1px solid #FCD34D' : '1px solid #93C5FD', // amber-300 / blue-300
+                                  backgroundColor: onSelected ? 'rgba(255,255,255,0.95)' : (isPending ? '#FEF3C7' : '#DBEAFE'),
+                                  border: onSelected ? '1px solid #fff' : (isPending ? '1px solid #FCD34D' : '1px solid #93C5FD'),
+                                  color: '#111827',
                                   padding: '2px 4px',
                                   fontSize: '12px',
                                   lineHeight:'15px',
@@ -749,8 +752,8 @@ export default function LeavePage() {
                               </div>
                             )
                           })}
-                          {!isStart && !isEnd && dayEvs.length > 2 && (
-                            <div className="text-center text-purple-600 font-bold cursor-pointer hover:bg-purple-50 rounded"
+                          {dayEvs.length > 2 && (
+                            <div className={`text-center font-bold cursor-pointer rounded ${(isStart||isEnd)?'text-white':'text-purple-600 hover:bg-purple-50'}`}
                               title={dayEvs.slice(2).map((e:any)=>e.title).join(', ')}
                               style={{fontSize:'11px',lineHeight:'14px'}}>
                               +{dayEvs.length - 2}건 더보기
