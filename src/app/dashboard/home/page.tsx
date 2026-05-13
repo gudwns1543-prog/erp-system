@@ -43,7 +43,7 @@ function makeApprovalEvents(approvals: any[], myUserId: string) {
     }
     return dates.map(d => ({
       id: `approval-${a.id}-${d}`,
-      title: `${statusLabel} ${a.type} - ${name}`,
+      title: `${statusLabel} ${a.type} ${name}`,
       start_at: `${d}T09:00:00+09:00`,
       end_at: `${d}T18:00:00+09:00`,
       color: typeColors[a.type] || '#6B7280',
@@ -592,13 +592,13 @@ export default function HomePage() {
         </div>
         <div className="grid grid-cols-7 mb-1">
           {DAYS_SHORT.map((d,i)=>(
-            <div key={d} className={`text-center text-xs font-semibold py-1.5
+            <div key={d} className={`text-center text-sm font-bold py-2
               ${i===0?'text-red-400 bg-red-50':i===6?'text-blue-500 bg-blue-50':'text-gray-500 bg-gray-50'} rounded-sm`}>{d}</div>
           ))}
         </div>
         <div className="grid grid-cols-7">
           {Array.from({length:firstDay}).map((_,i)=>(
-            <div key={`e-${i}`} className="min-h-[80px] bg-gray-50/30" />
+            <div key={`e-${i}`} className="min-h-[110px] bg-gray-50/30" />
           ))}
           {Array.from({length:daysInMonth}).map((_,i)=>{
             const day = i+1
@@ -614,10 +614,10 @@ export default function HomePage() {
                   if (profile?.id) localStorage.setItem(`cal_checked_${profile.id}`, new Date().toISOString())
                   router.push('/dashboard/calendar')
                 }}
-                className={`min-h-[80px] border border-gray-100 p-1 cursor-pointer transition-colors
+                className={`min-h-[110px] border border-gray-100 p-1.5 cursor-pointer transition-colors
                   ${isSat?'bg-blue-50/60':isHol||isSun?'bg-red-50':'bg-white'}
                   hover:bg-purple-50/40`}>
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold mb-0.5
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold mb-1
                   ${isToday?'bg-purple-600 text-white':isSat?'text-blue-500':isHol||isSun?'text-red-400':'text-gray-700'}`}>
                   {day}
                 </div>
@@ -631,19 +631,19 @@ export default function HomePage() {
                     && ev.creator_id !== profile?.id // 내가 만든 건 NEW 표시 안 함
                   return (
                     <div key={ev.id}
-                      className="text-white rounded px-1 mb-0.5 flex items-center gap-0.5"
-                      style={{background:ev.color||'#534AB7',fontSize:'10px',lineHeight:'16px'}}>
+                      className="text-white rounded px-1.5 mb-1 flex items-center gap-1"
+                      style={{background:ev.color||'#534AB7',fontSize:'12px',lineHeight:'20px',fontWeight:500}}>
                       <span className="truncate flex-1">{ev.title}</span>
                       {isNew && (
-                        <span className="flex-shrink-0 rounded px-0.5 font-bold"
-                          style={{fontSize:'8px',background:'#ef4444',color:'#facc15',border:'1px solid #dc2626'}}>
+                        <span className="flex-shrink-0 rounded px-1 font-bold"
+                          style={{fontSize:'10px',background:'#ef4444',color:'#facc15',border:'1px solid #dc2626'}}>
                           NEW
                         </span>
                       )}
                     </div>
                   )
                 })}
-                {dayEvs.length>3 && <div className="text-gray-400" style={{fontSize:'10px'}}>+{dayEvs.length-3}</div>}
+                {dayEvs.length>3 && <div className="text-gray-500 font-medium" style={{fontSize:'12px'}}>+{dayEvs.length-3}</div>}
               </div>
             )
           })}

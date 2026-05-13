@@ -158,7 +158,7 @@ export default function LeavePage() {
     }
     const approvalEvs = (allApprovals||[]).flatMap((a:any) => {
       const name = (a.requester as any)?.name || ''
-      const statusLabel = a.status === 'pending' ? '신청중' : '승인'
+      const statusLabel = a.status === 'pending' ? '[신청중]' : '[승인]'
       const dates: string[] = []
       const cur = new Date(a.start_date + 'T12:00:00')
       const end = new Date((a.end_date||a.start_date) + 'T12:00:00')
@@ -170,7 +170,7 @@ export default function LeavePage() {
       }
       return dates.map(d => ({
         id: `appr-${a.id}-${d}`,
-        title: `[${statusLabel}] ${a.type} ${name}`,
+        title: `${statusLabel} ${a.type} ${name}`,
         start_at: `${d}T09:00:00+09:00`,
         end_at: `${d}T18:00:00+09:00`,
         color: typeColors[a.type] || '#6B7280',
@@ -585,22 +585,8 @@ export default function LeavePage() {
           if (usage + requestingHours > 8) blockedDates.add(d)
         })
 
-        // 내 신청 날짜 맵 (차단/표시용)
-        const myApprovedDates = new Map<string,string>()
-        const myPendingDates = new Map<string,string>()
-        const allApprovedDates = myApprovedDates
-        const allPendingDates = myPendingDates
-        myRequests.forEach((r:any) => {
-          getDateRange(r.start_date, r.end_date||r.start_date)
-            .filter(d => { const dw=new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
-            .forEach(d => {
-              if (r.status==='approved') myApprovedDates.set(d, r.type)
-              else if (r.status==='pending') myPendingDates.set(d, r.type)
-            })
-        })
-        // 차단 날짜 = blockedDates (하루 1일 초과 방지)
-        const approvedDates = blockedDates  // 차단용으로 재사용
-        const pendingDates = new Set<string>() // 별도 차단 불필요
+        // 내 신청은 calEvents(dayEvs)에 isMe로 이미 포함됨 - 단일 데이터 소스 사용
+        // blockedDates만 셀 차단용으로 유지
 
         function getDayEvents(ds: string) {
           return calEvents.filter(e => {
@@ -650,7 +636,7 @@ export default function LeavePage() {
 
         return (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl">
               {/* 헤더 */}
               <div className="p-4 border-b border-gray-100 flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -685,7 +671,7 @@ export default function LeavePage() {
               {/* 요일 헤더 */}
               <div className="grid grid-cols-7 px-3 pt-2">
                 {DAYS.map((d,i)=>(
-                  <div key={d} className={`text-center text-xs font-medium py-1.5 ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-400'}`}>{d}</div>
+                  <div key={d} className={`text-center text-sm font-bold py-2 ${i===0?'text-red-400':i===6?'text-blue-400':'text-gray-500'}`}>{d}</div>
                 ))}
               </div>
 
@@ -710,8 +696,8 @@ export default function LeavePage() {
                     new Date(prevDate+'T00:00:00').getDay() !== 0 &&
                     new Date(prevDate+'T00:00:00').getDay() !== 6
                   if (!cell.isCurrentMonth) return (
-                    <div key={idx} className={`h-14 flex items-start justify-center pt-1 rounded-lg ${prevInRange?'bg-purple-50':''}`}>
-                      <span className={`text-xs ${prevInRange?'text-purple-300':'text-gray-200'}`}>{cell.day}</span>
+                    <div key={idx} className={`h-20 flex items-start justify-center pt-1.5 rounded-lg ${prevInRange?'bg-purple-50':''}`}>
+                      <span className={`text-sm ${prevInRange?'text-purple-300':'text-gray-200'}`}>{cell.day}</span>
                     </div>
                   )
                   }
@@ -719,16 +705,13 @@ export default function LeavePage() {
                   const isWknd = dow === 0 || dow === 6
                   const isHol = isHoliday(cell.date!)
                   const isBlocked = blockedDates.has(cell.date!) // 하루 1일 초과 → 선택불가
-                  const isApproved = isBlocked && allApprovedDates.has(cell.date!)
-                  const isPending = isBlocked && !allApprovedDates.has(cell.date!) && allPendingDates.has(cell.date!)
-                  const isOtherApproved = !isBlocked && allApprovedDates.has(cell.date!)
-                  const isOtherPending = !isBlocked && allPendingDates.has(cell.date!)
                   const isStart = form.start === cell.date
                   const isEnd = form.end === cell.date
                   const inRange = !!(form.start && form.end && cell.date! > form.start && cell.date! < form.end)
                   const isWorkDay = !isWknd && !isHol
                   const isInRangeWorkDay = inRange && isWorkDay
                   const isToday = cell.date === todayStr
+                  // 단일 데이터 소스: dayEvs (calEvents 기반, [상태] 유형 누구 형식 통일)
                   const dayEvs = getDayEvents(cell.date!)
                   const isEndDisabled = showCal === 'end' && !!form.start && !form.end && cell.date! < form.start
                   const isDisabled = isWknd || isHol || isBlocked || !!isEndDisabled
@@ -737,60 +720,37 @@ export default function LeavePage() {
                     <button key={idx} type="button"
                       onClick={()=>!isDisabled && selectDate(cell.date!)}
                       disabled={isDisabled}
-                      className={`h-14 rounded-lg flex flex-col items-center pt-1 transition-colors relative
+                      className={`h-20 rounded-lg flex flex-col items-center pt-1.5 transition-colors relative overflow-hidden
                         ${isStart||isEnd ? 'bg-purple-600 shadow-md' :
-                          isApproved ? 'bg-red-100 cursor-not-allowed' :
-                          isPending ? 'bg-amber-100 cursor-not-allowed' :
-                          isOtherApproved ? 'bg-red-50' :
-                          isOtherPending ? 'bg-amber-50' :
+                          isBlocked ? 'bg-red-100 cursor-not-allowed' :
                           isInRangeWorkDay ? 'bg-purple-100' :
                           isWknd||isHol ? 'bg-gray-50 opacity-40 cursor-not-allowed' :
                           isEndDisabled ? 'opacity-20 cursor-not-allowed' :
                           'hover:bg-gray-100 cursor-pointer'}
                       `}>
-                      <span className={`text-xs font-medium ${
+                      <span className={`text-sm font-semibold ${
                         isStart||isEnd ? 'text-white font-bold' :
-                        isApproved ? 'text-red-500 font-medium' :
-                        isPending ? 'text-amber-600 font-semibold' :
-                        isOtherApproved ? 'text-red-400' :
-                        isOtherPending ? 'text-amber-500' :
-                        isInRangeWorkDay ? 'text-purple-700 font-medium' :
+                        isBlocked ? 'text-red-500 font-bold' :
+                        isInRangeWorkDay ? 'text-purple-700 font-bold' :
                         dow===0||isHol ? 'text-gray-400' :
                         dow===6 ? 'text-gray-400' :
                         isToday ? 'text-purple-600 font-bold' : 'text-gray-700'
                       }`}>{cell.day}</span>
-                      <div className="flex flex-col gap-0.5 w-full px-0.5 mt-0.5">
-                        {/* 같은 유형 승인/신청중 */}
-                        {isApproved && !isStart && !isEnd && (
-                          <div className="text-center rounded truncate bg-red-400 text-white" style={{fontSize:'7px',padding:'0 2px'}}>
-                            내연차승인
-                          </div>
-                        )}
-                        {isPending && !isStart && !isEnd && (
-                          <div className="text-center rounded truncate bg-amber-400 text-white" style={{fontSize:'7px',padding:'0 2px'}}>
-                            내연차신청중
-                          </div>
-                        )}
-                        {/* 다른 유형 승인/신청중 - 표시만 (선택 가능) */}
-                        {isOtherApproved && !isStart && !isEnd && (
-                          <div className="text-center rounded truncate bg-red-300 text-white" style={{fontSize:'7px',padding:'0 2px'}}>
-                            {allApprovedDates.get(cell.date!)}
-                          </div>
-                        )}
-                        {isOtherPending && !isStart && !isEnd && (
-                          <div className="text-center rounded truncate bg-amber-300 text-white" style={{fontSize:'7px',padding:'0 2px'}}>
-                            {allPendingDates.get(cell.date!)}신청중
-                          </div>
-                        )}
-                        {/* 캘린더 일정 */}
-                        {!isApproved && !isPending && !isOtherApproved && !isOtherPending && dayEvs.slice(0,1).map((e:any,i:number)=>(
-                          <div key={i} className="text-center rounded text-white truncate"
-                            style={{fontSize:'7px', backgroundColor: e.color||'#534AB7', padding:'0 2px'}}>
+                      <div className="flex flex-col gap-0.5 w-full px-1 mt-0.5">
+                        {/* 단일 dayEvs 로직 - 상태/유형/누구 형식 통일 */}
+                        {!isStart && !isEnd && dayEvs.slice(0,2).map((e:any,i:number)=>(
+                          <div key={i} className="text-center rounded text-white truncate font-medium"
+                            style={{fontSize:'11px', backgroundColor: e.color||'#534AB7', padding:'1px 3px', lineHeight:'14px'}}>
                             {e.title}
                           </div>
                         ))}
+                        {!isStart && !isEnd && dayEvs.length > 2 && (
+                          <div className="text-center text-gray-500 font-medium" style={{fontSize:'10px',lineHeight:'12px'}}>
+                            +{dayEvs.length - 2}
+                          </div>
+                        )}
                       </div>
-                      {isToday && !isStart && !isEnd && !isApproved && !isPending && <div className="w-1 h-1 rounded-full bg-purple-400 mt-0.5"/>}
+                      {isToday && !isStart && !isEnd && !isBlocked && <div className="w-1.5 h-1.5 rounded-full bg-purple-400 mt-0.5"/>}
                     </button>
                   )
                 })}
@@ -799,21 +759,21 @@ export default function LeavePage() {
               {/* 하단 - 범례 + 선택 정보 + 버튼 */}
               <div className="px-4 pb-4 border-t border-gray-50 pt-3">
                 <div className="flex gap-3 mb-3 flex-wrap">
-                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-purple-600 inline-block"/>선택</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-purple-100 border border-purple-200 inline-block"/>선택 구간</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-red-50 border border-red-200 inline-block"/>선택불가(초과)</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-gray-100 opacity-50 inline-block"/>주말·공휴일</span>
+                  <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-purple-600 inline-block"/>선택</span>
+                  <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-purple-100 border border-purple-200 inline-block"/>선택 구간</span>
+                  <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-red-100 border border-red-200 inline-block"/>선택불가(초과)</span>
+                  <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-gray-100 opacity-50 inline-block"/>주말·공휴일</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <div className="text-xs text-gray-500">
+                  <div className="text-sm text-gray-600">
                     {form.start && <span>시작: <strong className="text-purple-600">{form.start}</strong></span>}
                     {form.end && form.end !== form.start && <span className="ml-2">종료: <strong className="text-purple-600">{form.end}</strong></span>}
-                    {form.start && reqDays > 0 && <span className="ml-2 text-green-600 font-medium">→ {reqDays}H 사용</span>}
+                    {form.start && reqDays > 0 && <span className="ml-2 text-green-600 font-bold">→ {reqDays}H 사용</span>}
                   </div>
                   <div className="flex gap-2">
                     <button type="button" onClick={()=>{ setForm(f=>({...f,start:'',end:''})); setShowCal('start') }}
-                      className="btn-secondary text-xs px-3 py-1.5">🔄 초기화</button>
-                    <button type="button" onClick={()=>setShowCal(null)} className="btn-primary text-xs px-4 py-1.5">확인</button>
+                      className="btn-secondary text-sm px-3 py-1.5">🔄 초기화</button>
+                    <button type="button" onClick={()=>setShowCal(null)} className="btn-primary text-sm px-4 py-1.5">확인</button>
                   </div>
                 </div>
               </div>

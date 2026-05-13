@@ -263,14 +263,14 @@ export default function CalendarPage() {
             {/* 요일 헤더 */}
             <div className="grid grid-cols-7 border-b border-gray-200">
               {DAYS.map((d,i)=>(
-                <div key={d} className={`text-center text-xs font-semibold py-2.5
+                <div key={d} className={`text-center text-sm font-bold py-3
                   ${i===0?'text-red-500 bg-red-50':i===6?'text-sky-600 bg-sky-100':'text-gray-600 bg-gray-50'}`}>{d}</div>
               ))}
             </div>
             {/* 날짜 */}
             <div className="grid grid-cols-7">
               {Array.from({length: firstDay}).map((_,i)=>(
-                <div key={`e-${i}`} className="min-h-[90px] border-b border-r border-gray-100 bg-gray-50" />
+                <div key={`e-${i}`} className="min-h-[120px] border-b border-r border-gray-100 bg-gray-50" />
               ))}
               {Array.from({length: daysInMonth}).map((_,i)=>{
                 const day = i+1
@@ -283,13 +283,13 @@ export default function CalendarPage() {
                 const isSat = dow === 6
                 return (
                   <div key={day}
-                    className={`min-h-[90px] border-b border-r p-1 cursor-pointer transition-colors
+                    className={`min-h-[120px] border-b border-r p-1.5 cursor-pointer transition-colors
                       ${isSat ? 'bg-sky-100 border-sky-200 hover:bg-sky-200'
                         : isHol || isSun ? 'bg-red-50 border-red-100 hover:bg-red-100'
                         : 'bg-white border-gray-100 hover:bg-purple-50'}`}
                     onClick={()=>openCreate(dateStr)}>
                     <div className="flex items-center gap-1 mb-1">
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0
                         ${isToday ? 'bg-purple-600 text-white'
                           : isSat ? 'text-sky-600'
                           : isHol||isSun ? 'text-red-500'
@@ -297,19 +297,19 @@ export default function CalendarPage() {
                         {day}
                       </div>
                       {HOLIDAY_NAMES[dateStr] && (
-                        <span className="text-red-400 text-xs truncate font-medium">{HOLIDAY_NAMES[dateStr]}</span>
+                        <span className="text-red-400 text-xs truncate font-semibold">{HOLIDAY_NAMES[dateStr]}</span>
                       )}
                     </div>
-                    <div className="space-y-0.5">
+                    <div className="space-y-1">
                       {dayEvents.slice(0,3).map(ev=>(
                         <div key={ev.id}
-                          className="text-xs px-1.5 py-0.5 rounded truncate text-white cursor-pointer hover:opacity-80"
-                          style={{background:ev.color||'#534AB7'}}
+                          className="px-1.5 py-0.5 rounded truncate text-white cursor-pointer hover:opacity-80 font-medium"
+                          style={{background:ev.color||'#534AB7',fontSize:'13px',lineHeight:'18px'}}
                           onClick={e=>{e.stopPropagation();setShowDetail(ev)}}>
                           {ev.title}
                         </div>
                       ))}
-                      {dayEvents.length>3 && <div className="text-xs text-gray-400 pl-1">+{dayEvents.length-3}개</div>}
+                      {dayEvents.length>3 && <div className="text-gray-500 font-medium pl-1" style={{fontSize:'12px'}}>+{dayEvents.length-3}개</div>}
                     </div>
                   </div>
                 )
