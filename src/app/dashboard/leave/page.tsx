@@ -313,7 +313,7 @@ export default function LeavePage() {
 
   const approverName = approvers.find(a=>a.id===form.approverId)?.name || '-'
   const isMultiDay = ['연차','병가','출장','특별휴가'].includes(form.type)
-  const needsTime = ['출장','외근'].includes(form.type) // 출장/외근만 시간 설정 필요
+  const needsTime = ['출장','외근'].includes(form.type)
 
   const tabs = [
     {key:'apply', label:'신청하기'},

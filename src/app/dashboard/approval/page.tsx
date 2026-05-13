@@ -3,21 +3,6 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { isHoliday, classifyWork, minutesToHours } from '@/lib/attendance'
 
-function getDateRange(start: string, end: string): string[] {
-  const dates = []
-  const cur = new Date(start + 'T00:00:00')
-  const endD = new Date(end + 'T00:00:00')
-  while (cur <= endD) {
-    dates.push(cur.toISOString().slice(0,10))
-    cur.setDate(cur.getDate() + 1)
-  }
-  return dates
-}
-function isWeekend(ds: string): boolean {
-  const d = new Date(ds + 'T00:00:00').getDay()
-  return d === 0 || d === 6
-}
-
 // 두 날짜 사이의 모든 날짜 배열 반환
 function getDateRange(start: string, end: string): string[] {
   const dates = []
