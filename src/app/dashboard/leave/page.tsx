@@ -47,6 +47,10 @@ export default function LeavePage() {
   const [alert, setAlert] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
   const [showDetail, setShowDetail] = useState<any>(null)
+  const [remainLeave, setRemainLeave] = useState(0)       // 잔여 연차 (일)
+  const [usedLeave, setUsedLeave] = useState(0)            // 사용 연차 (일)
+  const [totalLeave, setTotalLeave] = useState(0)          // 총 연차 (일)
+  const [leaveError, setLeaveError] = useState('')         // 연차 부족 오류
 
   const load = useCallback(async () => {
     const supabase = createClient()
@@ -67,19 +71,69 @@ export default function LeavePage() {
         .order('created_at',{ascending:false})
       setAllRequests(a||[])
     }
+
+    // 연차 잔여 계산
+    const annualLeave = p?.annual_leave || 15
+    setTotalLeave(annualLeave)
+    const thisYear = new Date().getFullYear()
+    const { data: usedApprovals } = await supabase.from('approvals')
+      .select('type, start_date, end_date')
+      .eq('requester_id', session.user.id)
+      .eq('status', 'approved')
+      .in('type', ['연차','반차(오전)','반차(오후)','반반차'])
+      .gte('start_date', `${thisYear}-01-01`)
+    let used = 0
+    ;(usedApprovals||[]).forEach((a:any) => {
+      if (a.type === '연차') {
+        const dates = getDateRange(a.start_date, a.end_date || a.start_date)
+        const workDays = dates.filter(d => !isWeekend(d) && !isHoliday(d)).length
+        used += workDays
+      } else if (a.type === '반차(오전)' || a.type === '반차(오후)') {
+        used += 0.5
+      } else if (a.type === '반반차') {
+        used += 0.25
+      }
+    })
+    setUsedLeave(used)
+    setRemainLeave(annualLeave - used)
   }, [form.approverId])
 
   useEffect(() => { load() }, [load])
+
+  // 신청 시 사용될 연차 일수 계산
+  function calcRequestDays(type: string, start: string, end: string): number {
+    if (!start) return 0
+    if (type === '연차') {
+      const dates = getDateRange(start, end || start)
+      return dates.filter(d => !isWeekend(d) && !isHoliday(d)).length
+    } else if (type === '반차(오전)' || type === '반차(오후)') {
+      return 0.5
+    } else if (type === '반반차') {
+      return 0.25
+    }
+    return 0
+  }
 
   // 유형 변경 시 시간 자동 설정
   function handleTypeChange(type: string) {
     const times = TYPE_TIMES[type] || { startTime:'09:00', endTime:'18:00' }
     setForm(f=>({...f, type, startTime:times.startTime, endTime:times.endTime}))
+    setLeaveError('')
   }
 
   function handleApplyClick(e: React.FormEvent) {
     e.preventDefault()
     if (!form.start || !form.approverId) return
+    // 연차 관련 유형만 잔여일수 체크
+    const leaveTypes = ['연차','반차(오전)','반차(오후)','반반차']
+    if (leaveTypes.includes(form.type)) {
+      const reqDays = calcRequestDays(form.type, form.start, form.end)
+      if (reqDays > remainLeave) {
+        setLeaveError(`잔여 연차가 부족합니다. (신청: ${reqDays}일, 잔여: ${remainLeave}일)`)
+        return
+      }
+      setLeaveError('')
+    }
     setShowConfirm(true)
   }
 
@@ -257,7 +311,48 @@ export default function LeavePage() {
       </div>
 
       {tab==='apply' && (
-        <div className="card max-w-lg">
+        <div className="max-w-lg space-y-3">
+          {/* 연차 잔여 현황 카드 */}
+          {['연차','반차(오전)','반차(오후)','반반차'].includes(form.type) && (
+            <div className="card border-purple-100 bg-purple-50/50">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-sm">📅</span>
+                <span className="text-sm font-semibold text-gray-700">내 연차 현황</span>
+              </div>
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                <div className="bg-white rounded-lg p-2.5 text-center border border-purple-100">
+                  <div className="text-xs text-gray-400 mb-1">총 연차</div>
+                  <div className="text-lg font-bold text-gray-700">{totalLeave}<span className="text-xs font-normal text-gray-400 ml-0.5">일</span></div>
+                </div>
+                <div className="bg-white rounded-lg p-2.5 text-center border border-orange-100">
+                  <div className="text-xs text-gray-400 mb-1">사용</div>
+                  <div className="text-lg font-bold text-orange-500">{usedLeave}<span className="text-xs font-normal text-gray-400 ml-0.5">일</span></div>
+                </div>
+                <div className={`rounded-lg p-2.5 text-center border ${remainLeave <= 0 ? 'bg-red-50 border-red-200' : 'bg-white border-green-100'}`}>
+                  <div className="text-xs text-gray-400 mb-1">잔여</div>
+                  <div className={`text-lg font-bold ${remainLeave <= 0 ? 'text-red-500' : 'text-green-600'}`}>{remainLeave}<span className="text-xs font-normal text-gray-400 ml-0.5">일</span></div>
+                </div>
+              </div>
+              {/* 이번 신청 후 잔여 실시간 계산 */}
+              {form.start && (() => {
+                const reqDays = calcRequestDays(form.type, form.start, form.end)
+                const afterLeave = remainLeave - reqDays
+                return reqDays > 0 ? (
+                  <div className={`flex items-center justify-between text-xs px-3 py-2 rounded-lg ${afterLeave < 0 ? 'bg-red-100 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                    <span>이번 신청: <strong>{reqDays}일</strong> 사용</span>
+                    <span>신청 후 잔여: <strong>{afterLeave}일</strong> {afterLeave < 0 ? '⚠️ 부족' : '✅'}</span>
+                  </div>
+                ) : null
+              })()}
+              {leaveError && (
+                <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-1">
+                  ⚠️ {leaveError}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="card">
           <div className="text-sm font-medium text-gray-700 mb-4">휴가·출장 신청서</div>
           <form onSubmit={handleApplyClick} className="space-y-3">
             <div>
@@ -272,7 +367,7 @@ export default function LeavePage() {
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">시작일 *</label>
                 <input type="date" className="input" value={form.start}
-                  onChange={e=>setForm(f=>({...f,start:e.target.value,end:f.end||e.target.value}))} required />
+                  onChange={e=>{ setForm(f=>({...f,start:e.target.value,end:f.end||e.target.value})); setLeaveError('') }} required />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">시작 시간</label>
@@ -288,7 +383,7 @@ export default function LeavePage() {
                   종료일 {!isMultiDay && <span className="text-gray-300">(당일이면 생략)</span>}
                 </label>
                 <input type="date" className="input" value={form.end}
-                  onChange={e=>setForm(f=>({...f,end:e.target.value}))}
+                  onChange={e=>{ setForm(f=>({...f,end:e.target.value})); setLeaveError('') }}
                   min={form.start} />
               </div>
               <div>
@@ -324,6 +419,7 @@ export default function LeavePage() {
               <button type="submit" className="btn-primary">결재 상신</button>
             </div>
           </form>
+          </div>
         </div>
       )}
 
