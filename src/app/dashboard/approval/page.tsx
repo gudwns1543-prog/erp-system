@@ -122,7 +122,7 @@ export default function ApprovalPage() {
         }
         const startTime = approval.start_time || '09:00'
         const endTime = approval.end_time || '18:00'
-        const { data: ev } = await supabase.from('events').insert({
+        const { data: ev, error: evError } = await supabase.from('events').insert({
           title: `[${approval.type}] ${(approval.requester as any)?.name || ''}`,
           start_at: `${approval.start_date}T${startTime}:00`,
           end_at: `${(approval.end_date||approval.start_date)}T${endTime}:00`,
@@ -131,6 +131,7 @@ export default function ApprovalPage() {
           calendar_type: 'company',  // ★ 전사 공유 - 모든 직원이 캘린더에서 확인 가능
           is_locked: true,
         }).select().single()
+        if (evError) console.error('캘린더 자동등록 오류:', evError)
         if (ev) {
           await supabase.from('event_attendees').insert({
             event_id: ev.id, user_id: approval.requester_id, status: 'accepted'
