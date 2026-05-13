@@ -126,9 +126,9 @@ export default function AnnualPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
             {[
-              {label:'기본 연차', val:myBase+'일', c:'text-gray-700', sub:'연도 기준 세팅'},
-              {label:'사용 연차', val:myData.used+'일', c:'text-amber-600', sub:'올해 사용'},
-              {label:'잔여 연차', val:myRemain+'일', c:myRemain<=3?'text-red-600':'text-teal-600', sub:'사용 가능'},
+              {label:'기본 연차', val:myBase+'H', c:'text-gray-700', sub:'연도 기준 세팅'},
+              {label:'사용 연차', val:myData.used+'H', c:'text-amber-600', sub:'올해 사용'},
+              {label:'잔여 연차', val:myRemain+'H', c:myRemain<=24?'text-red-600':'text-teal-600', sub:'사용 가능'},
             ].map(m=>(
               <div key={m.label} className="card text-center py-4">
                 <div className="text-xs text-gray-400 mb-1">{m.label}</div>
@@ -164,7 +164,7 @@ export default function AnnualPage() {
                       <td className="py-1.5 pr-4 text-xs">{h.type}</td>
                       <td className="py-1.5 pr-4 text-xs text-gray-500">{h.start_date}</td>
                       <td className="py-1.5 pr-4 text-xs text-gray-500">{h.end_date}</td>
-                      <td className="py-1.5 text-xs font-medium text-purple-600">{h.days}일</td>
+                      <td className="py-1.5 text-xs font-medium text-purple-600">{h.days}H</td>
                     </tr>
                   ))}
                 </tbody>
@@ -290,10 +290,10 @@ export default function AnnualPage() {
             <div className="space-y-3">
               <div className="flex justify-between text-xs text-gray-500 p-2 bg-gray-50 rounded-lg">
                 <span>현재 세팅 연차</span>
-                <span className="font-semibold">{addModal.annual_leave}일</span>
+                <span className="font-semibold">{addModal.annual_leave}H</span>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">추가 지급일수</label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">추가 지급H</label>
                 <input type="number" className="input" placeholder="0" min="0.5" step="0.5"
                   value={addDays||0} onChange={e=>setAddDays(+e.target.value)} />
               </div>
@@ -304,7 +304,7 @@ export default function AnnualPage() {
               </div>
               {addDays > 0 && (
                 <div className="p-2 bg-green-50 rounded-lg text-xs text-green-700">
-                  지급 후 세팅 연차: {addModal.annual_leave}일 + {addDays}일 = <span className="font-bold">{addModal.annual_leave + addDays}일</span>
+                  지급 후 세팅 연차: {addModal.annual_leave}H + {addDays}H = <span className="font-bold">{addModal.annual_leave + addDays}H</span>
                 </div>
               )}
             </div>

@@ -16,7 +16,7 @@ const TYPE_TIMES: Record<string, {startTime:string, endTime:string}> = {
   '특별휴가':   { startTime:'09:00', endTime:'18:00' },
 }
 
-// 날짜별 이미 사용한 연차 일수 계산 (연차=1, 반차=0.5, 반반차=0.25)
+// 날짜별 이미 사용한 연차 시간 계산 (연차=8H, 반차=4H, 반반차=2H)
 function getDayUsage(date: string, requests: any[]): number {
   const typeDay: Record<string,number> = {
     '연차':8,'반차(오전)':4,'반차(오후)':4,'반반차':2
@@ -136,7 +136,7 @@ export default function LeavePage() {
         days = 0.25
       }
       if (a.status === 'approved') usedApproved += days
-      else usedPending += days
+      else if (a.status === 'pending') usedPending += days
     })
     const used = usedApproved + usedPending
     setUsedLeave(used)
@@ -168,7 +168,7 @@ export default function LeavePage() {
         }
         cur.setDate(cur.getDate()+1)
       }
-      return dates.map(d => ({
+      return dates.filter(d => !isHoliday(d)).map(d => ({
         id: `pending-${a.id}-${d}`,
         title: `[신청중] ${a.type} - ${requesterName}`,
         start_at: `${d}T09:00:00+09:00`,
@@ -184,7 +184,7 @@ export default function LeavePage() {
 
   useEffect(() => { load() }, [load])
 
-  // 신청 연차 일수 계산 (승인됨/대기중 제외)
+  // 신청 연차 시간 계산 (승인됨/대기중 제외)
   function calcRequestHours(type: string, start: string, end: string): number {
     if (!start) return 0
     const typeDay: Record<string,number> = {'연차':8,'반차(오전)':4,'반차(오후)':4,'반반차':2}
@@ -224,7 +224,7 @@ export default function LeavePage() {
       }
       setLeaveError('')
       // 겹치는 기존 pending 건 찾기
-      const typeDay: Record<string,number> = {'연차':1,'반차(오전)':0.5,'반차(오후)':0.5,'반반차':0.25}
+      const typeDay: Record<string,number> = {'연차':8,'반차(오전)':4,'반차(오후)':4,'반반차':2}
       const requestingHours = typeDay[form.type] || 0
       const reqDates = getDateRange(form.start, form.end || form.start)
         .filter(d => { const dw=new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
@@ -263,6 +263,7 @@ export default function LeavePage() {
     setAlert('결재 상신 완료')
     setForm(f=>({...f, reason:'', start:'', end:''}))
     setPendingCancelIds([])
+    setConflictModal(null)
     setShowConfirm(false); load(); setLoading(false)
     setTimeout(()=>setAlert(''), 3000)
   }
@@ -404,7 +405,7 @@ export default function LeavePage() {
                 </div>
                 <div className={`rounded-lg p-2 text-center border ${remainLeave <= 0 ? 'bg-red-50 border-red-200' : 'bg-white border-green-100'}`}>
                   <div className="text-xs text-gray-400 mb-1">잔여</div>
-                  <div className={`text-base font-bold ${remainLeave <= 0 ? 'text-red-500' : 'text-green-600'}`}>{remainLeave}<span className="text-xs font-normal text-gray-400">일</span></div>
+                  <div className={`text-base font-bold ${remainLeave <= 0 ? 'text-red-500' : 'text-green-600'}`}>{remainLeave}<span className="text-xs font-normal text-gray-400">H</span></div>
                 </div>
               </div>
               {form.start && reqDays > 0 && (
@@ -561,15 +562,18 @@ export default function LeavePage() {
           if (usage + requestingHours > 8) blockedDates.add(d)
         })
 
-        // 표시용 - 승인/신청중 날짜와 유형
-        const allApprovedDates = new Map<string,string>()
-        const allPendingDates = new Map<string,string>()
+        // 표시용 - 내 신청 (승인/대기)
+        const myApprovedDates = new Map<string,string>()  // 내 승인됨
+        const myPendingDates = new Map<string,string>()   // 내 신청중
+        // 하위호환용
+        const allApprovedDates = myApprovedDates
+        const allPendingDates = myPendingDates
         myRequests.forEach((r:any) => {
           getDateRange(r.start_date, r.end_date||r.start_date)
             .filter(d => { const dw=new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
             .forEach(d => {
-              if (r.status==='approved') allApprovedDates.set(d, r.type)
-              else if (r.status==='pending') allPendingDates.set(d, r.type)
+              if (r.status==='approved') myApprovedDates.set(d, r.type)
+              else if (r.status==='pending') myPendingDates.set(d, r.type)
             })
         })
         // 차단 날짜 = blockedDates (하루 1일 초과 방지)
@@ -770,8 +774,10 @@ export default function LeavePage() {
                 <div className="flex gap-3 mb-3 flex-wrap">
                   <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-purple-600 inline-block"/>시작·종료일</span>
                   <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-purple-100 border border-purple-200 inline-block"/>적용 근무일</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-red-100 border border-red-200 inline-block"/>승인됨(선택불가)</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-amber-100 border border-amber-200 inline-block"/>신청중(선택불가)</span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-red-600 inline-block"/>내 승인됨</span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-amber-500 inline-block"/>내 신청중</span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-red-200 inline-block"/>타인 승인됨</span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-amber-100 border border-amber-300 inline-block"/>타인 신청중</span>
                   <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-gray-50 border border-gray-200 opacity-50 inline-block"/>주말·공휴일</span>
                 </div>
                 <div className="flex items-center justify-between">

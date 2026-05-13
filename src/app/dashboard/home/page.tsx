@@ -548,7 +548,7 @@ export default function HomePage() {
         {[
           {label:'출근 시간', val:leaveNotes.includes(today?.note) ? today.note : (today?.check_in?.slice(0,5)||'--:--'), sub:leaveNotes.includes(today?.note) ? '승인됨' : today?.check_out?'퇴근완료':today?.check_in?'근무중':'미출근', c:'text-gray-800'},
           {label:'이번달 근태', val:Math.round(stats.monthReg*10)/10+'h', sub:'정규 근무', c:'text-purple-600'},
-          {label:'잔여 연차', val:stats.remainLeave+'일', sub:'사용 가능', c:'text-teal-600'},
+          {label:'잔여 연차', val:stats.remainLeave+'H', sub:'사용 가능', c:'text-teal-600'},
           {label:profile?.role==='director'?'미결 결재':'대기 결재', val:stats.pendingApprovals+'건', sub:'승인 대기', c:stats.pendingApprovals>0?'text-amber-600':'text-gray-400'},
         ].map(m=>(
           <div key={m.label} className="card">
