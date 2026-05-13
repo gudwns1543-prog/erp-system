@@ -65,6 +65,8 @@ export default function LeavePage() {
   const [calEvents, setCalEvents] = useState<any[]>([])
   const [remainLeave, setRemainLeave] = useState(0)
   const [usedLeave, setUsedLeave] = useState(0)
+  const [usedApprovedLeave, setUsedApprovedLeave] = useState(0)
+  const [usedPendingLeave, setUsedPendingLeave] = useState(0)
   const [totalLeave, setTotalLeave] = useState(0)
   const [leaveError, setLeaveError] = useState('')
 
@@ -114,6 +116,8 @@ export default function LeavePage() {
     })
     const used = usedApproved + usedPending
     setUsedLeave(used)
+    setUsedApprovedLeave(usedApproved)
+    setUsedPendingLeave(usedPending)
     setRemainLeave(annualLeave - used)
     // 캘린더 이벤트 로드
     const { data: evs } = await supabase.from('events')
@@ -286,16 +290,7 @@ export default function LeavePage() {
   const leaveTypeSelected = ['연차','반차(오전)','반차(오후)','반반차'].includes(form.type)
   const reqDays = calcRequestDays(form.type, form.start, form.end)
   const afterLeave = remainLeave - reqDays
-  // 승인/신청중 각각 표시용
-  const usedApprovedDisplay = parseFloat((usedLeave - (myRequests
-    .filter((r:any)=>r.status==='pending'&&['연차','반차(오전)','반차(오후)','반반차'].includes(r.type))
-    .reduce((sum:number,r:any)=>{
-      if(r.type==='연차') return sum+getDateRange(r.start_date,r.end_date||r.start_date).filter(d=>!isWeekend(d)&&!isHoliday(d)).length
-      if(r.type.includes('반차')) return sum+0.5
-      if(r.type==='반반차') return sum+0.25
-      return sum
-    },0))).toFixed(2))
-  const usedPendingDisplay = parseFloat((usedLeave - (usedApprovedDisplay as number)).toFixed(2))
+  // state에서 직접 사용
 
   const tabs = [
     {key:'apply', label:'신청하기'},
@@ -334,11 +329,11 @@ export default function LeavePage() {
                 </div>
                 <div className="bg-white rounded-lg p-2 text-center border border-red-100">
                   <div className="text-xs text-gray-400 mb-1">승인됨</div>
-                  <div className="text-base font-bold text-red-500">{usedApprovedDisplay}<span className="text-xs font-normal text-gray-400">일</span></div>
+                  <div className="text-base font-bold text-red-500">{usedApprovedLeave}<span className="text-xs font-normal text-gray-400">일</span></div>
                 </div>
                 <div className="bg-white rounded-lg p-2 text-center border border-amber-100">
                   <div className="text-xs text-gray-400 mb-1">신청중</div>
-                  <div className="text-base font-bold text-amber-500">{usedPendingDisplay}<span className="text-xs font-normal text-gray-400">일</span></div>
+                  <div className="text-base font-bold text-amber-500">{usedPendingLeave}<span className="text-xs font-normal text-gray-400">일</span></div>
                 </div>
                 <div className={`rounded-lg p-2 text-center border ${remainLeave <= 0 ? 'bg-red-50 border-red-200' : 'bg-white border-green-100'}`}>
                   <div className="text-xs text-gray-400 mb-1">잔여</div>
@@ -462,21 +457,33 @@ export default function LeavePage() {
           cells.push({date:null, day:i, isCurrentMonth:false})
         }
 
-        // 주말/공휴일 제외하고 실제 근무일만 승인/대기 날짜로 처리
+        // 같은 유형으로 이미 신청/승인된 날짜만 차단
+        // (다른 유형은 같은 날 중복 신청 허용 - 예: 오전반차+오후반반차)
         const approvedDates = new Set(
           myRequests
-            .filter((r:any) => r.status === 'approved')
+            .filter((r:any) => r.status === 'approved' && r.type === form.type)
             .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date)
               .filter(d => { const dw = new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
             )
         )
         const pendingDates = new Set(
           myRequests
-            .filter((r:any) => r.status === 'pending')
+            .filter((r:any) => r.status === 'pending' && r.type === form.type)
             .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date)
               .filter(d => { const dw = new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
             )
         )
+        // 표시용 - 모든 유형의 신청/승인 날짜 (선택 차단 없이 표시만)
+        const allApprovedDates = new Map<string,string>()
+        const allPendingDates = new Map<string,string>()
+        myRequests.forEach((r:any) => {
+          getDateRange(r.start_date, r.end_date||r.start_date)
+            .filter(d => { const dw=new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
+            .forEach(d => {
+              if (r.status==='approved') allApprovedDates.set(d, r.type)
+              else if (r.status==='pending') allPendingDates.set(d, r.type)
+            })
+        })
 
         function getDayEvents(ds: string) {
           return calEvents.filter(e => {
@@ -590,8 +597,10 @@ export default function LeavePage() {
                   const dow = new Date(cell.date! + 'T00:00:00').getDay()
                   const isWknd = dow === 0 || dow === 6
                   const isHol = isHoliday(cell.date!)
-                  const isApproved = approvedDates.has(cell.date!)
-                  const isPending = pendingDates.has(cell.date!)
+                  const isApproved = approvedDates.has(cell.date!) // 같은 유형 → 선택불가
+                  const isPending = pendingDates.has(cell.date!) // 같은 유형 → 선택불가
+                  const isOtherApproved = !isApproved && allApprovedDates.has(cell.date!) // 다른 유형 → 표시만
+                  const isOtherPending = !isPending && allPendingDates.has(cell.date!) // 다른 유형 → 표시만
                   const isStart = form.start === cell.date
                   const isEnd = form.end === cell.date
                   const inRange = !!(form.start && form.end && cell.date! > form.start && cell.date! < form.end)
@@ -610,6 +619,8 @@ export default function LeavePage() {
                         ${isStart||isEnd ? 'bg-purple-600 shadow-md' :
                           isApproved ? 'bg-red-100 cursor-not-allowed' :
                           isPending ? 'bg-amber-100 cursor-not-allowed' :
+                          isOtherApproved ? 'bg-red-50' :
+                          isOtherPending ? 'bg-amber-50' :
                           isInRangeWorkDay ? 'bg-purple-100' :
                           isWknd||isHol ? 'bg-gray-50 opacity-40 cursor-not-allowed' :
                           isEndDisabled ? 'opacity-20 cursor-not-allowed' :
@@ -619,22 +630,45 @@ export default function LeavePage() {
                         isStart||isEnd ? 'text-white font-bold' :
                         isApproved ? 'text-red-500 font-medium' :
                         isPending ? 'text-amber-600 font-semibold' :
+                        isOtherApproved ? 'text-red-400' :
+                        isOtherPending ? 'text-amber-500' :
                         isInRangeWorkDay ? 'text-purple-700 font-medium' :
                         dow===0||isHol ? 'text-gray-400' :
                         dow===6 ? 'text-gray-400' :
                         isToday ? 'text-purple-600 font-bold' : 'text-gray-700'
                       }`}>{cell.day}</span>
-                      {isApproved && !isStart && !isEnd && <span className="text-red-300" style={{fontSize:'7px'}}>승인됨</span>}
-                      {isPending && !isStart && !isEnd && <span className="text-amber-600 font-bold" style={{fontSize:'8px'}}>신청중</span>}
-                      {isToday && !isStart && !isEnd && !isApproved && !isPending && <div className="w-1 h-1 rounded-full bg-purple-400 mt-0.5"/>}
                       <div className="flex flex-col gap-0.5 w-full px-0.5 mt-0.5">
-                        {dayEvs.slice(0,1).map((e:any,i:number)=>(
+                        {/* 같은 유형 승인/신청중 */}
+                        {isApproved && !isStart && !isEnd && (
+                          <div className="text-center rounded truncate bg-red-400 text-white" style={{fontSize:'7px',padding:'0 2px'}}>
+                            내연차승인
+                          </div>
+                        )}
+                        {isPending && !isStart && !isEnd && (
+                          <div className="text-center rounded truncate bg-amber-400 text-white" style={{fontSize:'7px',padding:'0 2px'}}>
+                            내연차신청중
+                          </div>
+                        )}
+                        {/* 다른 유형 승인/신청중 - 표시만 (선택 가능) */}
+                        {isOtherApproved && !isStart && !isEnd && (
+                          <div className="text-center rounded truncate bg-red-300 text-white" style={{fontSize:'7px',padding:'0 2px'}}>
+                            {allApprovedDates.get(cell.date!)}
+                          </div>
+                        )}
+                        {isOtherPending && !isStart && !isEnd && (
+                          <div className="text-center rounded truncate bg-amber-300 text-white" style={{fontSize:'7px',padding:'0 2px'}}>
+                            {allPendingDates.get(cell.date!)}신청중
+                          </div>
+                        )}
+                        {/* 캘린더 일정 */}
+                        {!isApproved && !isPending && !isOtherApproved && !isOtherPending && dayEvs.slice(0,1).map((e:any,i:number)=>(
                           <div key={i} className="text-center rounded text-white truncate"
                             style={{fontSize:'7px', backgroundColor: e.color||'#534AB7', padding:'0 2px'}}>
                             {e.title}
                           </div>
                         ))}
                       </div>
+                      {isToday && !isStart && !isEnd && !isApproved && !isPending && <div className="w-1 h-1 rounded-full bg-purple-400 mt-0.5"/>}
                     </button>
                   )
                 })}
