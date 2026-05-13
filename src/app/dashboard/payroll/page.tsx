@@ -17,6 +17,9 @@ export default function PayrollPage() {
   const [extraItems, setExtraItems] = useState<{label:string,amount:number}[]>([])
   const [editingAnnual, setEditingAnnual] = useState(false)
   const [newAnnual, setNewAnnual] = useState(0)
+  const [tripAllowance, setTripAllowance] = useState(0)
+  const [tripDays, setTripDays] = useState(0)
+  const [deductItems, setDeductItems] = useState<any[]>([])
 
   const years = Array.from({length:5},(_,i)=>new Date().getFullYear()-i)
 
@@ -26,6 +29,13 @@ export default function PayrollPage() {
     setStaffList(sortByGrade(s||[]))
     const { data: sal } = await supabase.from('salary_info').select('*')
     setSalaryList(sal||[])
+    // 회사설정 로드
+    const { data: settings } = await supabase.from('company_settings').select('key,value')
+      .in('key',['trip_allowance','deduct_items'])
+    ;(settings||[]).forEach((s:any)=>{
+      if (s.key==='trip_allowance') setTripAllowance(Number(s.value)||0)
+      if (s.key==='deduct_items') { try { setDeductItems(JSON.parse(s.value)) } catch {} }
+    })
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -51,6 +61,9 @@ export default function PayrollPage() {
       } else {
         setWorkData(null)
       }
+      // 출장일수
+      const trips = (recs||[]).filter((r:any)=>r.note==='출장').length
+      setTripDays(trips)
       setBonus(0); setCelebration(0); setExtraItems([])
       setEditingAnnual(false)
     }
@@ -65,8 +78,14 @@ export default function PayrollPage() {
       annual:sal.annual, dependents:sal.dependents,
       meal:sal.meal, transport:sal.transport, comm:sal.comm, ...w
     })
+    const tripPay = tripDays * tripAllowance
+    const customDeducts = deductItems.filter((d:any)=>d.enabled && !['pension','health','ltc','employ','incomeTax','localTax'].includes(d.id))
+    const customDeductTotal = customDeducts.reduce((sum:number,d:any)=>{
+      if (d.rateType==='percent') return sum + Math.round(base.grossTaxable * d.rate / 100)
+      return sum + (d.rate||0)
+    }, 0)
     const specialTotal = bonus + celebration + extraItems.reduce((a,x)=>a+(x.amount||0),0)
-    setResult({...base, specialTotal, finalPay: base.netPay + specialTotal})
+    setResult({...base, specialTotal, tripPay, customDeductTotal, finalPay: base.netPay + specialTotal + tripPay - customDeductTotal})
     setNewAnnual(sal.annual)
   }, [workData, salaryList, selIdx, staffList, bonus, celebration, extraItems])
 
@@ -231,8 +250,8 @@ export default function PayrollPage() {
               <>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    {l:'총 지급액', v:formatWon(result.grossTotal+specialTotal), c:'text-purple-600'},
-                    {l:'총 공제액', v:'-'+formatWon(result.totalDeduct), c:'text-red-600'},
+                    {l:'총 지급액', v:formatWon(result.grossTotal+specialTotal+(result.tripPay||0)), c:'text-purple-600'},
+                    {l:'총 공제액', v:'-'+formatWon(result.totalDeduct+(result.customDeductTotal||0)), c:'text-red-600'},
                   ].map(x=>(
                     <div key={x.l} className="card text-center py-3">
                       <div className="text-xs text-gray-400 mb-1">{x.l}</div>
@@ -264,7 +283,8 @@ export default function PayrollPage() {
                   ))}
                   <div className="flex justify-between pt-2 text-sm font-semibold">
                     <span>합계</span>
-                    <span className="text-purple-600">{formatWon(result.grossTotal+specialTotal)}</span>
+                    <span className="text-purple-600">{formatWon(result.grossTotal+specialTotal+(result.tripPay||0))}</span>
+                    {(result.tripPay||0)>0 && <span className="text-xs text-amber-600 ml-1">(출장일비 {formatWon(result.tripPay)} 포함)</span>}
                   </div>
                 </div>
 

@@ -62,31 +62,24 @@ export default function ApprovalPage() {
 
   async function handle(id: string, status: 'approved'|'rejected') {
     const supabase = createClient()
-    // 승인 처리
     await supabase.from('approvals').update({status, updated_at: new Date().toISOString()}).eq('id', id)
 
-    // 승인인 경우 → 연차/반차 근태 자동 등록
     if (status === 'approved') {
       const approval = [...all, ...inbox, ...sent].find((r:any) => r.id === id)
-      if (approval && ['연차','반차(오전)','반차(오후)','반반차'].includes(approval.type)) {
+      const leaveTypes = ['연차','반차(오전)','반차(오후)','반반차','출장']
+      if (approval && leaveTypes.includes(approval.type)) {
         const dates = getDateRange(approval.start_date, approval.end_date || approval.start_date)
         for (const dateStr of dates) {
-          if (isWeekend(dateStr) || isHoliday(dateStr)) continue // 주말/공휴일 스킵
+          if (isWeekend(dateStr) || isHoliday(dateStr)) continue
+
           let checkIn = '09:00:00'
           let checkOut = '18:00:00'
-          if (approval.type === '반차(오전)') {
-            checkIn = '09:00:00'; checkOut = '13:00:00'
-          } else if (approval.type === '반차(오후)') {
-            checkIn = '13:00:00'; checkOut = '18:00:00'
-          } else if (approval.type === '반반차') {
-            checkIn = '09:00:00'; checkOut = '11:00:00'
-          }
+          if (approval.type === '반차(오전)') { checkIn = '09:00:00'; checkOut = '13:00:00' }
+          else if (approval.type === '반차(오후)') { checkIn = '13:00:00'; checkOut = '18:00:00' }
+          else if (approval.type === '반반차') { checkIn = '09:00:00'; checkOut = '11:00:00' }
+
           const r = classifyWork(dateStr, checkIn, checkOut)
-          // 기존 레코드 확인 (이미 출퇴근 찍힌 경우 스킵)
-          const { data: existing } = await supabase.from('attendance')
-            .select('id').eq('user_id', approval.requester_id).eq('work_date', dateStr)
-          if (existing && existing.length > 0) continue
-          await supabase.from('attendance').insert({
+          const attendanceData = {
             user_id: approval.requester_id,
             work_date: dateStr,
             check_in: checkIn,
@@ -99,8 +92,26 @@ export default function ApprovalPage() {
             hol_eve_hours: minutesToHours(r.hEve),
             hol_night_hours: minutesToHours(r.hNight),
             ignored_hours: minutesToHours(r.ignored),
-            note: approval.type, // 연차/반차 표시
-          })
+            note: approval.type,
+          }
+
+          // 기존 기록 확인
+          const { data: existing } = await supabase.from('attendance')
+            .select('id,note').eq('user_id', approval.requester_id).eq('work_date', dateStr)
+
+          if (existing && existing.length > 0) {
+            // 당일 출근 후 연차/반차 전환: 기존 레코드를 업데이트
+            // note가 없거나 이미 연차/출장이 아닌 경우에만 덮어씀
+            const hasLeaveRecord = existing.some((e:any) => leaveTypes.includes(e.note))
+            if (!hasLeaveRecord) {
+              // 기존 출근 레코드 삭제 후 새로 등록
+              await supabase.from('attendance').delete()
+                .eq('user_id', approval.requester_id).eq('work_date', dateStr)
+              await supabase.from('attendance').insert(attendanceData)
+            }
+          } else {
+            await supabase.from('attendance').insert(attendanceData)
+          }
         }
       }
     }

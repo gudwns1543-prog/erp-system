@@ -24,6 +24,9 @@ export default function PaySimPage() {
   const [addWork, setAddWork] = useState({regH:0,extH:0,nightH:0,holH:0,holExtH:0,holNightH:0})
   const [actualResult, setActualResult] = useState<any>(null)
   const [simResult, setSimResult] = useState<any>(null)
+  const [tripAllowance, setTripAllowance] = useState(0)
+  const [tripDays, setTripDays] = useState(0)
+  const [deductItems, setDeductItems] = useState<any[]>([])
 
   const now = new Date()
   const thisYear = now.getFullYear()
@@ -50,6 +53,16 @@ export default function PaySimPage() {
       holNightH: a.holNightH + (r.hol_night_hours||0),
     }),{regH:0,extH:0,nightH:0,holH:0,holExtH:0,holNightH:0})
     setActualWork(w)
+    // 출장일수
+    const trips = (recs||[]).filter((r:any)=>r.note==='출장').length
+    setTripDays(trips)
+    // 회사설정
+    const { data: settings } = await supabase.from('company_settings').select('key,value')
+      .in('key',['trip_allowance','deduct_items'])
+    ;(settings||[]).forEach((s:any)=>{
+      if (s.key==='trip_allowance') setTripAllowance(Number(s.value)||0)
+      if (s.key==='deduct_items') { try { setDeductItems(JSON.parse(s.value)) } catch {} }
+    })
   }, [thisYear, thisMonth])
 
   useEffect(() => { load() }, [load])
@@ -78,6 +91,12 @@ export default function PaySimPage() {
   }, [salary, actualWork, addWork])
 
   const hasExtra = Object.values(addWork).some(v => (v as number) > 0)
+  const tripPay = tripDays * tripAllowance
+  const customDeducts = deductItems.filter((d:any)=>d.enabled && !['pension','health','ltc','employ','incomeTax','localTax'].includes(d.id))
+  const customDeductTotal = actualResult ? customDeducts.reduce((sum:number,d:any)=>{
+    if (d.rateType==='percent') return sum + Math.round(actualResult.grossTaxable * d.rate / 100)
+    return sum + (d.rate||0)
+  }, 0) : 0
   const rate = salary ? Math.round(salary.annual/12/209) : 0
 
   // 계산식 행 컴포넌트
@@ -221,10 +240,11 @@ export default function PaySimPage() {
                       <span className="text-xs font-semibold text-purple-600">{formatWon(actualResult.payHolNight)}</span>
                     </div>
                   )}
+                  {tripPay>0 && <div className="flex justify-between py-1.5 border-b border-gray-50 text-xs"><span className="text-gray-500">출장 일비 ({tripDays}일 × {tripAllowance.toLocaleString()}원)</span><span className="text-amber-600 font-semibold">{formatWon(tripPay)}</span></div>}
                   {salary?.meal>0 && <div className="flex justify-between py-1.5 border-b border-gray-50 text-xs"><span className="text-gray-500">식대 (비과세)</span><span className="text-purple-600 font-semibold">{formatWon(salary.meal)}</span></div>}
                   {salary?.transport>0 && <div className="flex justify-between py-1.5 border-b border-gray-50 text-xs"><span className="text-gray-500">교통비 (비과세)</span><span className="text-purple-600 font-semibold">{formatWon(salary.transport)}</span></div>}
                   {salary?.comm>0 && <div className="flex justify-between py-1.5 border-b border-gray-50 text-xs"><span className="text-gray-500">통신비 (비과세)</span><span className="text-purple-600 font-semibold">{formatWon(salary.comm)}</span></div>}
-                  <div className="flex justify-between pt-2 text-xs font-bold"><span>지급 합계</span><span className="text-purple-600">{formatWon(actualResult.grossTotal)}</span></div>
+                  <div className="flex justify-between pt-2 text-xs font-bold"><span>지급 합계</span><span className="text-purple-600">{formatWon(actualResult.grossTotal + tripPay)}</span></div>
                 </div>
                 <div className="pl-4">
                   <div className="text-xs font-semibold text-gray-400 mb-2">공제 항목</div>
@@ -235,13 +255,17 @@ export default function PaySimPage() {
                     ['고용보험 (0.9%)', actualResult.employ],
                     [`소득세 (${salary?.dependents}인)`, actualResult.incomeTax],
                     ['지방소득세', actualResult.localTax],
-                  ].map(([l,v],i)=>(
+                    ...customDeducts.map((d:any)=>[
+                      d.name+(d.rateType==='percent'?` (${d.rate}%)`:''),
+                      d.rateType==='percent' ? Math.round(actualResult.grossTaxable*d.rate/100) : d.rate
+                    ])
+                  ].map(([l,v]:any,i)=>(
                     <div key={i} className="flex justify-between py-1.5 border-b border-gray-50 text-xs">
                       <span className="text-gray-500">{l}</span>
                       <span className="text-red-500 font-semibold">-{formatWon(v as number)}</span>
                     </div>
                   ))}
-                  <div className="flex justify-between pt-2 text-xs font-bold"><span>공제 합계</span><span className="text-red-500">-{formatWon(actualResult.totalDeduct)}</span></div>
+                  <div className="flex justify-between pt-2 text-xs font-bold"><span>공제 합계</span><span className="text-red-500">-{formatWon(actualResult.totalDeduct + customDeductTotal)}</span></div>
                 </div>
               </div>
               <div className="mt-3 pt-2 border-t border-gray-100 text-xs text-gray-400">
@@ -251,9 +275,9 @@ export default function PaySimPage() {
             <div className="rounded-xl p-4 flex justify-between items-center bg-purple-600">
               <div>
                 <div className="text-white/80 text-sm font-medium">예상 수령액 ①</div>
-                <div className="text-white/60 text-xs mt-0.5">지급 {formatWon(actualResult.grossTotal)} - 공제 {formatWon(actualResult.totalDeduct)}</div>
+                <div className="text-white/60 text-xs mt-0.5">지급 {formatWon(actualResult.grossTotal + tripPay)} - 공제 {formatWon(actualResult.totalDeduct + customDeductTotal)}</div>
               </div>
-              <div className="text-white text-2xl font-bold">{formatWon(actualResult.netPay)}</div>
+              <div className="text-white text-2xl font-bold">{formatWon(actualResult.netPay + tripPay - customDeductTotal)}</div>
             </div>
           </>
         )}
