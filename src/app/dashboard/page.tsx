@@ -71,11 +71,13 @@ export default function DashboardPage() {
   }, [])
 
   // 현재 활성 세션 (가장 최근 미완료 세션)
-  const activeSession = sessions.find(s => s.check_in && !s.check_out)
+  const LEAVE_NOTES = ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가']
+  const leaveSession = sessions.find((s:any) => LEAVE_NOTES.includes(s.note))
+  const activeSession = !leaveSession ? sessions.find((s:any) => s.check_in && !s.check_out) : null
   // 오늘 마지막 완료 세션
-  const lastDone = sessions.filter(s => s.check_out).slice(-1)[0]
+  const lastDone = sessions.filter((s:any) => s.check_out).slice(-1)[0]
   const isWorking = !!activeSession
-  const isDone = !isWorking && sessions.length > 0 && sessions.every(s => s.check_out)
+  const isDone = !isWorking && !leaveSession && sessions.length > 0 && sessions.every((s:any) => s.check_out)
 
   async function handleCheckIn() {
     setLoading(true)
@@ -155,8 +157,8 @@ export default function DashboardPage() {
         <div className="text-sm text-gray-400 mt-2">{dateStr}</div>
         {hol && <div className="text-xs text-red-400 mt-1">오늘은 휴일입니다</div>}
         <div className={`inline-block mt-2 px-4 py-1 rounded-full text-xs font-medium
-          ${isWorking?'bg-green-50 text-green-700':isDone?'bg-purple-50 text-purple-700':'bg-gray-100 text-gray-500'}`}>
-          {isWorking?`근무 중 (${sessions.length}번째 세션)`:isDone?'퇴근 완료':'미출근'}
+          ${leaveSession?'bg-amber-50 text-amber-700':isWorking?'bg-green-50 text-green-700':isDone?'bg-purple-50 text-purple-700':'bg-gray-100 text-gray-500'}`}>
+          {leaveSession?`${leaveSession.note} (승인됨)`:isWorking?`근무 중 (${sessions.length}번째 세션)`:isDone?'퇴근 완료':'미출근'}
         </div>
 
         {/* 오늘 세션 목록 */}
@@ -175,7 +177,7 @@ export default function DashboardPage() {
 
         <div className="flex justify-center gap-3 mt-5">
           <button onClick={handleCheckIn}
-            disabled={isWorking||loading}
+            disabled={!!leaveSession||isWorking||loading}
             className="btn-primary px-8 py-2.5 text-base disabled:opacity-40">
             {sessions.length>0&&!isWorking?'🔄 복귀 출근':'출근'}
           </button>

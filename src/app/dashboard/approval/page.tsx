@@ -65,8 +65,11 @@ export default function ApprovalPage() {
     await supabase.from('approvals').update({status, updated_at: new Date().toISOString()}).eq('id', id)
 
     if (status === 'approved') {
-      const approval = [...all, ...inbox, ...sent].find((r:any) => r.id === id)
-      const leaveTypes = ['연차','반차(오전)','반차(오후)','반반차','출장']
+      // DB에서 직접 조회 (state 캐시 문제 방지)
+      const { data: approval } = await supabase.from('approvals')
+        .select('*, requester:requester_id(name)').eq('id', id).single()
+
+      const leaveTypes = ['연차','반차(오전)','반차(오후)','반반차','출장','병가','외근','특별휴가']
       if (approval && leaveTypes.includes(approval.type)) {
         const dates = getDateRange(approval.start_date, approval.end_date || approval.start_date)
         for (const dateStr of dates) {
@@ -95,16 +98,13 @@ export default function ApprovalPage() {
             note: approval.type,
           }
 
-          // 기존 기록 확인
+          // 기존 기록 삭제 후 연차/출장 레코드로 교체
           const { data: existing } = await supabase.from('attendance')
             .select('id,note').eq('user_id', approval.requester_id).eq('work_date', dateStr)
 
           if (existing && existing.length > 0) {
-            // 당일 출근 후 연차/반차 전환: 기존 레코드를 업데이트
-            // note가 없거나 이미 연차/출장이 아닌 경우에만 덮어씀
             const hasLeaveRecord = existing.some((e:any) => leaveTypes.includes(e.note))
             if (!hasLeaveRecord) {
-              // 기존 출근 레코드 삭제 후 새로 등록
               await supabase.from('attendance').delete()
                 .eq('user_id', approval.requester_id).eq('work_date', dateStr)
               await supabase.from('attendance').insert(attendanceData)
@@ -112,6 +112,29 @@ export default function ApprovalPage() {
           } else {
             await supabase.from('attendance').insert(attendanceData)
           }
+        }
+
+        // 캘린더 자동등록
+        const typeColors: Record<string,string> = {
+          '연차':'#EF4444','반차(오전)':'#F97316','반차(오후)':'#F97316',
+          '반반차':'#FBBF24','출장':'#3B82F6','병가':'#8B5CF6',
+          '외근':'#06B6D4','특별휴가':'#EC4899',
+        }
+        const startTime = approval.start_time || '09:00'
+        const endTime = approval.end_time || '18:00'
+        const { data: ev } = await supabase.from('events').insert({
+          title: `[${approval.type}] ${(approval.requester as any)?.name || ''}`,
+          start_at: `${approval.start_date}T${startTime}:00`,
+          end_at: `${(approval.end_date||approval.start_date)}T${endTime}:00`,
+          color: typeColors[approval.type] || '#6B7280',
+          creator_id: approval.requester_id,
+          calendar_type: 'personal',
+          is_locked: true,
+        }).select().single()
+        if (ev) {
+          await supabase.from('event_attendees').insert({
+            event_id: ev.id, user_id: approval.requester_id, status: 'accepted'
+          })
         }
       }
     }

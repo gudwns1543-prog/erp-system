@@ -12,6 +12,8 @@ function todayStr() {
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
 }
 
+const leaveNotes = ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가']
+
 export default function HomePage() {
   const router = useRouter()
   const [profile, setProfile] = useState<any>(null)
@@ -85,7 +87,8 @@ export default function HomePage() {
       .select('*').eq('user_id', session.user.id).eq('work_date', todayStr())
       .order('created_at', {ascending: true})
     // 활성 세션(미퇴근) 또는 가장 최근 세션
-    const activeS = (todaySess||[]).find((s:any) => s.check_in && !s.check_out)
+    const leaveS = (todaySess||[]).find((s:any) => leaveNotes.includes(s.note))
+    const activeS = leaveS || (todaySess||[]).find((s:any) => s.check_in && !s.check_out)
     const lastS = (todaySess||[]).slice(-1)[0]
     setToday(activeS || lastS || null)
     const now = new Date()
@@ -375,7 +378,7 @@ export default function HomePage() {
           <div className="flex items-center gap-3">
             <div className="text-xl font-bold text-gray-700 tabular-nums">{time}</div>
             <div className="flex gap-2">
-              <button onClick={handleCheckIn} disabled={!!today?.check_in && !today?.check_out}
+              <button onClick={handleCheckIn} disabled={!!today?.check_in || leaveNotes.includes(today?.note)}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
                 <span style={{fontSize:16}}>🔴</span> 출근
               </button>
@@ -489,7 +492,7 @@ export default function HomePage() {
       {/* 요약 카드 */}
       <div className="grid grid-cols-4 gap-3 mb-5">
         {[
-          {label:'출근 시간', val:today?.check_in?.slice(0,5)||'--:--', sub:today?.check_out?'퇴근완료':today?.check_in?'근무중':'미출근', c:'text-gray-800'},
+          {label:'출근 시간', val:leaveNotes.includes(today?.note) ? today.note : (today?.check_in?.slice(0,5)||'--:--'), sub:leaveNotes.includes(today?.note) ? '승인됨' : today?.check_out?'퇴근완료':today?.check_in?'근무중':'미출근', c:'text-gray-800'},
           {label:'이번달 근태', val:Math.round(stats.monthReg*10)/10+'h', sub:'정규 근무', c:'text-purple-600'},
           {label:'잔여 연차', val:stats.remainLeave+'일', sub:'사용 가능', c:'text-teal-600'},
           {label:profile?.role==='director'?'미결 결재':'대기 결재', val:stats.pendingApprovals+'건', sub:'승인 대기', c:stats.pendingApprovals>0?'text-amber-600':'text-gray-400'},

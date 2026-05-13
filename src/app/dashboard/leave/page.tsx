@@ -1,8 +1,25 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
+import { isHoliday, classifyWork, minutesToHours } from '@/lib/attendance'
 
 const TYPES = ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가']
+
+// 날짜 범위 배열 반환
+function getDateRange(start: string, end: string): string[] {
+  const dates = []
+  const cur = new Date(start + 'T00:00:00')
+  const endD = new Date(end + 'T00:00:00')
+  while (cur <= endD) {
+    dates.push(cur.toISOString().slice(0,10))
+    cur.setDate(cur.getDate() + 1)
+  }
+  return dates
+}
+function isWeekend(dateStr: string): boolean {
+  const d = new Date(dateStr + 'T00:00:00').getDay()
+  return d === 0 || d === 6
+}
 
 // 유형별 시간 기본값
 const TYPE_TIMES: Record<string, {startTime:string, endTime:string}> = {
@@ -89,6 +106,73 @@ export default function LeavePage() {
   async function handleApprove(id: string, status: 'approved'|'rejected') {
     const supabase = createClient()
     await supabase.from('approvals').update({status, updated_at: new Date().toISOString()}).eq('id', id)
+
+    if (status === 'approved') {
+      const approval = [...myRequests, ...allRequests].find((r:any) => r.id === id)
+      if (approval) {
+        const leaveTypes = ['연차','반차(오전)','반차(오후)','반반차','출장']
+        const dates = getDateRange(approval.start_date, approval.end_date || approval.start_date)
+
+        // 1. 근태 자동등록
+        if (leaveTypes.includes(approval.type)) {
+          for (const dateStr of dates) {
+            if (isWeekend(dateStr) || isHoliday(dateStr)) continue
+            let checkIn = '09:00:00', checkOut = '18:00:00'
+            if (approval.type === '반차(오전)') { checkIn = '09:00:00'; checkOut = '13:00:00' }
+            else if (approval.type === '반차(오후)') { checkIn = '13:00:00'; checkOut = '18:00:00' }
+            else if (approval.type === '반반차') { checkIn = '09:00:00'; checkOut = '11:00:00' }
+            const r = classifyWork(dateStr, checkIn, checkOut)
+            const attData = {
+              user_id: approval.requester_id, work_date: dateStr,
+              check_in: checkIn, check_out: checkOut, is_holiday: isHoliday(dateStr),
+              reg_hours: minutesToHours(r.reg), ext_hours: minutesToHours(r.ext),
+              night_hours: minutesToHours(r.night), hol_hours: minutesToHours(r.hReg),
+              hol_eve_hours: minutesToHours(r.hEve), hol_night_hours: minutesToHours(r.hNight),
+              ignored_hours: minutesToHours(r.ignored), note: approval.type,
+            }
+            const { data: existing } = await supabase.from('attendance')
+              .select('id,note').eq('user_id', approval.requester_id).eq('work_date', dateStr)
+            if (existing && existing.length > 0) {
+              const hasLeaveRecord = existing.some((e:any) => leaveTypes.includes(e.note))
+              if (!hasLeaveRecord) {
+                await supabase.from('attendance').delete()
+                  .eq('user_id', approval.requester_id).eq('work_date', dateStr)
+                await supabase.from('attendance').insert(attData)
+              }
+            } else {
+              await supabase.from('attendance').insert(attData)
+            }
+          }
+        }
+
+        // 2. 캘린더 자동등록
+        const typeColors: Record<string,string> = {
+          '연차':'#EF4444','반차(오전)':'#F97316','반차(오후)':'#F97316',
+          '반반차':'#FBBF24','출장':'#3B82F6','병가':'#8B5CF6',
+          '외근':'#06B6D4','특별휴가':'#EC4899',
+        }
+        const startDate = approval.start_date
+        const endDate = approval.end_date || approval.start_date
+        const startTime = approval.start_time || '09:00'
+        const endTime = approval.end_time || '18:00'
+        const { data: ev } = await supabase.from('events').insert({
+          title: `[${approval.type}] ${(approval.requester as any)?.name || ''}`,
+          start_at: `${startDate}T${startTime}:00`,
+          end_at: `${endDate}T${endTime}:00`,
+          color: typeColors[approval.type] || '#6B7280',
+          creator_id: approval.requester_id,
+          calendar_type: 'personal',
+          is_locked: true,
+        }).select().single()
+        // 본인을 참석자로 등록
+        if (ev) {
+          await supabase.from('event_attendees').insert({
+            event_id: ev.id, user_id: approval.requester_id, status: 'accepted'
+          })
+        }
+      }
+    }
+
     setAlert(status==='approved'?'승인되었습니다.':'반려되었습니다.')
     setShowDetail(null); load()
     setTimeout(()=>setAlert(''), 3000)
