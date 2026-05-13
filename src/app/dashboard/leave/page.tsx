@@ -79,6 +79,8 @@ export default function LeavePage() {
   const [alert, setAlert] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
   const [showDetail, setShowDetail] = useState<any>(null)
+  const [conflictModal, setConflictModal] = useState<any>(null)
+  const [pendingCancelIds, setPendingCancelIds] = useState<string[]>([])
   const [showCal, setShowCal] = useState<'start'|'end'|null>(null)
   const [calYear, setCalYear] = useState(new Date().getFullYear())
   const [calMonth, setCalMonth] = useState(new Date().getMonth())
@@ -143,7 +145,39 @@ export default function LeavePage() {
     const { data: evs } = await supabase.from('events')
       .select('title,start_at,end_at,color,calendar_type')
       .or('calendar_type.eq.company,creator_id.eq.' + session.user.id)
-    setCalEvents(evs||[])
+    // 전체 직원의 신청중 결재도 캘린더에 표시 (누가 신청중인지 확인용)
+    const { data: allPendingApprovals } = await supabase.from('approvals')
+      .select('id,type,start_date,end_date,requester_id,requester:requester_id(name)')
+      .eq('status','pending')
+      .in('type',['연차','반차(오전)','반차(오후)','반반차','출장','병가','외근','특별휴가'])
+    const pendingEvs = (allPendingApprovals||[]).flatMap((a:any) => {
+      const typeColors: Record<string,string> = {
+        '연차':'#FCA5A5','반차(오전)':'#FDBA74','반차(오후)':'#FDBA74',
+        '반반차':'#FDE68A','출장':'#93C5FD','병가':'#C4B5FD','외근':'#67E8F9','특별휴가':'#F9A8D4'
+      }
+      const requesterName = (a.requester as any)?.name || ''
+      const dates: string[] = []
+      const cur = new Date(a.start_date + 'T12:00:00')
+      const endD = new Date((a.end_date||a.start_date) + 'T12:00:00')
+      while (cur <= endD) {
+        const dw = cur.getDay()
+        if (dw !== 0 && dw !== 6) {
+          dates.push(`${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`)
+        }
+        cur.setDate(cur.getDate()+1)
+      }
+      return dates.map(d => ({
+        id: `pending-${a.id}-${d}`,
+        title: `[신청중] ${a.type} - ${requesterName}`,
+        start_at: `${d}T09:00:00+09:00`,
+        end_at: `${d}T18:00:00+09:00`,
+        color: typeColors[a.type] || '#D1D5DB',
+        calendar_type: 'pending',
+        requester_id: a.requester_id,
+        requesterName,
+      }))
+    })
+    setCalEvents([...(evs||[]), ...pendingEvs])
   }, [form.approverId])
 
   useEffect(() => { load() }, [load])
@@ -151,25 +185,16 @@ export default function LeavePage() {
   // 신청 연차 일수 계산 (승인됨/대기중 제외)
   function calcRequestDays(type: string, start: string, end: string): number {
     if (!start) return 0
+    const typeDay: Record<string,number> = {'연차':1,'반차(오전)':0.5,'반차(오후)':0.5,'반반차':0.25}
+    const requestingDays = typeDay[type] || 0
     if (type === '연차') {
-      const alreadyApproved = new Set(
-        myRequests
-          .filter((r:any) => r.status === 'approved' && ['연차','반차(오전)','반차(오후)','반반차'].includes(r.type))
-          .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date)
-            .filter(d => { const dw = new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
-          )
-      )
-      const alreadyPending = new Set(
-        myRequests
-          .filter((r:any) => r.status === 'pending')
-          .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date)
-            .filter(d => { const dw = new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
-          )
-      )
       const dates = getDateRange(start, end || start)
       return dates.filter(d => {
         const dw = new Date(d + 'T00:00:00').getDay()
-        return dw !== 0 && dw !== 6 && !isHoliday(d) && !alreadyApproved.has(d) && !alreadyPending.has(d)
+        if (dw === 0 || dw === 6 || isHoliday(d)) return false
+        // 이미 사용량 계산 - 신청하는 날 기존 사용량 + 신청량 <= 1 이어야 카운트
+        const existing = getDayUsage(d, myRequests)
+        return existing + requestingDays <= 1
       }).length
     } else if (type === '반차(오전)' || type === '반차(오후)') {
       return 0.5
@@ -196,15 +221,34 @@ export default function LeavePage() {
         return
       }
       setLeaveError('')
+      // 겹치는 기존 pending 건 찾기
+      const typeDay: Record<string,number> = {'연차':1,'반차(오전)':0.5,'반차(오후)':0.5,'반반차':0.25}
+      const requestingDays = typeDay[form.type] || 0
+      const reqDates = getDateRange(form.start, form.end || form.start)
+        .filter(d => { const dw=new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
+      const conflictingRequests = myRequests.filter((r:any) => {
+        if (r.status !== 'pending') return false
+        const rDates = getDateRange(r.start_date, r.end_date||r.start_date)
+          .filter(d => { const dw=new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
+        return rDates.some(d => reqDates.includes(d) && getDayUsage(d, myRequests) + requestingDays > 1)
+      })
+      if (conflictingRequests.length > 0) {
+        setConflictModal({ conflicts: conflictingRequests, proceed: false })
+        return
+      }
     }
     setShowConfirm(true)
   }
 
-  async function handleSubmit() {
+  async function handleSubmit(cancelIds: string[] = []) {
     setLoading(true)
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
+    // 기존 겹치는 건 취소
+    for (const id of cancelIds) {
+      await supabase.from('approvals').delete().eq('id', id)
+    }
     await supabase.from('approvals').insert({
       requester_id: session.user.id, approver_id: form.approverId,
       type: form.type,
@@ -216,6 +260,7 @@ export default function LeavePage() {
     })
     setAlert('결재 상신 완료')
     setForm(f=>({...f, reason:'', start:'', end:''}))
+    setPendingCancelIds([])
     setShowConfirm(false); load(); setLoading(false)
     setTimeout(()=>setAlert(''), 3000)
   }
@@ -729,6 +774,41 @@ export default function LeavePage() {
         )
       })()}
 
+      {/* 겹치는 기존 신청 건 처리 모달 */}
+      {conflictModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-md shadow-xl">
+            <div className="p-5 border-b border-gray-100">
+              <div className="text-base font-semibold text-gray-800">⚠️ 기존 신청 건과 겹칩니다</div>
+              <div className="text-xs text-gray-400 mt-1">신청하려는 날짜에 아래 대기중인 신청 건이 있습니다</div>
+            </div>
+            <div className="p-5 space-y-2">
+              {conflictModal.conflicts.map((r:any) => (
+                <div key={r.id} className="flex items-center justify-between p-3 bg-amber-50 rounded-lg border border-amber-200">
+                  <div>
+                    <span className="text-xs font-medium text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full mr-2">{r.type}</span>
+                    <span className="text-sm text-gray-700">{r.start_date}{r.end_date&&r.end_date!==r.start_date?` ~ ${r.end_date}`:''}</span>
+                  </div>
+                  <span className="text-xs text-amber-500">대기중</span>
+                </div>
+              ))}
+              <div className="mt-3 p-3 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
+                기존 신청 건을 취소하고 새로 신청하시겠습니까?<br/>
+                <span className="text-blue-500">취소 후 재신청 시 결재자에게 다시 승인 요청됩니다.</span>
+              </div>
+            </div>
+            <div className="p-4 border-t border-gray-100 flex gap-2 justify-end">
+              <button onClick={()=>setConflictModal(null)} className="btn-secondary text-sm">취소</button>
+              <button onClick={()=>{
+                setPendingCancelIds(conflictModal.conflicts.map((r:any)=>r.id))
+                setConflictModal(null)
+                setShowConfirm(true)
+              }} className="btn-primary text-sm">기존 건 취소 후 재신청</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 상신 확인 모달 */}
       {showConfirm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
@@ -754,7 +834,7 @@ export default function LeavePage() {
             </div>
             <div className="p-4 border-t border-gray-100 flex gap-2 justify-end">
               <button onClick={()=>setShowConfirm(false)} className="btn-secondary text-sm">다시 확인</button>
-              <button onClick={handleSubmit} disabled={loading} className="btn-primary text-sm">
+              <button onClick={()=>handleSubmit(pendingCancelIds)} disabled={loading} className="btn-primary text-sm">
                 {loading ? '처리 중...' : '확인, 상신합니다'}
               </button>
             </div>
