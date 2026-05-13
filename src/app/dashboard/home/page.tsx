@@ -21,6 +21,40 @@ function toKSTDate(utcStr: string): string {
   return kst.toISOString().slice(0, 10)
 }
 
+function makeApprovalEvents(approvals: any[], myUserId: string) {
+  const typeColors: Record<string,string> = {
+    '연차':'#EF4444','반차(오전)':'#F97316','반차(오후)':'#F97316',
+    '반반차':'#F59E0B','출장':'#3B82F6','병가':'#8B5CF6',
+    '외근':'#06B6D4','특별휴가':'#EC4899',
+  }
+  return approvals.flatMap((a:any) => {
+    const name = (a.requester as any)?.name || ''
+    const isMe = a.requester_id === myUserId
+    const statusLabel = a.status === 'pending' ? '[신청중]' : '[승인]'
+    const dates: string[] = []
+    const cur = new Date(a.start_date + 'T12:00:00')
+    const end = new Date((a.end_date||a.start_date) + 'T12:00:00')
+    while (cur <= end) {
+      const dw = cur.getDay()
+      const ds = `${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`
+      // 공휴일 제외는 클라이언트 isHoliday가 없으므로 주말만 제외
+      if (dw !== 0 && dw !== 6) dates.push(ds)
+      cur.setDate(cur.getDate() + 1)
+    }
+    return dates.map(d => ({
+      id: `approval-${a.id}-${d}`,
+      title: `${statusLabel} ${a.type} - ${name}`,
+      start_at: `${d}T09:00:00+09:00`,
+      end_at: `${d}T18:00:00+09:00`,
+      color: typeColors[a.type] || '#6B7280',
+      creator_id: a.requester_id,
+      calendar_type: a.status === 'pending' ? 'pending' : 'company',
+      isMe,
+      isPending: a.status === 'pending',
+    }))
+  })
+}
+
 export default function HomePage() {
   const router = useRouter()
   const [profile, setProfile] = useState<any>(null)
@@ -140,40 +174,13 @@ export default function HomePage() {
       .select("id,title,start_at,end_at,color,creator_id,created_at,calendar_type")
       .or(homeOrClauses.join(",")).order("start_at")
 
-    // 신청중인 결재도 캘린더에 표시 (가상 이벤트로 변환)
-    const { data: pendingApprovals } = await supabase.from('approvals')
-      .select('id,type,start_date,end_date,requester_id')
-      .eq('requester_id', session.user.id)
-      .eq('status', 'pending')
-    const pendingEvents = (pendingApprovals||[]).flatMap((a:any) => {
-      const typeColors: Record<string,string> = {
-        '연차':'#FCA5A5','반차(오전)':'#FDBA74','반차(오후)':'#FDBA74',
-        '반반차':'#FDE68A','출장':'#93C5FD','병가':'#C4B5FD',
-        '외근':'#67E8F9','특별휴가':'#F9A8D4',
-      }
-      // 날짜 범위를 하루씩 나눠서 가상 이벤트 생성
-      const dates: string[] = []
-      const cur = new Date((a.start_date||a.start_date) + 'T12:00:00')
-      const endD = new Date((a.end_date||a.start_date) + 'T12:00:00')
-      while (cur <= endD) {
-        const dw = cur.getDay()
-        if (dw !== 0 && dw !== 6) {
-          dates.push(`${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`)
-        }
-        cur.setDate(cur.getDate() + 1)
-      }
-      return dates.map(d => ({
-        id: `pending-${a.id}-${d}`,
-        title: `[신청중] ${a.type}`,
-        start_at: `${d}T09:00:00+09:00`,
-        end_at: `${d}T18:00:00+09:00`,
-        color: typeColors[a.type] || '#D1D5DB',
-        creator_id: a.requester_id,
-        calendar_type: 'pending',
-        isPending: true,
-      }))
-    })
-    setAllEvents([...(evs||[]), ...pendingEvents])
+    // 전체 직원 결재 (신청중+승인됨) → 가상 이벤트로 캘린더에 표시
+    const { data: allApprovals } = await supabase.from('approvals')
+      .select('id,type,start_date,end_date,requester_id,status,requester:requester_id(name)')
+      .in('status', ['pending','approved'])
+      .in('type',['연차','반차(오전)','반차(오후)','반반차','출장','병가','외근','특별휴가'])
+    const approvalEvents = makeApprovalEvents(allApprovals||[], session.user.id)
+    setAllEvents([...(evs||[]), ...approvalEvents])
     if (p?.role === 'director') {
       const { data: apps } = await supabase.from('approvals')
         .select('*, requester:requester_id(name,color,tc,avatar_url)')

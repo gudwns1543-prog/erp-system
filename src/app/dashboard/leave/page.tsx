@@ -143,43 +143,47 @@ export default function LeavePage() {
     setUsedApprovedLeave(usedApproved)
     setUsedPendingLeave(usedPending)
     setRemainLeave(annualLeave - used)
-    // 캘린더 이벤트 로드
+    // 캘린더 이벤트 - 승인된 events 테이블 + 전체 직원 결재(신청중+승인됨) 통합
     const { data: evs } = await supabase.from('events')
-      .select('title,start_at,end_at,color,calendar_type')
+      .select('id,title,start_at,end_at,color,calendar_type,creator_id')
       .or('calendar_type.eq.company,creator_id.eq.' + session.user.id)
-    // 전체 직원의 신청중 결재도 캘린더에 표시 (누가 신청중인지 확인용)
-    const { data: allPendingApprovals } = await supabase.from('approvals')
-      .select('id,type,start_date,end_date,requester_id,requester:requester_id(name)')
-      .eq('status','pending')
+    const { data: allApprovals } = await supabase.from('approvals')
+      .select('id,type,start_date,end_date,requester_id,status,requester:requester_id(name)')
+      .in('status',['pending','approved'])
       .in('type',['연차','반차(오전)','반차(오후)','반반차','출장','병가','외근','특별휴가'])
-    const pendingEvs = (allPendingApprovals||[]).flatMap((a:any) => {
-      const typeColors: Record<string,string> = {
-        '연차':'#FCA5A5','반차(오전)':'#FDBA74','반차(오후)':'#FDBA74',
-        '반반차':'#FDE68A','출장':'#93C5FD','병가':'#C4B5FD','외근':'#67E8F9','특별휴가':'#F9A8D4'
-      }
-      const requesterName = (a.requester as any)?.name || ''
+    const typeColors: Record<string,string> = {
+      '연차':'#EF4444','반차(오전)':'#F97316','반차(오후)':'#F97316',
+      '반반차':'#F59E0B','출장':'#3B82F6','병가':'#8B5CF6','외근':'#06B6D4','특별휴가':'#EC4899',
+    }
+    const approvalEvs = (allApprovals||[]).flatMap((a:any) => {
+      const name = (a.requester as any)?.name || ''
+      const statusLabel = a.status === 'pending' ? '신청중' : '승인'
       const dates: string[] = []
       const cur = new Date(a.start_date + 'T12:00:00')
-      const endD = new Date((a.end_date||a.start_date) + 'T12:00:00')
-      while (cur <= endD) {
+      const end = new Date((a.end_date||a.start_date) + 'T12:00:00')
+      while (cur <= end) {
         const dw = cur.getDay()
-        if (dw !== 0 && dw !== 6) {
-          dates.push(`${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`)
-        }
+        const ds = `${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`
+        if (dw !== 0 && dw !== 6 && !isHoliday(ds)) dates.push(ds)
         cur.setDate(cur.getDate()+1)
       }
-      return dates.filter(d => !isHoliday(d)).map(d => ({
-        id: `pending-${a.id}-${d}`,
-        title: `[신청중] ${a.type} - ${requesterName}`,
+      return dates.map(d => ({
+        id: `appr-${a.id}-${d}`,
+        title: `[${statusLabel}] ${a.type} ${name}`,
         start_at: `${d}T09:00:00+09:00`,
         end_at: `${d}T18:00:00+09:00`,
-        color: typeColors[a.type] || '#D1D5DB',
-        calendar_type: 'pending',
+        color: typeColors[a.type] || '#6B7280',
+        calendar_type: a.status === 'pending' ? 'pending' : 'company',
         requester_id: a.requester_id,
-        requesterName,
+        isMe: a.requester_id === session.user.id,
+        isPending: a.status === 'pending',
+        approvalType: a.type,
+        requesterName: name,
       }))
     })
-    setCalEvents([...(evs||[]), ...pendingEvs])
+    // events 테이블에서 이미 있는 연차 이벤트 제거 (approvalEvs로 대체)
+    const filteredEvs = (evs||[]).filter((e:any) => !e.title.startsWith('[연차]') && !e.title.startsWith('[반차') && !e.title.startsWith('[반반차'))
+    setCalEvents([...filteredEvs, ...approvalEvs])
   }, [form.approverId])
 
   useEffect(() => { load() }, [load])
@@ -562,10 +566,9 @@ export default function LeavePage() {
           if (usage + requestingHours > 8) blockedDates.add(d)
         })
 
-        // 표시용 - 내 신청 (승인/대기)
-        const myApprovedDates = new Map<string,string>()  // 내 승인됨
-        const myPendingDates = new Map<string,string>()   // 내 신청중
-        // 하위호환용
+        // 내 신청 날짜 맵 (차단/표시용)
+        const myApprovedDates = new Map<string,string>()
+        const myPendingDates = new Map<string,string>()
         const allApprovedDates = myApprovedDates
         const allPendingDates = myPendingDates
         myRequests.forEach((r:any) => {
@@ -585,6 +588,11 @@ export default function LeavePage() {
             const d = new Date(e.start_at)
             const kst = new Date(d.getTime() + 9*60*60*1000)
             return kst.toISOString().slice(0,10) === ds
+          }).sort((a,b) => {
+            // 내 건 먼저, 신청중 먼저
+            const aMe = (a as any).isMe ? 0 : 1
+            const bMe = (b as any).isMe ? 0 : 1
+            return aMe - bMe
           })
         }
 
@@ -772,13 +780,10 @@ export default function LeavePage() {
               {/* 하단 - 범례 + 선택 정보 + 버튼 */}
               <div className="px-4 pb-4 border-t border-gray-50 pt-3">
                 <div className="flex gap-3 mb-3 flex-wrap">
-                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-purple-600 inline-block"/>시작·종료일</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-purple-100 border border-purple-200 inline-block"/>적용 근무일</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-red-600 inline-block"/>내 승인됨</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-amber-500 inline-block"/>내 신청중</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-red-200 inline-block"/>타인 승인됨</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-amber-100 border border-amber-300 inline-block"/>타인 신청중</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-gray-50 border border-gray-200 opacity-50 inline-block"/>주말·공휴일</span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-purple-600 inline-block"/>선택</span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-purple-100 border border-purple-200 inline-block"/>선택 구간</span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-red-50 border border-red-200 inline-block"/>선택불가(초과)</span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-gray-100 opacity-50 inline-block"/>주말·공휴일</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-gray-500">

@@ -39,7 +39,7 @@ export default function AnnualPage() {
       .select('requester_id,type,start_date,end_date,status')
       .in('requester_id', targetIds)
       .in('type', ['연차','반차(오전)','반차(오후)','반반차'])
-      .eq('status','approved')
+      .in('status', ['approved','pending'])
       .gte('start_date', year + '-01-01')
 
     // 사용자별 집계
