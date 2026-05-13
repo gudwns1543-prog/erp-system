@@ -113,10 +113,20 @@ export default function CalendarPage() {
     const approvalEvents = makeApprovalEvents(allApprovals||[], session.user.id)
 
     // events 합산: 일반 + 결재 이벤트
-    // 단, 이미 승인되어 events 테이블에 들어간 건과 중복 안 되게 - approvalEvents에서 approved건은 제외
-    // (calendar_type='company'로 events에 자동 생성되므로)
-    const pendingOnlyApprovalEvs = approvalEvents.filter((e:any) => e.isPending)
-    setEvents([...(evs||[]), ...pendingOnlyApprovalEvs])
+    // events 테이블에서 결재 관련 이벤트 제외 (approvalEvents로 대체하여 중복 방지)
+    const filteredEvs = (evs||[]).filter((e:any) => {
+      const t = e.title || ''
+      return !t.startsWith('[연차]') && !t.startsWith('[반차') && !t.startsWith('[반반차') &&
+             !t.startsWith('[출장]') && !t.startsWith('[병가]') && !t.startsWith('[외근]') &&
+             !t.startsWith('[특별휴가]') && !t.startsWith('[신청중]') && !t.startsWith('[승인]')
+    })
+    // 본인 결재가 우선 표시되도록 approvalEvents에서 isMe 우선 정렬
+    const sortedApprovalEvs = [...approvalEvents].sort((a:any, b:any) => {
+      if (a.isMe && !b.isMe) return -1
+      if (!a.isMe && b.isMe) return 1
+      return 0
+    })
+    setEvents([...sortedApprovalEvs, ...filteredEvs])
 
     const { data: atts } = await supabase.from('event_attendees')
       .select('*, user:user_id(id,name,grade,color,tc,avatar_url)')
@@ -135,7 +145,13 @@ export default function CalendarPage() {
   const today = toLocalDateStr(new Date())
 
   function getEventsForDate(dateStr: string) {
-    return events.filter(e => toKSTDate(e.start_at) <= dateStr && dateStr <= toKSTDate(e.end_at))
+    const filtered = events.filter(e => toKSTDate(e.start_at) <= dateStr && dateStr <= toKSTDate(e.end_at))
+    // 본인 결재 우선 정렬
+    return filtered.sort((a:any, b:any) => {
+      if (a.isMe && !b.isMe) return -1
+      if (!a.isMe && b.isMe) return 1
+      return 0
+    })
   }
 
   function canDelete(event: any) {
