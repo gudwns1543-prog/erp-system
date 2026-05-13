@@ -16,6 +16,26 @@ const TYPE_TIMES: Record<string, {startTime:string, endTime:string}> = {
   '특별휴가':   { startTime:'09:00', endTime:'18:00' },
 }
 
+// 날짜별 이미 사용한 연차 일수 계산 (연차=1, 반차=0.5, 반반차=0.25)
+function getDayUsage(date: string, requests: any[]): number {
+  const typeDay: Record<string,number> = {
+    '연차':1,'반차(오전)':0.5,'반차(오후)':0.5,'반반차':0.25
+  }
+  return requests
+    .filter((r:any) => ['approved','pending'].includes(r.status) && typeDay[r.type])
+    .filter((r:any) => {
+      const dates = []
+      const cur = new Date(r.start_date + 'T12:00:00')
+      const end = new Date((r.end_date||r.start_date) + 'T12:00:00')
+      while (cur <= end) {
+        dates.push(cur.toISOString().slice(0,10))
+        cur.setDate(cur.getDate()+1)
+      }
+      return dates.includes(date)
+    })
+    .reduce((sum:number, r:any) => sum + (typeDay[r.type]||0), 0)
+}
+
 function getDateRange(start: string, end: string): string[] {
   const dates: string[] = []
   const cur = new Date(start + 'T12:00:00')  // 정오 기준 - 타임존 버그 방지
@@ -457,23 +477,28 @@ export default function LeavePage() {
           cells.push({date:null, day:i, isCurrentMonth:false})
         }
 
-        // 같은 유형으로 이미 신청/승인된 날짜만 차단
-        // (다른 유형은 같은 날 중복 신청 허용 - 예: 오전반차+오후반반차)
-        const approvedDates = new Set(
-          myRequests
-            .filter((r:any) => r.status === 'approved' && r.type === form.type)
-            .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date)
-              .filter(d => { const dw = new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
-            )
-        )
-        const pendingDates = new Set(
-          myRequests
-            .filter((r:any) => r.status === 'pending' && r.type === form.type)
-            .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date)
-              .filter(d => { const dw = new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
-            )
-        )
-        // 표시용 - 모든 유형의 신청/승인 날짜 (선택 차단 없이 표시만)
+        // 신청하려는 유형의 사용량
+        const typeDay: Record<string,number> = {
+          '연차':1,'반차(오전)':0.5,'반차(오후)':0.5,'반반차':0.25
+        }
+        const requestingDays = typeDay[form.type] || 0
+
+        // 날짜별 이미 사용량 계산 → 추가하면 1일 초과하는 날짜 차단
+        const blockedDates = new Set<string>()
+        const allWorkDates = new Set<string>()
+        myRequests
+          .filter((r:any) => ['approved','pending'].includes(r.status))
+          .forEach((r:any) => {
+            getDateRange(r.start_date, r.end_date||r.start_date)
+              .filter(d => { const dw=new Date(d+'T00:00:00').getDay(); return dw!==0&&dw!==6&&!isHoliday(d) })
+              .forEach(d => allWorkDates.add(d))
+          })
+        allWorkDates.forEach(d => {
+          const usage = getDayUsage(d, myRequests)
+          if (usage + requestingDays > 1) blockedDates.add(d)
+        })
+
+        // 표시용 - 승인/신청중 날짜와 유형
         const allApprovedDates = new Map<string,string>()
         const allPendingDates = new Map<string,string>()
         myRequests.forEach((r:any) => {
@@ -484,6 +509,9 @@ export default function LeavePage() {
               else if (r.status==='pending') allPendingDates.set(d, r.type)
             })
         })
+        // 차단 날짜 = blockedDates (하루 1일 초과 방지)
+        const approvedDates = blockedDates  // 차단용으로 재사용
+        const pendingDates = new Set<string>() // 별도 차단 불필요
 
         function getDayEvents(ds: string) {
           return calEvents.filter(e => {
@@ -500,8 +528,7 @@ export default function LeavePage() {
           const dow = new Date(ds + 'T00:00:00').getDay()
           if (dow === 0 || dow === 6) return
           if (isHoliday(ds)) return
-          if (approvedDates.has(ds)) return
-          if (pendingDates.has(ds)) return
+          if (blockedDates.has(ds)) return // 하루 1일 초과 차단
 
           if (isSingleDay) {
             // 반차/반반차: 날짜 1개만 선택 후 닫기
@@ -597,10 +624,11 @@ export default function LeavePage() {
                   const dow = new Date(cell.date! + 'T00:00:00').getDay()
                   const isWknd = dow === 0 || dow === 6
                   const isHol = isHoliday(cell.date!)
-                  const isApproved = approvedDates.has(cell.date!) // 같은 유형 → 선택불가
-                  const isPending = pendingDates.has(cell.date!) // 같은 유형 → 선택불가
-                  const isOtherApproved = !isApproved && allApprovedDates.has(cell.date!) // 다른 유형 → 표시만
-                  const isOtherPending = !isPending && allPendingDates.has(cell.date!) // 다른 유형 → 표시만
+                  const isBlocked = blockedDates.has(cell.date!) // 하루 1일 초과 → 선택불가
+                  const isApproved = isBlocked && allApprovedDates.has(cell.date!)
+                  const isPending = isBlocked && !allApprovedDates.has(cell.date!) && allPendingDates.has(cell.date!)
+                  const isOtherApproved = !isBlocked && allApprovedDates.has(cell.date!)
+                  const isOtherPending = !isBlocked && allPendingDates.has(cell.date!)
                   const isStart = form.start === cell.date
                   const isEnd = form.end === cell.date
                   const inRange = !!(form.start && form.end && cell.date! > form.start && cell.date! < form.end)
@@ -609,7 +637,7 @@ export default function LeavePage() {
                   const isToday = cell.date === todayStr
                   const dayEvs = getDayEvents(cell.date!)
                   const isEndDisabled = showCal === 'end' && !!form.start && !form.end && cell.date! < form.start
-                  const isDisabled = isWknd || isHol || isApproved || isPending || !!isEndDisabled
+                  const isDisabled = isWknd || isHol || isBlocked || !!isEndDisabled
 
                   return (
                     <button key={idx} type="button"
