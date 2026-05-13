@@ -4,6 +4,7 @@ import { Logo } from '@/components/Logo'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
+import AgentChat from '@/components/AgentChat'
 
 const NAV = [
   { group: '홈', items: [
@@ -407,6 +408,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       )}
       <style>{`@keyframes slideUpToast{from{transform:translateY(24px);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
+
+      {/* AI 어시스턴트 (우측 하단 떠있는 챗봇) */}
+      <AgentChat />
     </div>
   )
 }
