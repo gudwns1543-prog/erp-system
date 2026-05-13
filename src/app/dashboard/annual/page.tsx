@@ -37,7 +37,7 @@ export default function AnnualPage() {
     const { data: leaves } = await supabase.from('approvals')
       .select('requester_id,type,start_date,end_date,status')
       .in('requester_id', targetIds)
-      .in('type', ['연차','반차(오전)','반차(오후)'])
+      .in('type', ['연차','반차(오전)','반차(오후)','반반차'])
       .eq('status','approved')
       .gte('start_date', year + '-01-01')
 
@@ -45,8 +45,25 @@ export default function AnnualPage() {
     const map: Record<string,any> = {}
     ;(leaves||[]).forEach((l:any) => {
       if (!map[l.requester_id]) map[l.requester_id] = { used: 0, history: [] }
-      const days = l.type.includes('반차') ? 0.5
-        : Math.round((new Date(l.end_date).getTime() - new Date(l.start_date).getTime()) / 86400000) + 1
+      let days = 0
+      if (l.type === '반반차') {
+        days = 0.25
+      } else if (l.type === '반차(오전)' || l.type === '반차(오후)') {
+        days = 0.5
+      } else {
+        // 연차: 주말/공휴일 제외한 실제 근무일만 계산
+        const start = new Date(l.start_date + 'T00:00:00')
+        const end = new Date((l.end_date || l.start_date) + 'T00:00:00')
+        let count = 0
+        const cur = new Date(start)
+        while (cur <= end) {
+          const ds = cur.toISOString().slice(0,10)
+          const dow = cur.getDay()
+          if (dow !== 0 && dow !== 6) count++ // 주말 제외 (공휴일은 별도 처리)
+          cur.setDate(cur.getDate() + 1)
+        }
+        days = count
+      }
       map[l.requester_id].used += days
       map[l.requester_id].history.push({ ...l, days })
     })
