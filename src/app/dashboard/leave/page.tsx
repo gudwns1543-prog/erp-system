@@ -92,22 +92,27 @@ export default function LeavePage() {
     setTotalLeave(annualLeave)
     const thisYear = new Date().getFullYear()
     const { data: usedApprovals } = await supabase.from('approvals')
-      .select('type, start_date, end_date')
+      .select('type, start_date, end_date, status')
       .eq('requester_id', session.user.id)
-      .eq('status', 'approved')
+      .in('status', ['approved', 'pending'])  // 신청중도 포함
       .in('type', ['연차','반차(오전)','반차(오후)','반반차'])
       .gte('start_date', `${thisYear}-01-01`)
-    let used = 0
+    let usedApproved = 0
+    let usedPending = 0
     ;(usedApprovals||[]).forEach((a:any) => {
+      let days = 0
       if (a.type === '연차') {
         const dates = getDateRange(a.start_date, a.end_date || a.start_date)
-        used += dates.filter(d => !isWeekend(d) && !isHoliday(d)).length
+        days = dates.filter(d => !isWeekend(d) && !isHoliday(d)).length
       } else if (a.type === '반차(오전)' || a.type === '반차(오후)') {
-        used += 0.5
+        days = 0.5
       } else if (a.type === '반반차') {
-        used += 0.25
+        days = 0.25
       }
+      if (a.status === 'approved') usedApproved += days
+      else usedPending += days
     })
+    const used = usedApproved + usedPending
     setUsedLeave(used)
     setRemainLeave(annualLeave - used)
     // 캘린더 이벤트 로드
@@ -277,10 +282,20 @@ export default function LeavePage() {
 
   const approverName = approvers.find(a=>a.id===form.approverId)?.name || '-'
   const isMultiDay = ['연차','병가','출장','특별휴가'].includes(form.type)
-  const needsTime = ['출장','외근','반반차'].includes(form.type) // 반반차도 시간 직접 입력
+  const needsTime = ['출장','외근','반반차'].includes(form.type)
   const leaveTypeSelected = ['연차','반차(오전)','반차(오후)','반반차'].includes(form.type)
   const reqDays = calcRequestDays(form.type, form.start, form.end)
   const afterLeave = remainLeave - reqDays
+  // 승인/신청중 각각 표시용
+  const usedApprovedDisplay = parseFloat((usedLeave - (myRequests
+    .filter((r:any)=>r.status==='pending'&&['연차','반차(오전)','반차(오후)','반반차'].includes(r.type))
+    .reduce((sum:number,r:any)=>{
+      if(r.type==='연차') return sum+getDateRange(r.start_date,r.end_date||r.start_date).filter(d=>!isWeekend(d)&&!isHoliday(d)).length
+      if(r.type.includes('반차')) return sum+0.5
+      if(r.type==='반반차') return sum+0.25
+      return sum
+    },0))).toFixed(2))
+  const usedPendingDisplay = parseFloat((usedLeave - (usedApprovedDisplay as number)).toFixed(2))
 
   const tabs = [
     {key:'apply', label:'신청하기'},
@@ -312,18 +327,22 @@ export default function LeavePage() {
                 <span className="text-sm">📅</span>
                 <span className="text-sm font-semibold text-gray-700">내 연차 현황</span>
               </div>
-              <div className="grid grid-cols-3 gap-3 mb-3">
-                <div className="bg-white rounded-lg p-2.5 text-center border border-purple-100">
+              <div className="grid grid-cols-4 gap-2 mb-3">
+                <div className="bg-white rounded-lg p-2 text-center border border-purple-100">
                   <div className="text-xs text-gray-400 mb-1">총 연차</div>
-                  <div className="text-lg font-bold text-gray-700">{totalLeave}<span className="text-xs font-normal text-gray-400 ml-0.5">일</span></div>
+                  <div className="text-base font-bold text-gray-700">{totalLeave}<span className="text-xs font-normal text-gray-400">일</span></div>
                 </div>
-                <div className="bg-white rounded-lg p-2.5 text-center border border-orange-100">
-                  <div className="text-xs text-gray-400 mb-1">사용</div>
-                  <div className="text-lg font-bold text-orange-500">{usedLeave}<span className="text-xs font-normal text-gray-400 ml-0.5">일</span></div>
+                <div className="bg-white rounded-lg p-2 text-center border border-red-100">
+                  <div className="text-xs text-gray-400 mb-1">승인됨</div>
+                  <div className="text-base font-bold text-red-500">{usedApprovedDisplay}<span className="text-xs font-normal text-gray-400">일</span></div>
                 </div>
-                <div className={`rounded-lg p-2.5 text-center border ${remainLeave <= 0 ? 'bg-red-50 border-red-200' : 'bg-white border-green-100'}`}>
+                <div className="bg-white rounded-lg p-2 text-center border border-amber-100">
+                  <div className="text-xs text-gray-400 mb-1">신청중</div>
+                  <div className="text-base font-bold text-amber-500">{usedPendingDisplay}<span className="text-xs font-normal text-gray-400">일</span></div>
+                </div>
+                <div className={`rounded-lg p-2 text-center border ${remainLeave <= 0 ? 'bg-red-50 border-red-200' : 'bg-white border-green-100'}`}>
                   <div className="text-xs text-gray-400 mb-1">잔여</div>
-                  <div className={`text-lg font-bold ${remainLeave <= 0 ? 'text-red-500' : 'text-green-600'}`}>{remainLeave}<span className="text-xs font-normal text-gray-400 ml-0.5">일</span></div>
+                  <div className={`text-base font-bold ${remainLeave <= 0 ? 'text-red-500' : 'text-green-600'}`}>{remainLeave}<span className="text-xs font-normal text-gray-400">일</span></div>
                 </div>
               </div>
               {form.start && reqDays > 0 && (
@@ -546,7 +565,27 @@ export default function LeavePage() {
               <div className="grid grid-cols-7 px-3 pb-3 gap-y-1">
                 {cells.map((cell, idx) => {
                   if (!cell.date || !cell.isCurrentMonth) {
-                    return <div key={idx} className="h-14 flex items-start justify-center pt-1"><span className="text-xs text-gray-200">{cell.day}</span></div>
+                    // 이전/다음달이지만 선택 범위에 포함된 날짜는 연보라 표시
+                  const prevDate = cell.isCurrentMonth ? null : (() => {
+                    if (cell.day > 20) { // 이전달
+                      const m = calMonth === 0 ? 12 : calMonth
+                      const y = calMonth === 0 ? calYear-1 : calYear
+                      return `${y}-${String(m).padStart(2,'0')}-${String(cell.day).padStart(2,'0')}`
+                    } else { // 다음달
+                      const m = calMonth === 11 ? 1 : calMonth+2
+                      const y = calMonth === 11 ? calYear+1 : calYear
+                      return `${y}-${String(m).padStart(2,'0')}-${String(cell.day).padStart(2,'0')}`
+                    }
+                  })()
+                  const prevInRange = prevDate && form.start && form.end &&
+                    prevDate > form.start && prevDate < form.end &&
+                    new Date(prevDate+'T00:00:00').getDay() !== 0 &&
+                    new Date(prevDate+'T00:00:00').getDay() !== 6
+                  if (!cell.isCurrentMonth) return (
+                    <div key={idx} className={`h-14 flex items-start justify-center pt-1 rounded-lg ${prevInRange?'bg-purple-50':''}`}>
+                      <span className={`text-xs ${prevInRange?'text-purple-300':'text-gray-200'}`}>{cell.day}</span>
+                    </div>
+                  )
                   }
                   const dow = new Date(cell.date + 'T00:00:00').getDay()
                   const isWknd = dow === 0 || dow === 6
@@ -556,6 +595,9 @@ export default function LeavePage() {
                   const isStart = form.start === cell.date
                   const isEnd = form.end === cell.date
                   const inRange = !!(form.start && form.end && cell.date > form.start && cell.date < form.end)
+                  // 실제 적용 근무일 (주말/공휴일 제외)
+                  const isWorkDay = !isWknd && !isHol
+                  const isInRangeWorkDay = inRange && isWorkDay
                   const isToday = cell.date === todayStr
                   const dayEvs = getDayEvents(cell.date)
                   // 종료일 선택 모드이고, 시작일만 선택된 상태일 때만 이전 날짜 비활성
@@ -566,24 +608,22 @@ export default function LeavePage() {
                     <button key={idx} type="button"
                       onClick={()=>!isDisabled && selectDate(cell.date!)}
                       disabled={isDisabled}
-                      className={`h-14 rounded-lg flex flex-col items-center pt-1 transition-colors
-                        ${isStart ? 'bg-purple-600' :
-                          isEnd ? 'bg-purple-600' :
-                          inRange && isApproved ? 'bg-red-50' :
-                          inRange && isPending ? 'bg-amber-50' :
-                          inRange ? 'bg-purple-50/70' :
-                          isApproved ? 'bg-red-50 cursor-not-allowed' :
+                      className={`h-14 rounded-lg flex flex-col items-center pt-1 transition-colors relative
+                        ${isStart||isEnd ? 'bg-purple-600 shadow-md' :
+                          isApproved ? 'bg-red-100 cursor-not-allowed' :
                           isPending ? 'bg-amber-100 cursor-not-allowed' :
-                          isWknd||isHol ? 'opacity-30 cursor-not-allowed' :
+                          isInRangeWorkDay ? 'bg-purple-100' :
+                          isWknd||isHol ? 'bg-gray-50 opacity-40 cursor-not-allowed' :
                           isEndDisabled ? 'opacity-20 cursor-not-allowed' :
                           'hover:bg-gray-100 cursor-pointer'}
                       `}>
                       <span className={`text-xs font-medium ${
-                        isStart||isEnd ? 'text-white' :
-                        isApproved ? 'text-red-400' :
+                        isStart||isEnd ? 'text-white font-bold' :
+                        isApproved ? 'text-red-500 font-medium' :
                         isPending ? 'text-amber-600 font-semibold' :
-                        dow===0||isHol ? 'text-red-500' :
-                        dow===6 ? 'text-blue-500' :
+                        isInRangeWorkDay ? 'text-purple-700 font-medium' :
+                        dow===0||isHol ? 'text-gray-400' :
+                        dow===6 ? 'text-gray-400' :
                         isToday ? 'text-purple-600 font-bold' : 'text-gray-700'
                       }`}>{cell.day}</span>
                       {isApproved && !isStart && !isEnd && <span className="text-red-300" style={{fontSize:'7px'}}>승인됨</span>}
@@ -605,10 +645,11 @@ export default function LeavePage() {
               {/* 하단 - 범례 + 선택 정보 + 버튼 */}
               <div className="px-4 pb-4 border-t border-gray-50 pt-3">
                 <div className="flex gap-3 mb-3 flex-wrap">
-                  <span className="flex items-center gap-1 text-xs text-gray-400"><span className="w-3 h-3 rounded bg-red-50 border border-red-200 inline-block"/>승인됨</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-400"><span className="w-3 h-3 rounded bg-amber-100 border border-amber-300 inline-block"/>신청중</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-400"><span className="w-3 h-3 rounded bg-purple-600 inline-block"/>선택</span>
-                  <span className="flex items-center gap-1 text-xs text-gray-400"><span className="w-3 h-3 rounded bg-purple-50 border border-purple-100 inline-block"/>기간</span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-purple-600 inline-block"/>시작·종료일</span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-purple-100 border border-purple-200 inline-block"/>적용 근무일</span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-red-100 border border-red-200 inline-block"/>승인됨(선택불가)</span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-amber-100 border border-amber-200 inline-block"/>신청중(선택불가)</span>
+                  <span className="flex items-center gap-1 text-xs text-gray-500"><span className="w-3 h-3 rounded bg-gray-50 border border-gray-200 opacity-50 inline-block"/>주말·공휴일</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-gray-500">
