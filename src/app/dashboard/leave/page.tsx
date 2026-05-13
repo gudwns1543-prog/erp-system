@@ -2,7 +2,19 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 
-const TYPES = ['연차','반차(오전)','반차(오후)','병가','출장','외근','특별휴가']
+const TYPES = ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가']
+
+// 유형별 시간 기본값
+const TYPE_TIMES: Record<string, {startTime:string, endTime:string}> = {
+  '연차':       { startTime:'09:00', endTime:'18:00' },
+  '반차(오전)': { startTime:'09:00', endTime:'13:00' },
+  '반차(오후)': { startTime:'13:00', endTime:'18:00' },
+  '반반차':     { startTime:'09:00', endTime:'11:00' },
+  '병가':       { startTime:'09:00', endTime:'18:00' },
+  '출장':       { startTime:'09:00', endTime:'18:00' },
+  '외근':       { startTime:'09:00', endTime:'18:00' },
+  '특별휴가':   { startTime:'09:00', endTime:'18:00' },
+}
 
 export default function LeavePage() {
   const [profile, setProfile] = useState<any>(null)
@@ -10,7 +22,10 @@ export default function LeavePage() {
   const [myRequests, setMyRequests] = useState<any[]>([])
   const [allRequests, setAllRequests] = useState<any[]>([])
   const [tab, setTab] = useState<'apply'|'all'|'mine'>('apply')
-  const [form, setForm] = useState({type:'연차',start:'',end:'',approverId:'',reason:''})
+  const [form, setForm] = useState({
+    type:'연차', start:'', startTime:'09:00', end:'', endTime:'18:00',
+    approverId:'', reason:''
+  })
   const [loading, setLoading] = useState(false)
   const [alert, setAlert] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
@@ -39,6 +54,12 @@ export default function LeavePage() {
 
   useEffect(() => { load() }, [load])
 
+  // 유형 변경 시 시간 자동 설정
+  function handleTypeChange(type: string) {
+    const times = TYPE_TIMES[type] || { startTime:'09:00', endTime:'18:00' }
+    setForm(f=>({...f, type, startTime:times.startTime, endTime:times.endTime}))
+  }
+
   function handleApplyClick(e: React.FormEvent) {
     e.preventDefault()
     if (!form.start || !form.approverId) return
@@ -52,8 +73,12 @@ export default function LeavePage() {
     if (!session) return
     await supabase.from('approvals').insert({
       requester_id: session.user.id, approver_id: form.approverId,
-      type: form.type, start_date: form.start,
-      end_date: form.end || form.start, reason: form.reason,
+      type: form.type,
+      start_date: form.start,
+      end_date: form.end || form.start,
+      start_time: form.startTime,
+      end_time: form.endTime,
+      reason: form.reason,
     })
     setAlert('결재 상신 완료')
     setForm(f=>({...f, reason:'', start:'', end:''}))
@@ -89,7 +114,7 @@ export default function LeavePage() {
       ) : (
         <table className="w-full text-sm">
           <thead><tr className="border-b border-gray-100">
-            {[showRequester?'신청자':'신청일','유형','기간','사유','상태',''].filter(Boolean).map(h=>(
+            {[showRequester?'신청자':'신청일','유형','기간','시간','사유','상태',''].filter(Boolean).map(h=>(
               <th key={h} className="pb-2 text-left font-medium text-gray-400 pr-4 text-xs whitespace-nowrap">{h}</th>
             ))}
           </tr></thead>
@@ -101,8 +126,11 @@ export default function LeavePage() {
                   : <td className="py-2 pr-4 text-xs text-gray-500">{r.created_at?.slice(0,10)}</td>
                 }
                 <td className="py-2 pr-4 text-xs">{r.type}</td>
-                <td className="py-2 pr-4 text-xs whitespace-nowrap">{r.start_date}{r.end_date!==r.start_date?' ~ '+r.end_date:''}</td>
-                <td className="py-2 pr-4 text-xs text-gray-500 max-w-[160px] truncate">{r.reason||'-'}</td>
+                <td className="py-2 pr-4 text-xs whitespace-nowrap">{r.start_date}{r.end_date&&r.end_date!==r.start_date?' ~ '+r.end_date:''}</td>
+                <td className="py-2 pr-4 text-xs text-gray-500 whitespace-nowrap">
+                  {r.start_time&&r.end_time ? `${r.start_time}~${r.end_time}` : '-'}
+                </td>
+                <td className="py-2 pr-4 text-xs text-gray-500 max-w-[120px] truncate">{r.reason||'-'}</td>
                 <td className="py-2 pr-4"><Badge s={r.status} /></td>
                 <td className="py-2">
                   <div className="flex gap-1">
@@ -121,6 +149,7 @@ export default function LeavePage() {
   )
 
   const approverName = approvers.find(a=>a.id===form.approverId)?.name || '-'
+  const isMultiDay = ['연차','병가','출장','특별휴가'].includes(form.type)
 
   const tabs = [
     {key:'apply', label:'신청하기'},
@@ -149,22 +178,51 @@ export default function LeavePage() {
           <form onSubmit={handleApplyClick} className="space-y-3">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">신청 유형</label>
-              <select className="input" value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))}>
+              <select className="input" value={form.type} onChange={e=>handleTypeChange(e.target.value)}>
                 {TYPES.map(t=><option key={t}>{t}</option>)}
               </select>
             </div>
+
+            {/* 시작일 + 시작시간 */}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">시작일 *</label>
                 <input type="date" className="input" value={form.start}
-                  onChange={e=>setForm(f=>({...f,start:e.target.value}))} required />
+                  onChange={e=>setForm(f=>({...f,start:e.target.value,end:f.end||e.target.value}))} required />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">종료일</label>
-                <input type="date" className="input" value={form.end}
-                  onChange={e=>setForm(f=>({...f,end:e.target.value}))} />
+                <label className="block text-xs font-medium text-gray-500 mb-1">시작 시간</label>
+                <input type="time" className="input" value={form.startTime}
+                  onChange={e=>setForm(f=>({...f,startTime:e.target.value}))} />
               </div>
             </div>
+
+            {/* 종료일 + 종료시간 */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">
+                  종료일 {!isMultiDay && <span className="text-gray-300">(당일이면 생략)</span>}
+                </label>
+                <input type="date" className="input" value={form.end}
+                  onChange={e=>setForm(f=>({...f,end:e.target.value}))}
+                  min={form.start} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">종료 시간</label>
+                <input type="time" className="input" value={form.endTime}
+                  onChange={e=>setForm(f=>({...f,endTime:e.target.value}))} />
+              </div>
+            </div>
+
+            {/* 유형별 안내 */}
+            {['반반차','반차(오전)','반차(오후)'].includes(form.type) && (
+              <div className="text-xs text-purple-600 bg-purple-50 px-3 py-2 rounded-lg">
+                {form.type === '반반차' && '⏰ 반반차: 09:00 ~ 11:00 (2시간)'}
+                {form.type === '반차(오전)' && '⏰ 오전반차: 09:00 ~ 13:00 (4시간)'}
+                {form.type === '반차(오후)' && '⏰ 오후반차: 13:00 ~ 18:00 (4시간)'}
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">결재자</label>
               <select className="input" value={form.approverId}
@@ -174,7 +232,7 @@ export default function LeavePage() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">사유</label>
-              <textarea className="input resize-none" rows={4}
+              <textarea className="input resize-none" rows={3}
                 placeholder="사유를 상세히 입력해 주세요..."
                 value={form.reason} onChange={e=>setForm(f=>({...f,reason:e.target.value}))} />
             </div>
@@ -188,7 +246,7 @@ export default function LeavePage() {
       {tab==='all' && profile?.role==='director' && <RequestTable data={allRequests} showRequester />}
       {tab==='mine' && <RequestTable data={myRequests} />}
 
-      {/* 송신 확인 모달 */}
+      {/* 상신 확인 모달 */}
       {showConfirm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl w-full max-w-sm shadow-xl">
@@ -199,7 +257,8 @@ export default function LeavePage() {
             <div className="p-5 space-y-3">
               {[
                 {label:'신청 유형', val:form.type},
-                {label:'기간', val:`${form.start}${form.end&&form.end!==form.start?' ~ '+form.end:''}`},
+                {label:'시작', val:`${form.start} ${form.startTime}`},
+                {label:'종료', val:`${form.end||form.start} ${form.endTime}`},
                 {label:'결재자', val:approverName},
                 {label:'사유', val:form.reason||'(없음)'},
               ].map(item=>(
@@ -239,7 +298,8 @@ export default function LeavePage() {
               {[
                 {label:'신청자', val:(showDetail.requester as any)?.name || profile?.name},
                 {label:'신청 유형', val:showDetail.type},
-                {label:'기간', val:`${showDetail.start_date}${showDetail.end_date!==showDetail.start_date?' ~ '+showDetail.end_date:''}`},
+                {label:'시작', val:`${showDetail.start_date} ${showDetail.start_time||''}`},
+                {label:'종료', val:`${showDetail.end_date||showDetail.start_date} ${showDetail.end_time||''}`},
                 {label:'결재자', val:(showDetail.approver as any)?.name},
               ].map(item=>(
                 <div key={item.label} className="flex gap-4 pb-3 border-b border-gray-50">
