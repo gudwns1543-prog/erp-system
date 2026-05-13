@@ -24,6 +24,40 @@ function toLocalDateStr(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`
 }
 
+// 결재(연차/반차/출장 등) → 캘린더 이벤트 변환 (home과 동일 로직)
+function makeApprovalEvents(approvals: any[], myUserId: string) {
+  const typeColors: Record<string,string> = {
+    '연차':'#EF4444','반차(오전)':'#F97316','반차(오후)':'#F97316',
+    '반반차':'#F59E0B','출장':'#3B82F6','병가':'#8B5CF6',
+    '외근':'#06B6D4','특별휴가':'#EC4899',
+  }
+  return approvals.flatMap((a:any) => {
+    const name = (a.requester as any)?.name || ''
+    const isMe = a.requester_id === myUserId
+    const statusLabel = a.status === 'pending' ? '[신청중]' : '[승인]'
+    const dates: string[] = []
+    const cur = new Date(a.start_date + 'T12:00:00')
+    const end = new Date((a.end_date||a.start_date) + 'T12:00:00')
+    while (cur <= end) {
+      const dw = cur.getDay()
+      const ds = `${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`
+      if (dw !== 0 && dw !== 6) dates.push(ds)
+      cur.setDate(cur.getDate() + 1)
+    }
+    return dates.map(d => ({
+      id: `approval-${a.id}-${d}`,
+      title: `${statusLabel} ${a.type} ${name}`,
+      start_at: `${d}T09:00:00+09:00`,
+      end_at: `${d}T18:00:00+09:00`,
+      color: typeColors[a.type] || '#6B7280',
+      creator_id: a.requester_id,
+      calendar_type: a.status === 'pending' ? 'pending' : 'company',
+      isMe,
+      isPending: a.status === 'pending',
+    }))
+  })
+}
+
 function toKSTDate(utcStr: string): string {
   const d = new Date(utcStr)
   const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
@@ -70,7 +104,20 @@ export default function CalendarPage() {
     const { data: evs } = await supabase.from('events')
       .select('*, creator:creator_id(name,grade,color,tc)')
       .or(orClauses.join(',')).order('start_at')
-    setEvents(evs||[])
+
+    // 결재 - 신청중(pending)과 승인된 것 모두 가져와서 캘린더에 표시
+    const { data: allApprovals } = await supabase.from('approvals')
+      .select('*, requester:requester_id(name)')
+      .in('status', ['pending','approved'])
+      .in('type', ['연차','반차(오전)','반차(오후)','반반차','출장','병가','외근','특별휴가'])
+    const approvalEvents = makeApprovalEvents(allApprovals||[], session.user.id)
+
+    // events 합산: 일반 + 결재 이벤트
+    // 단, 이미 승인되어 events 테이블에 들어간 건과 중복 안 되게 - approvalEvents에서 approved건은 제외
+    // (calendar_type='company'로 events에 자동 생성되므로)
+    const pendingOnlyApprovalEvs = approvalEvents.filter((e:any) => e.isPending)
+    setEvents([...(evs||[]), ...pendingOnlyApprovalEvs])
+
     const { data: atts } = await supabase.from('event_attendees')
       .select('*, user:user_id(id,name,grade,color,tc,avatar_url)')
       .in('event_id', (evs||[]).map((e:any)=>e.id))
