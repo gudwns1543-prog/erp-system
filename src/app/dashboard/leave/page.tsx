@@ -126,17 +126,18 @@ export default function LeavePage() {
     let usedApproved = 0
     let usedPending = 0
     ;(usedApprovals||[]).forEach((a:any) => {
-      let days = 0
+      let hours = 0
       if (a.type === '연차') {
         const dates = getDateRange(a.start_date, a.end_date || a.start_date)
-        days = dates.filter(d => !isWeekend(d) && !isHoliday(d)).length
+        const workDays = dates.filter(d => !isWeekend(d) && !isHoliday(d)).length
+        hours = workDays * 8  // 1일 = 8H
       } else if (a.type === '반차(오전)' || a.type === '반차(오후)') {
-        days = 0.5
+        hours = 4  // 반차 = 4H
       } else if (a.type === '반반차') {
-        days = 0.25
+        hours = 2  // 반반차 = 2H
       }
-      if (a.status === 'approved') usedApproved += days
-      else if (a.status === 'pending') usedPending += days
+      if (a.status === 'approved') usedApproved += hours
+      else if (a.status === 'pending') usedPending += hours
     })
     const used = usedApproved + usedPending
     setUsedLeave(used)
@@ -181,8 +182,13 @@ export default function LeavePage() {
         requesterName: name,
       }))
     })
-    // events 테이블에서 이미 있는 연차 이벤트 제거 (approvalEvs로 대체)
-    const filteredEvs = (evs||[]).filter((e:any) => !e.title.startsWith('[연차]') && !e.title.startsWith('[반차') && !e.title.startsWith('[반반차'))
+    // events 테이블에서 결재 관련 이벤트 제외 (approvalEvs로 대체하여 중복 방지)
+    const filteredEvs = (evs||[]).filter((e:any) => {
+      const t = e.title || ''
+      return !t.startsWith('[연차]') && !t.startsWith('[반차') && !t.startsWith('[반반차') &&
+             !t.startsWith('[출장]') && !t.startsWith('[병가]') && !t.startsWith('[외근]') &&
+             !t.startsWith('[특별휴가]') && !t.startsWith('[신청중]') && !t.startsWith('[승인]')
+    })
     setCalEvents([...filteredEvs, ...approvalEvs])
   }, [form.approverId])
 
@@ -333,7 +339,20 @@ export default function LeavePage() {
                 <td className="py-2 pr-4 text-xs">{r.type}</td>
                 <td className="py-2 pr-4 text-xs whitespace-nowrap">{r.start_date}{r.end_date&&r.end_date!==r.start_date?' ~ '+r.end_date:''}</td>
                 <td className="py-2 pr-4 text-xs text-gray-500 whitespace-nowrap">
-                  {r.start_time&&r.end_time ? `${r.start_time}~${r.end_time}` : '-'}
+                  {(() => {
+                    const typeH: Record<string,string> = {'연차':'8H/일','반차(오전)':'4H','반차(오후)':'4H','반반차':'2H'}
+                    const hLabel = typeH[r.type] || ''
+                    if (r.type === '연차') {
+                      // 연차는 날짜 수 계산
+                      const dates = getDateRange(r.start_date, r.end_date||r.start_date)
+                      const workDays = dates.filter((d:string) => {
+                        const dw = new Date(d+'T00:00:00').getDay()
+                        return dw !== 0 && dw !== 6
+                      }).length
+                      return <span className="text-purple-600 font-medium">{workDays * 8}H ({workDays}일)</span>
+                    }
+                    return <span className="text-purple-600 font-medium">{hLabel}{r.start_time&&r.end_time?` (${r.start_time}~${r.end_time})`:''}</span>
+                  })()}
                 </td>
                 <td className="py-2 pr-4 text-xs text-gray-500 max-w-[120px] truncate">{r.reason||'-'}</td>
                 <td className="py-2 pr-4"><Badge s={r.status} /></td>

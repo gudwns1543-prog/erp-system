@@ -180,7 +180,14 @@ export default function HomePage() {
       .in('status', ['pending','approved'])
       .in('type',['연차','반차(오전)','반차(오후)','반반차','출장','병가','외근','특별휴가'])
     const approvalEvents = makeApprovalEvents(allApprovals||[], session.user.id)
-    setAllEvents([...(evs||[]), ...approvalEvents])
+    // events 테이블에서 결재 관련 이벤트 제외 (approvalEvents로 대체하여 중복 방지)
+    const filteredEvs = (evs||[]).filter((e:any) => {
+      const t = e.title || ''
+      return !t.startsWith('[연차]') && !t.startsWith('[반차') && !t.startsWith('[반반차') &&
+             !t.startsWith('[출장]') && !t.startsWith('[병가]') && !t.startsWith('[외근]') &&
+             !t.startsWith('[특별휴가]') && !t.startsWith('[신청중]') && !t.startsWith('[승인]')
+    })
+    setAllEvents([...filteredEvs, ...approvalEvents])
     if (p?.role === 'director') {
       const { data: apps } = await supabase.from('approvals')
         .select('*, requester:requester_id(name,color,tc,avatar_url)')
