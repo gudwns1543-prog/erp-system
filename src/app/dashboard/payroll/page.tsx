@@ -193,6 +193,24 @@ export default function PayrollPage() {
                     </div>
                   )
                 })}
+                {/* 출장일수 - 항상 표시 */}
+                <div className="flex justify-between items-center py-1.5 border-b border-gray-50 last:border-0">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-600 font-medium">출장</span>
+                      <span className="text-xs font-semibold text-amber-600">일비</span>
+                    </div>
+                    <div className="text-xs text-gray-400">
+                      {tripAllowance > 0 ? `${tripAllowance.toLocaleString()}원/일` : '회사설정에서 일비 미설정'}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className={`text-sm font-bold ${tripDays>0?'text-amber-600':'text-gray-300'}`}>{tripDays}일</span>
+                    {tripDays > 0 && tripAllowance > 0 && (
+                      <div className="text-xs text-amber-500">{(tripDays*tripAllowance).toLocaleString()}원</div>
+                    )}
+                  </div>
+                </div>
                 {!workData && (
                   <div className="mt-2 p-2 bg-gray-50 rounded-lg text-xs text-gray-400 text-center">
                     해당 월 근태 기록 없음 · 수기 입력 항목만 계산됩니다

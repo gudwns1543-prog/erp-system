@@ -240,7 +240,10 @@ export default function PaySimPage() {
                       <span className="text-xs font-semibold text-purple-600">{formatWon(actualResult.payHolNight)}</span>
                     </div>
                   )}
-                  {tripPay>0 && <div className="flex justify-between py-1.5 border-b border-gray-50 text-xs"><span className="text-gray-500">출장 일비 ({tripDays}일 × {tripAllowance.toLocaleString()}원)</span><span className="text-amber-600 font-semibold">{formatWon(tripPay)}</span></div>}
+                  <div className="flex justify-between py-1.5 border-b border-gray-50 text-xs">
+                    <span className="text-gray-500">출장 일비 ({tripDays}일 × {tripAllowance > 0 ? tripAllowance.toLocaleString()+'원' : '미설정'})</span>
+                    <span className={`font-semibold ${tripPay>0?'text-amber-600':'text-gray-300'}`}>{tripPay>0?formatWon(tripPay):'0원'}</span>
+                  </div>
                   {salary?.meal>0 && <div className="flex justify-between py-1.5 border-b border-gray-50 text-xs"><span className="text-gray-500">식대 (비과세)</span><span className="text-purple-600 font-semibold">{formatWon(salary.meal)}</span></div>}
                   {salary?.transport>0 && <div className="flex justify-between py-1.5 border-b border-gray-50 text-xs"><span className="text-gray-500">교통비 (비과세)</span><span className="text-purple-600 font-semibold">{formatWon(salary.transport)}</span></div>}
                   {salary?.comm>0 && <div className="flex justify-between py-1.5 border-b border-gray-50 text-xs"><span className="text-gray-500">통신비 (비과세)</span><span className="text-purple-600 font-semibold">{formatWon(salary.comm)}</span></div>}
