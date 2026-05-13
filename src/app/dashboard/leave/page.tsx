@@ -199,10 +199,32 @@ export default function LeavePage() {
     setTimeout(()=>setAlert(''), 3000)
   }
 
-  async function handleCancel(id: string) {
-    if (!confirm('결재 신청을 취소하시겠습니까?')) return
+  async function handleCancel(id: string, isApproved = false) {
+    const msg = isApproved
+      ? '승인된 결재를 취소하시겠습니까?\n\n관련 근태기록과 캘린더 일정도 함께 삭제됩니다.'
+      : '결재 신청을 취소하시겠습니까?'
+    if (!confirm(msg)) return
     const supabase = createClient()
+    if (isApproved) {
+      // 승인 취소 시 근태기록 + 캘린더 이벤트 삭제
+      const { data: approval } = await supabase.from('approvals')
+        .select('*').eq('id', id).single()
+      if (approval) {
+        const dates = getDateRange(approval.start_date, approval.end_date || approval.start_date)
+        for (const dateStr of dates) {
+          await supabase.from('attendance').delete()
+            .eq('user_id', approval.requester_id).eq('work_date', dateStr).eq('note', approval.type)
+        }
+        await supabase.from('events').delete()
+          .eq('creator_id', approval.requester_id).eq('is_locked', true)
+          .like('title', `[${approval.type}]%`)
+          .gte('start_at', `${approval.start_date}T00:00:00`)
+          .lte('start_at', `${(approval.end_date||approval.start_date)}T23:59:59`)
+      }
+    }
     await supabase.from('approvals').delete().eq('id', id)
+    setAlert('취소되었습니다.')
+    setTimeout(()=>setAlert(''), 2000)
     load()
   }
 
@@ -239,6 +261,9 @@ export default function LeavePage() {
                     <button onClick={()=>setShowDetail(r)} className="btn-secondary text-xs px-2 py-1">조회</button>
                     {r.status==='pending' && r.requester_id===profile?.id && (
                       <button onClick={()=>handleCancel(r.id)} className="btn-danger text-xs px-2 py-1">취소</button>
+                    )}
+                    {r.status==='approved' && r.requester_id===profile?.id && (
+                      <button onClick={()=>handleCancel(r.id, true)} className="btn-secondary text-xs px-2 py-1 text-orange-600 border-orange-200 hover:bg-orange-50">취소 요청</button>
                     )}
                   </div>
                 </td>
@@ -669,12 +694,23 @@ export default function LeavePage() {
             </div>
             <div className="p-4 border-t border-gray-100 flex gap-2 justify-end">
               <button onClick={()=>setShowDetail(null)} className="btn-secondary text-sm">닫기</button>
+              {showDetail.requester_id===profile?.id && showDetail.status==='pending' && (
+                <button onClick={()=>handleCancel(showDetail.id)} className="btn-danger text-sm">취소</button>
+              )}
+              {showDetail.requester_id===profile?.id && showDetail.status==='approved' && (
+                <button onClick={()=>handleCancel(showDetail.id, true)}
+                  className="btn-secondary text-sm text-orange-600 border-orange-200 hover:bg-orange-50">승인 취소</button>
+              )}
               {profile?.role==='director' && showDetail.status==='pending' && (
                 <>
                   <button onClick={()=>handleApprove(showDetail.id,'rejected')} className="btn-danger text-sm">반려</button>
                   <button onClick={()=>handleApprove(showDetail.id,'approved')}
                     className="btn-secondary text-sm text-green-700 border-green-200 hover:bg-green-50">승인</button>
                 </>
+              )}
+              {profile?.role==='director' && showDetail.status==='approved' && (
+                <button onClick={()=>handleCancel(showDetail.id, true)}
+                  className="btn-secondary text-sm text-orange-600 border-orange-200 hover:bg-orange-50">승인 번복</button>
               )}
             </div>
           </div>
