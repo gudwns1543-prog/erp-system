@@ -442,18 +442,26 @@ export default function LeavePage() {
           })
         }
 
+        const isSingleDay = ['반차(오전)','반차(오후)','반반차'].includes(form.type)
+
         function selectDate(ds: string) {
           const dow = new Date(ds + 'T00:00:00').getDay()
           if (dow === 0 || dow === 6) return
           if (isHoliday(ds)) return
           if (approvedDates.has(ds)) return
           if (pendingDates.has(ds)) return
-          // 첫 클릭(start 없거나 둘 다 있음) → 시작일
-          // 두 번째 클릭(start만 있음) → 종료일
-          if (!form.start || (form.start && form.end)) {
+
+          if (isSingleDay) {
+            // 반차/반반차: 시작일 클릭 즉시 완료 (종료일 선택 없음)
+            setForm(f=>({...f, start:ds, end:ds}))
+            setLeaveError('')
+            setShowCal(null) // 바로 닫기
+          } else if (!form.start || (form.start && form.end)) {
+            // 연차 등: 첫 클릭 → 시작일
             setForm(f=>({...f, start:ds, end:''}))
             setShowCal('end')
           } else {
+            // 두 번째 클릭 → 종료일
             if (ds < form.start) {
               setForm(f=>({...f, start:ds, end:''}))
               return
@@ -473,13 +481,19 @@ export default function LeavePage() {
               {/* 헤더 */}
               <div className="p-4 border-b border-gray-100 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${!form.start||(form.start&&form.end)?'bg-purple-600 text-white':'bg-gray-100 text-gray-400'}`}>
-                    {!form.start||(form.start&&form.end) ? '① 시작일 클릭' : '✓ 시작일 선택됨'}
-                  </div>
-                  {isMultiDay && (
-                    <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${form.start&&!form.end?'bg-purple-600 text-white':'bg-gray-100 text-gray-400'}`}>
-                      {form.start&&!form.end ? '② 종료일 클릭' : form.end ? '✓ 종료일 선택됨' : '② 종료일'}
+                  {isSingleDay ? (
+                    <div className="px-2.5 py-1 rounded-full text-xs font-medium bg-purple-600 text-white">
+                      날짜 선택 (1일)
                     </div>
+                  ) : (
+                    <>
+                      <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${!form.start||(form.start&&form.end)?'bg-purple-600 text-white':'bg-gray-100 text-gray-400'}`}>
+                        {!form.start||(form.start&&form.end) ? '① 시작일 클릭' : '✓ 시작일 선택됨'}
+                      </div>
+                      <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${form.start&&!form.end?'bg-purple-600 text-white':'bg-gray-100 text-gray-400'}`}>
+                        {form.start&&!form.end ? '② 종료일 클릭' : form.end ? '✓ 종료일 선택됨' : '② 종료일'}
+                      </div>
+                    </>
                   )}
                   <span className="text-xs text-gray-400">주말·승인·신청중 불가</span>
                 </div>
