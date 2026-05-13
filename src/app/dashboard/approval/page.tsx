@@ -67,14 +67,14 @@ export default function ApprovalPage() {
     const supabase = createClient()
     await supabase.from('approvals').update({status, updated_at: new Date().toISOString()}).eq('id', id)
 
-    // 반려 시 - 퇴근시간수정 요청이면 attendance의 check_out 되돌림 (재요청 가능하게)
+    // 반려 시 - 퇴근시간수정 요청이면 attendance를 원래 야간컷오프 상태로 되돌림 (재요청 가능하게)
     if (status === 'rejected') {
       const { data: approval } = await supabase.from('approvals')
         .select('type, requester_id, start_date').eq('id', id).single()
       if (approval && approval.type === '퇴근시간수정') {
-        // 본인이 입력했던 check_out 지우고 note도 비움 → 다시 미퇴근 팝업 뜨도록
+        // 야간컷오프 상태로 복원 (다음번 접속 시 다시 팝업 뜸)
         await supabase.from('attendance')
-          .update({ check_out: null, reg_hours: 0, ext_hours: 0, night_hours: 0, note: null })
+          .update({ check_out: '07:00:00', note: '야간자동컷오프' })
           .eq('user_id', approval.requester_id)
           .eq('work_date', approval.start_date)
           .eq('note', '수정요청중')

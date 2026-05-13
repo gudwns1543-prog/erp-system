@@ -211,20 +211,22 @@ export default function HomePage() {
     // 가장 마지막 세션이 미퇴근(자동컷오프 포함, 단 본인 수정 안 한 경우)이면 팝업
     if (yesterdaySess && yesterdaySess.length > 0) {
       const lastY = yesterdaySess[yesterdaySess.length - 1]
+      // 본인 확인이 필요한 케이스:
+      //   1) check_out null (자동 처리도 안 됐거나 어떤 이유로 실패)
+      //   2) note='야간자동컷오프' (야간 출근자 - 새벽 7시 cron이 임의로 처리한 경우, 실제 시간 확인 필요)
+      // 18시 자동퇴근('자동퇴근')은 정상 처리로 보고 팝업 안 띄움
       const isYesterdayUnclocked =
-        !lastY.check_out || // 퇴근 미기록
-        lastY.note === '야간자동컷오프' // 야간 컷오프된 상태 (본인 확인 필요)
-      // '본인 수정완료' note가 있으면 이미 처리한 것
+        !lastY.check_out ||
+        lastY.note === '야간자동컷오프'
+      // '본인수정완료' = 결재까지 끝남, '수정요청중' = 결재 대기중 - 둘 다 더 이상 팝업 안 띄움
       const alreadyHandled = lastY.note === '본인수정완료' || lastY.note === '수정요청중'
       if (isYesterdayUnclocked && !alreadyHandled && lastY.check_in) {
         // 기본 추천 시각: 어제 check_in 이후 합리적 시각 (예: 22:00 또는 check_in + 4h 중 큰 값)
         const inSec = lastY.check_in.split(':').map(Number)
         const inMin = inSec[0] * 60 + inSec[1]
         const recommendMin = Math.max(inMin + 240, 22 * 60) // 출근 + 4h 또는 22시 중 큰 값
-        const recH = Math.min(Math.floor(recommendMin / 60), 30) // 익일 06시까지 = 30시
+        const recH = Math.min(Math.floor(recommendMin / 60), 30)
         const recM = recommendMin % 60
-        // 시각을 HH:MM 형식으로 (30시 → 익일 06시 표현은 input type=time이 불가능 → 24시간 표시법으로)
-        // input type=time은 24시 못 넘어서 일단 23:59까지만
         const finalH = Math.min(recH, 23)
         setPickedCheckoutTime(`${String(finalH).padStart(2,'0')}:${String(recM).padStart(2,'0')}`)
         setUnclockedSession({ ...lastY, work_date: yesterdayStr })
@@ -884,7 +886,7 @@ export default function HomePage() {
               <div className="text-sm text-gray-700 mt-1 font-medium">어제 퇴근을 안 찍으셨습니다</div>
               <div className="text-xs text-gray-500 mt-1">
                 {unclockedSession.work_date} 출근 {unclockedSession.check_in?.slice(0,5)}
-                {unclockedSession.note === '야간자동컷오프' && <span className="ml-1 text-amber-600">(시스템 자동 컷오프 됨)</span>}
+                {unclockedSession.note === '야간자동컷오프' && <span className="ml-1 text-amber-600">(시스템이 익일 07:00으로 임시 처리함)</span>}
               </div>
             </div>
             <div className="p-5 space-y-3">
