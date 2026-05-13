@@ -287,7 +287,13 @@ export default function HomePage() {
              !t.startsWith('[출장]') && !t.startsWith('[병가]') && !t.startsWith('[외근]') &&
              !t.startsWith('[특별휴가]') && !t.startsWith('[신청중]') && !t.startsWith('[승인]')
     })
-    setAllEvents([...filteredEvs, ...approvalEvents])
+    // 본인 결재가 우선 표시되도록 approvalEvents 먼저 + isMe 우선 정렬
+    const sortedApprovalEvs = [...approvalEvents].sort((a:any, b:any) => {
+      if (a.isMe && !b.isMe) return -1
+      if (!a.isMe && b.isMe) return 1
+      return 0
+    })
+    setAllEvents([...sortedApprovalEvs, ...filteredEvs])
     if (p?.role === 'director') {
       const { data: apps } = await supabase.from('approvals')
         .select('*, requester:requester_id(name,color,tc,avatar_url)')
@@ -508,7 +514,13 @@ export default function HomePage() {
   const todayDate = todayStr()
 
   function getEventsForDate(ds: string) {
-    return allEvents.filter((e:any) => toKSTDate(e.start_at) <= ds && ds <= toKSTDate(e.end_at))
+    const filtered = allEvents.filter((e:any) => toKSTDate(e.start_at) <= ds && ds <= toKSTDate(e.end_at))
+    // 본인 결재 우선 정렬 (slice 3개 안에 본인 거가 짤리지 않도록)
+    return filtered.sort((a:any, b:any) => {
+      if (a.isMe && !b.isMe) return -1
+      if (!a.isMe && b.isMe) return 1
+      return 0
+    })
   }
   function prevMonth() { if(calMonth===0){setCalYear(y=>y-1);setCalMonth(11)}else setCalMonth(m=>m-1) }
   function nextMonth() { if(calMonth===11){setCalYear(y=>y+1);setCalMonth(0)}else setCalMonth(m=>m+1) }
