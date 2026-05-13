@@ -727,12 +727,28 @@ export default function LeavePage() {
                           )}
                         </div>
                         <div className="flex flex-col gap-0.5 w-full px-1 mt-1">
-                          {!isStart && !isEnd && dayEvs.slice(0,2).map((e:any,i:number)=>(
-                            <div key={i} className="text-center rounded text-white truncate font-medium"
-                              style={{fontSize:'13px', backgroundColor: e.color||'#534AB7', padding:'2px 4px', lineHeight:'16px'}}>
-                              {e.title}
-                            </div>
-                          ))}
+                          {!isStart && !isEnd && dayEvs.slice(0,2).map((e:any,i:number)=>{
+                            // title에서 이름만 추출: "[신청중] 연차 박형준" → "박형준"
+                            // 형식: "[상태] 유형 이름" - 마지막 공백 뒤가 이름
+                            const m = String(e.title||'').match(/^\[([^\]]+)\]\s+\S+\s+(.+)$/)
+                            const status = m ? m[1] : ''
+                            const shortName = m ? m[2] : (e.title||'')
+                            const isPending = status === '신청중'
+                            return (
+                              <div key={i} className="text-center rounded truncate font-medium"
+                                title={e.title}
+                                style={{
+                                  fontSize:'13px',
+                                  backgroundColor: isPending ? 'transparent' : (e.color||'#534AB7'),
+                                  color: isPending ? (e.color||'#534AB7') : '#fff',
+                                  border: isPending ? `1.5px dashed ${e.color||'#534AB7'}` : 'none',
+                                  padding: isPending ? '0px 3px' : '2px 4px',
+                                  lineHeight:'16px',
+                                }}>
+                                {shortName}
+                              </div>
+                            )
+                          })}
                           {!isStart && !isEnd && dayEvs.length > 2 && (
                             <div className="text-center text-gray-500 font-medium" style={{fontSize:'11px',lineHeight:'13px'}}>
                               +{dayEvs.length - 2}
@@ -747,6 +763,17 @@ export default function LeavePage() {
 
                 {/* 하단 - 범례 + 선택 정보 + 초기화 */}
                 <div className="px-4 pb-4 border-t border-gray-50 pt-3">
+                  <div className="flex gap-3 mb-2 flex-wrap text-sm text-gray-600">
+                    <span className="flex items-center gap-1.5">
+                      <span className="px-1.5 rounded text-white font-medium" style={{backgroundColor:'#EF4444',fontSize:'11px'}}>이름</span>
+                      = 승인
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="px-1.5 rounded font-medium" style={{color:'#EF4444',border:'1.5px dashed #EF4444',fontSize:'11px'}}>이름</span>
+                      = 신청중
+                    </span>
+                    <span className="text-gray-400">색 = 유형 (빨강:연차, 주황:반차, 파랑:출장, 보라:병가...)</span>
+                  </div>
                   <div className="flex gap-3 mb-3 flex-wrap">
                     <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-purple-600 inline-block"/>선택</span>
                     <span className="flex items-center gap-1.5 text-sm text-gray-600"><span className="w-3.5 h-3.5 rounded bg-purple-100 border border-purple-200 inline-block"/>선택 구간</span>
