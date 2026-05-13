@@ -67,7 +67,7 @@ export default function ApprovalPage() {
 
     // 승인인 경우 → 연차/반차 근태 자동 등록
     if (status === 'approved') {
-      const approval = [...myRequests, ...toApprove, ...allRequests].find((r:any) => r.id === id)
+      const approval = [...all, ...inbox, ...sent].find((r:any) => r.id === id)
       if (approval && ['연차','반차(오전)','반차(오후)','반반차'].includes(approval.type)) {
         const dates = getDateRange(approval.start_date, approval.end_date || approval.start_date)
         for (const dateStr of dates) {
