@@ -126,7 +126,41 @@ export default function HomePage() {
     const { data: evs } = await supabase.from("events")
       .select("id,title,start_at,end_at,color,creator_id,created_at,calendar_type")
       .or(homeOrClauses.join(",")).order("start_at")
-    setAllEvents(evs||[])
+
+    // 신청중인 결재도 캘린더에 표시 (가상 이벤트로 변환)
+    const { data: pendingApprovals } = await supabase.from('approvals')
+      .select('id,type,start_date,end_date,requester_id')
+      .eq('requester_id', session.user.id)
+      .eq('status', 'pending')
+    const pendingEvents = (pendingApprovals||[]).flatMap((a:any) => {
+      const typeColors: Record<string,string> = {
+        '연차':'#FCA5A5','반차(오전)':'#FDBA74','반차(오후)':'#FDBA74',
+        '반반차':'#FDE68A','출장':'#93C5FD','병가':'#C4B5FD',
+        '외근':'#67E8F9','특별휴가':'#F9A8D4',
+      }
+      // 날짜 범위를 하루씩 나눠서 가상 이벤트 생성
+      const dates: string[] = []
+      const cur = new Date((a.start_date||a.start_date) + 'T12:00:00')
+      const endD = new Date((a.end_date||a.start_date) + 'T12:00:00')
+      while (cur <= endD) {
+        const dw = cur.getDay()
+        if (dw !== 0 && dw !== 6) {
+          dates.push(`${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`)
+        }
+        cur.setDate(cur.getDate() + 1)
+      }
+      return dates.map(d => ({
+        id: `pending-${a.id}-${d}`,
+        title: `[신청중] ${a.type}`,
+        start_at: `${d}T09:00:00+09:00`,
+        end_at: `${d}T18:00:00+09:00`,
+        color: typeColors[a.type] || '#D1D5DB',
+        creator_id: a.requester_id,
+        calendar_type: 'pending',
+        isPending: true,
+      }))
+    })
+    setAllEvents([...(evs||[]), ...pendingEvents])
     if (p?.role === 'director') {
       const { data: apps } = await supabase.from('approvals')
         .select('*, requester:requester_id(name,color,tc,avatar_url)')

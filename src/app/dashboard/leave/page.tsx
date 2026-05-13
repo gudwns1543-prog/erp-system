@@ -587,21 +587,19 @@ export default function LeavePage() {
                     </div>
                   )
                   }
-                  const dow = new Date(cell.date + 'T00:00:00').getDay()
+                  const dow = new Date(cell.date! + 'T00:00:00').getDay()
                   const isWknd = dow === 0 || dow === 6
-                  const isHol = isHoliday(cell.date)
-                  const isApproved = approvedDates.has(cell.date)
-                  const isPending = pendingDates.has(cell.date)
+                  const isHol = isHoliday(cell.date!)
+                  const isApproved = approvedDates.has(cell.date!)
+                  const isPending = pendingDates.has(cell.date!)
                   const isStart = form.start === cell.date
                   const isEnd = form.end === cell.date
-                  const inRange = !!(form.start && form.end && cell.date > form.start && cell.date < form.end)
-                  // 실제 적용 근무일 (주말/공휴일 제외)
+                  const inRange = !!(form.start && form.end && cell.date! > form.start && cell.date! < form.end)
                   const isWorkDay = !isWknd && !isHol
                   const isInRangeWorkDay = inRange && isWorkDay
                   const isToday = cell.date === todayStr
-                  const dayEvs = getDayEvents(cell.date)
-                  // 종료일 선택 모드이고, 시작일만 선택된 상태일 때만 이전 날짜 비활성
-                  const isEndDisabled = showCal === 'end' && !!form.start && !form.end && cell.date < form.start
+                  const dayEvs = getDayEvents(cell.date!)
+                  const isEndDisabled = showCal === 'end' && !!form.start && !form.end && cell.date! < form.start
                   const isDisabled = isWknd || isHol || isApproved || isPending || !!isEndDisabled
 
                   return (
