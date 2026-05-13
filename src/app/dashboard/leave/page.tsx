@@ -509,7 +509,8 @@ export default function LeavePage() {
                   const inRange = !!(form.start && form.end && cell.date > form.start && cell.date < form.end)
                   const isToday = cell.date === todayStr
                   const dayEvs = getDayEvents(cell.date)
-                  const isEndDisabled = showCal === 'end' && !!form.start && cell.date < form.start
+                  // 종료일 선택 모드이고, 시작일만 선택된 상태일 때만 이전 날짜 비활성
+                  const isEndDisabled = showCal === 'end' && !!form.start && !form.end && cell.date < form.start
                   const isDisabled = isWknd || isHol || isApproved || isPending || !!isEndDisabled
 
                   return (
