@@ -1,6 +1,25 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
+import { isHoliday, classifyWork, minutesToHours } from '@/lib/attendance'
+
+// 두 날짜 사이의 모든 날짜 배열 반환
+function getDateRange(start: string, end: string): string[] {
+  const dates = []
+  const cur = new Date(start + 'T00:00:00')
+  const endD = new Date(end + 'T00:00:00')
+  while (cur <= endD) {
+    dates.push(cur.toISOString().slice(0,10))
+    cur.setDate(cur.getDate() + 1)
+  }
+  return dates
+}
+
+// 주말 여부
+function isWeekend(dateStr: string): boolean {
+  const d = new Date(dateStr + 'T00:00:00').getDay()
+  return d === 0 || d === 6
+}
 
 export default function ApprovalPage() {
   const [profile, setProfile] = useState<any>(null)
@@ -43,7 +62,49 @@ export default function ApprovalPage() {
 
   async function handle(id: string, status: 'approved'|'rejected') {
     const supabase = createClient()
-    await supabase.from('approvals').update({status, updated_at: new Date().toISOString()}).eq('id',id)
+    // 승인 처리
+    await supabase.from('approvals').update({status, updated_at: new Date().toISOString()}).eq('id', id)
+
+    // 승인인 경우 → 연차/반차 근태 자동 등록
+    if (status === 'approved') {
+      const approval = [...myRequests, ...toApprove, ...allRequests].find((r:any) => r.id === id)
+      if (approval && ['연차','반차(오전)','반차(오후)','반반차'].includes(approval.type)) {
+        const dates = getDateRange(approval.start_date, approval.end_date || approval.start_date)
+        for (const dateStr of dates) {
+          if (isWeekend(dateStr) || isHoliday(dateStr)) continue // 주말/공휴일 스킵
+          let checkIn = '09:00:00'
+          let checkOut = '18:00:00'
+          if (approval.type === '반차(오전)') {
+            checkIn = '09:00:00'; checkOut = '13:00:00'
+          } else if (approval.type === '반차(오후)') {
+            checkIn = '13:00:00'; checkOut = '18:00:00'
+          } else if (approval.type === '반반차') {
+            checkIn = '09:00:00'; checkOut = '11:00:00'
+          }
+          const r = classifyWork(dateStr, checkIn, checkOut)
+          // 기존 레코드 확인 (이미 출퇴근 찍힌 경우 스킵)
+          const { data: existing } = await supabase.from('attendance')
+            .select('id').eq('user_id', approval.requester_id).eq('work_date', dateStr)
+          if (existing && existing.length > 0) continue
+          await supabase.from('attendance').insert({
+            user_id: approval.requester_id,
+            work_date: dateStr,
+            check_in: checkIn,
+            check_out: checkOut,
+            is_holiday: isHoliday(dateStr),
+            reg_hours: minutesToHours(r.reg),
+            ext_hours: minutesToHours(r.ext),
+            night_hours: minutesToHours(r.night),
+            hol_hours: minutesToHours(r.hReg),
+            hol_eve_hours: minutesToHours(r.hEve),
+            hol_night_hours: minutesToHours(r.hNight),
+            ignored_hours: minutesToHours(r.ignored),
+            note: approval.type, // 연차/반차 표시
+          })
+        }
+      }
+    }
+
     setAlert(status==='approved'?'승인되었습니다.':'반려되었습니다.')
     setShowDetail(null); load()
     setTimeout(()=>setAlert(''),3000)

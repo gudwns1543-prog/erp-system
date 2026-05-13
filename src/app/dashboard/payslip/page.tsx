@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { calcSalary, formatWon, sortByGrade } from '@/lib/attendance'
 
@@ -12,6 +12,10 @@ export default function PaySlipPage() {
   const [selYear, setSelYear] = useState(new Date().getFullYear())
   const [selMonth, setSelMonth] = useState(new Date().getMonth()+1)
   const [result, setResult] = useState<any>(null)
+  const [payslipFiles, setPayslipFiles] = useState<any[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [alert, setAlert] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const years = Array.from({length:5},(_,i)=>new Date().getFullYear()-i)
 
   const load = useCallback(async () => {
@@ -29,7 +33,8 @@ export default function PaySlipPage() {
     const { data: sal } = await supabase.from('salary_info').select('*').eq('user_id', targetId).maybeSingle()
     setSalary(sal)
     const start = `${selYear}-${String(selMonth).padStart(2,'0')}-01`
-    const end   = `${selYear}-${String(selMonth).padStart(2,'0')}-31`
+    const lastDay = new Date(selYear, selMonth, 0).getDate()
+    const end = `${selYear}-${String(selMonth).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`
     const { data: recs } = await supabase.from('attendance').select('*')
       .eq('user_id', targetId).gte('work_date', start).lte('work_date', end)
     if (recs?.length) {
@@ -39,6 +44,13 @@ export default function PaySlipPage() {
         holExtH: a.holExtH+(r.hol_eve_hours||0), holNightH: a.holNightH+(r.hol_night_hours||0),
       }),{regH:0,extH:0,nightH:0,holH:0,holExtH:0,holNightH:0}))
     } else { setWork(null) }
+
+    // 급여명세 첨부파일 로드
+    const { data: files } = await supabase.from('payslip_files')
+      .select('*').eq('user_id', targetId)
+      .eq('year', selYear).eq('month', selMonth)
+      .order('created_at', {ascending:false})
+    setPayslipFiles(files||[])
   }, [selStaffId, selYear, selMonth])
 
   useEffect(() => { load() }, [load])
@@ -48,11 +60,41 @@ export default function PaySlipPage() {
       meal:salary.meal,transport:salary.transport,comm:salary.comm,...work}))
   }, [salary, work])
 
+  async function handleFileUpload(file: File) {
+    if (!profile) return
+    setUploading(true)
+    const supabase = createClient()
+    const targetId = (profile?.role==='director'&&selStaffId) ? selStaffId : profile.id
+    const ext = file.name.split('.').pop()
+    const path = `payslips/${targetId}/${selYear}-${selMonth}-${Date.now()}.${ext}`
+    const { error: uploadErr } = await supabase.storage.from('payslip-files').upload(path, file)
+    if (uploadErr) { setAlert('업로드 실패: ' + uploadErr.message); setUploading(false); return }
+    const { data: urlData } = supabase.storage.from('payslip-files').getPublicUrl(path)
+    await supabase.from('payslip_files').insert({
+      user_id: targetId, year: selYear, month: selMonth,
+      file_name: file.name, file_url: urlData.publicUrl,
+      file_path: path, uploaded_by: profile.id,
+    })
+    setAlert('급여명세서가 등록되었습니다.')
+    setTimeout(()=>setAlert(''),3000)
+    setUploading(false); load()
+  }
+
+  async function handleFileDelete(fileId: string, filePath: string) {
+    if (!confirm('이 파일을 삭제하시겠습니까?')) return
+    const supabase = createClient()
+    await supabase.storage.from('payslip-files').remove([filePath])
+    await supabase.from('payslip_files').delete().eq('id', fileId)
+    setAlert('삭제되었습니다.')
+    setTimeout(()=>setAlert(''),2000); load()
+  }
+
   const targetName = profile?.role==='director'
     ? (staffList.find(s=>s.id===selStaffId)?.name||'') : profile?.name
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
+      {alert && <div className="fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg text-sm z-50 shadow-lg">{alert}</div>}
       <div className="flex justify-between items-center mb-5">
         <h1 className="text-lg font-semibold text-gray-800">급여명세 조회</h1>
         <div className="flex gap-2 flex-wrap justify-end">
@@ -70,6 +112,61 @@ export default function PaySlipPage() {
           <button onClick={()=>window.print()} className="btn-secondary text-sm">🖨 인쇄</button>
         </div>
       </div>
+
+      {/* 급여명세서 파일 첨부 */}
+      <div className="card mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <span className="text-base">📎</span>
+            <span className="text-sm font-semibold text-gray-700">급여명세서 파일</span>
+            <span className="text-xs text-gray-400">{selYear}년 {selMonth}월 · {targetName}</span>
+          </div>
+          {profile?.role==='director' && (
+            <>
+              <input type="file" ref={fileInputRef} className="hidden"
+                accept=".pdf,.xlsx,.xls,.docx,.doc,.png,.jpg,.jpeg"
+                onChange={e=>{ if(e.target.files?.[0]) handleFileUpload(e.target.files[0]) }} />
+              <button onClick={()=>fileInputRef.current?.click()} disabled={uploading}
+                className="btn-primary text-xs px-3 py-1.5">
+                {uploading ? '⏳ 업로드 중...' : '+ 파일 등록'}
+              </button>
+            </>
+          )}
+        </div>
+        {payslipFiles.length === 0 ? (
+          <div className="text-xs text-gray-400 text-center py-4 bg-gray-50 rounded-lg">
+            {profile?.role==='director'
+              ? '회계사무실에서 받은 급여명세서 파일을 등록해주세요. (PDF, Excel 등)'
+              : '아직 등록된 급여명세서가 없습니다. 관리자에게 문의하세요.'}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {payslipFiles.map((f:any) => (
+              <div key={f.id} className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="text-lg flex-shrink-0">
+                    {f.file_name.endsWith('.pdf') ? '📄' : f.file_name.match(/\.(xlsx?|csv)$/i) ? '📊' : f.file_name.match(/\.(png|jpe?g)$/i) ? '🖼' : '📎'}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-sm text-gray-700 truncate font-medium">{f.file_name}</div>
+                    <div className="text-xs text-gray-400">{new Date(f.created_at).toLocaleDateString('ko-KR', {year:'numeric',month:'long',day:'numeric'})} 등록</div>
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-shrink-0 ml-2">
+                  <a href={f.file_url} target="_blank" rel="noreferrer"
+                    className="btn-secondary text-xs px-2.5 py-1">⬇ 다운로드</a>
+                  {profile?.role==='director' && (
+                    <button onClick={()=>handleFileDelete(f.id, f.file_path)}
+                      className="btn-danger text-xs px-2.5 py-1">삭제</button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 기존 급여 계산 내용 */}
       {!result ? (
         <div className="card py-16 text-center">
           <div className="text-3xl mb-3">📭</div>
@@ -153,14 +250,13 @@ export default function PaySlipPage() {
             </div>
             <div className="text-white text-2xl font-bold">{formatWon(result.netPay)}</div>
           </div>
-          {/* 급여 계산식 */}
           <div className="mt-3 p-4 bg-gray-50 rounded-xl text-xs space-y-1.5">
             <div className="font-semibold text-gray-600 mb-2">📐 급여 계산 기준</div>
             <div className="text-gray-500">
               기본 시간단가: 연봉 {formatWon(salary?.annual)} ÷ 12 ÷ 209h = <span className="font-semibold text-purple-600">{Math.round(result.rate).toLocaleString()}원/h</span>
             </div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-2 text-gray-400">
-              <div>✅ 평일 정규: 기본단가 × 1.0 (통상임금)</div>
+              <div>✅ 평일 정규: 기본단가 × 1.0</div>
               <div>✅ 평일 시간외: 기본단가 × <span className="text-blue-600 font-medium">1.5배</span></div>
               <div>✅ 평일 야간: 기본단가 × <span className="text-red-600 font-medium">2.0배</span></div>
               <div>✅ 휴일 정규: 기본단가 × <span className="text-teal-600 font-medium">1.5배</span></div>
