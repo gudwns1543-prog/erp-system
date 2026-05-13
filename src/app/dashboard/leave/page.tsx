@@ -270,7 +270,8 @@ export default function LeavePage() {
     </span>
   )
 
-  const RequestTable = ({data, showRequester=false}: {data:any[], showRequester?:boolean}) => (
+  function RequestTable({data, showRequester=false}: {data:any[], showRequester?:boolean}) {
+    return (
     <div className="card overflow-x-auto">
       {data.length===0 ? (
         <div className="py-12 text-center text-gray-300 text-sm">내역이 없습니다</div>
@@ -309,7 +310,8 @@ export default function LeavePage() {
         </table>
       )}
     </div>
-  )
+    )
+  }
 
   const approverName = approvers.find(a=>a.id===form.approverId)?.name || '-'
   const isMultiDay = ['연차','병가','출장','특별휴가'].includes(form.type)
