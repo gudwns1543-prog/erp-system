@@ -11,7 +11,8 @@ export default function AnnualPage() {
   const [alert, setAlert] = useState('')
   const [editingId, setEditingId] = useState<string|null>(null)
   const [editVal, setEditVal] = useState(0)
-  const [addModal, setAddModal] = useState<any>(null) // 연차 추가지급 모달
+  const [addModal, setAddModal] = useState<any>(null)
+  const [historyModal, setHistoryModal] = useState<any>(null) // 연차 추가지급 모달
   const [addDays, setAddDays] = useState(0)
   const [addReason, setAddReason] = useState('')
 
@@ -94,8 +95,8 @@ export default function AnnualPage() {
 
   const Avatar = ({u}:{u:any}) => (
     u?.avatar_url
-      ? <img src={u.avatar_url} className="w-8 h-8 rounded-full object-cover flex-shrink-0" alt="" />
-      : <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+      ? <img src={u.avatar_url} className="w-12 h-12 rounded-full object-cover flex-shrink-0" alt="" />
+      : <div className="w-12 h-12 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
           style={{background:u?.color||'#EEEDFE',color:u?.tc||'#3C3489'}}>{u?.name?.[0]}</div>
   )
 
@@ -209,7 +210,12 @@ export default function AnnualPage() {
                         </div>
                       )}
                     </td>
-                    <td className="py-2 pr-4 text-amber-600 font-medium">{data.used}일</td>
+                    <td className="py-2 pr-4">
+                      <button onClick={()=>setHistoryModal({user:u, data})}
+                        className="text-amber-600 font-medium hover:underline hover:text-amber-700 cursor-pointer">
+                        {data.used}일
+                      </button>
+                    </td>
                     <td className={`py-2 pr-4 font-semibold ${remain<=3?'text-red-600':'text-teal-600'}`}>{remain}일</td>
                     <td className="py-2 pr-4">
                       <div className="flex items-center gap-2">
@@ -230,6 +236,46 @@ export default function AnnualPage() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* 사용내역 조회 모달 */}
+      {historyModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={()=>setHistoryModal(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-96 p-5" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <div className="text-sm font-semibold text-gray-800">{historyModal.user.name}님 연차 사용내역</div>
+                <div className="text-xs text-gray-400 mt-0.5">올해 총 {historyModal.data.used}일 사용</div>
+              </div>
+              <button onClick={()=>setHistoryModal(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+            </div>
+            {!historyModal.data.history?.length ? (
+              <div className="text-center py-8 text-gray-300 text-sm">사용 내역이 없습니다</div>
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {historyModal.data.history.map((h:any, i:number) => (
+                  <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                          h.type==='연차'?'bg-red-100 text-red-700':
+                          h.type.includes('반차')?'bg-orange-100 text-orange-700':
+                          h.type==='반반차'?'bg-yellow-100 text-yellow-700':
+                          'bg-gray-100 text-gray-700'}`}>{h.type}</span>
+                        <span className="text-xs text-gray-700">
+                          {h.start_date}{h.end_date&&h.end_date!==h.start_date?` ~ ${h.end_date}`:''}
+                        </span>
+                      </div>
+                      {h.reason && <div className="text-xs text-gray-400">{h.reason}</div>}
+                    </div>
+                    <div className="text-sm font-bold text-amber-600 flex-shrink-0 ml-2">-{h.days}일</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

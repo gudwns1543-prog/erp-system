@@ -3,6 +3,21 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { isHoliday, classifyWork, minutesToHours } from '@/lib/attendance'
 
+function getDateRange(start: string, end: string): string[] {
+  const dates = []
+  const cur = new Date(start + 'T00:00:00')
+  const endD = new Date(end + 'T00:00:00')
+  while (cur <= endD) {
+    dates.push(cur.toISOString().slice(0,10))
+    cur.setDate(cur.getDate() + 1)
+  }
+  return dates
+}
+function isWeekend(ds: string): boolean {
+  const d = new Date(ds + 'T00:00:00').getDay()
+  return d === 0 || d === 6
+}
+
 // 두 날짜 사이의 모든 날짜 배열 반환
 function getDateRange(start: string, end: string): string[] {
   const dates = []
@@ -114,7 +129,7 @@ export default function ApprovalPage() {
           }
         }
 
-        // 캘린더 자동등록 - 이미 같은 날짜에 같은 유형 이벤트 있으면 스킵
+        // 캘린더 자동등록 - 근무일별로 각각 등록 (토/일/공휴일 제외)
         const { data: existingEvs } = await supabase.from('events')
           .select('id').eq('creator_id', approval.requester_id)
           .eq('is_locked', true)
@@ -122,29 +137,36 @@ export default function ApprovalPage() {
           .lte('start_at', `${(approval.end_date||approval.start_date)}T23:59:59`)
           .like('title', `[${approval.type}]%`)
         if (!existingEvs || existingEvs.length === 0) {
-        const typeColors: Record<string,string> = {
-          '연차':'#EF4444','반차(오전)':'#F97316','반차(오후)':'#F97316',
-          '반반차':'#FBBF24','출장':'#3B82F6','병가':'#8B5CF6',
-          '외근':'#06B6D4','특별휴가':'#EC4899',
-        }
-        const startTime = approval.start_time || '09:00'
-        const endTime = approval.end_time || '18:00'
-        const { data: ev, error: evError } = await supabase.from('events').insert({
-          title: `[${approval.type}] ${(approval.requester as any)?.name || ''}`,
-          start_at: `${approval.start_date}T${startTime}:00`,
-          end_at: `${(approval.end_date||approval.start_date)}T${endTime}:00`,
-          color: typeColors[approval.type] || '#6B7280',
-          creator_id: approval.requester_id,
-          calendar_type: 'company',
-          is_locked: true,
-        }).select().single()
-        if (evError) console.error('캘린더 자동등록 오류:', evError)
-        if (ev) {
-          await supabase.from('event_attendees').insert({
-            event_id: ev.id, user_id: approval.requester_id, status: 'accepted'
+          const typeColors: Record<string,string> = {
+            '연차':'#EF4444','반차(오전)':'#F97316','반차(오후)':'#F97316',
+            '반반차':'#FBBF24','출장':'#3B82F6','병가':'#8B5CF6',
+            '외근':'#06B6D4','특별휴가':'#EC4899',
+          }
+          const startTime = approval.start_time || '09:00'
+          const endTime = approval.end_time || '18:00'
+          const allDates = getDateRange(approval.start_date, approval.end_date || approval.start_date)
+          // 근무일(평일+비공휴일)만 캘린더에 등록
+          const workDates = allDates.filter(d => {
+            const dw = new Date(d + 'T00:00:00').getDay()
+            return dw !== 0 && dw !== 6 && !isHoliday(d)
           })
-        }
-        } // 중복 체크 닫기
+          for (const workDate of workDates) {
+            const { data: ev, error: evError } = await supabase.from('events').insert({
+              title: `[${approval.type}] ${(approval.requester as any)?.name || ''}`,
+              start_at: `${workDate}T${startTime}:00`,
+              end_at: `${workDate}T${endTime}:00`,
+              color: typeColors[approval.type] || '#6B7280',
+              creator_id: approval.requester_id,
+              calendar_type: 'company',
+              is_locked: true,
+            }).select().single()
+            if (evError) console.error('캘린더 자동등록 오류:', evError)
+            if (ev) {
+              await supabase.from('event_attendees').insert({
+                event_id: ev.id, user_id: approval.requester_id, status: 'accepted'
+              })
+            }
+          }
       }
     }
 

@@ -126,7 +126,11 @@ export default function LeavePage() {
           .filter((r:any) => r.status === 'pending')
           .flatMap((r:any) => getDateRange(r.start_date, r.end_date || r.start_date))
       )
-      return dates.filter(d => !isWeekend(d) && !isHoliday(d) && !alreadyApproved.has(d) && !alreadyPending.has(d)).length
+      const filtered = dates.filter(d => {
+        const dw = new Date(d + 'T00:00:00').getDay()
+        return dw !== 0 && dw !== 6 && !isHoliday(d) && !alreadyApproved.has(d) && !alreadyPending.has(d)
+      })
+      return filtered.length
     } else if (type === '반차(오전)' || type === '반차(오후)') {
       return 0.5
     } else if (type === '반반차') {
@@ -505,15 +509,24 @@ export default function LeavePage() {
         function selectDate(ds: string) {
           const dow = new Date(ds + 'T00:00:00').getDay()
           if (dow === 0 || dow === 6) return
-          if (approvedDates.has(ds) && ['연차','반차(오전)','반차(오후)','반반차'].includes(form.type)) return
-          if (pendingDates.has(ds) && ['연차','반차(오전)','반차(오후)','반반차'].includes(form.type)) return
+          if (isHoliday(ds)) return
+          if (approvedDates.has(ds)) return
+          if (pendingDates.has(ds)) return
 
-          if (showCal === 'start') {
+          // 첫 클릭(start 없거나 둘 다 있음) → 시작일 설정
+          // 두 번째 클릭(start만 있음) → 종료일 설정
+          if (!form.start || (form.start && form.end)) {
             setForm(f=>({...f, start:ds, end:''}))
-            // 시작일 선택 후 종료일 모드로 전환 (캘린더 유지)
-            if (['연차','병가','출장','특별휴가'].includes(form.type)) {
-              setShowCal('end')
+            setShowCal('end')
+          } else {
+            if (ds < form.start) {
+              setForm(f=>({...f, start:ds, end:''}))
+              return
             }
+            setForm(f=>({...f, end:ds}))
+            setLeaveError('')
+          }
+        }
             // 당일 유형(반차 등)은 end = start로 자동 설정
             else {
               setForm(f=>({...f, start:ds, end:ds}))
@@ -535,15 +548,13 @@ export default function LeavePage() {
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg">
               <div className="p-4 border-b border-gray-100 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${showCal==='start'?'bg-purple-600 text-white':'bg-gray-100 text-gray-400'}`}>
-                    1 시작일
+                  <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${!form.start||(form.start&&form.end)?'bg-purple-600 text-white':'bg-gray-100 text-gray-400'}`}>
+                    {!form.start||(form.start&&form.end) ? '① 시작일 클릭' : '✓ 시작일 선택됨'}
                   </div>
-                  {['연차','병가','출장','특별휴가'].includes(form.type) && (
-                    <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${showCal==='end'?'bg-purple-600 text-white':'bg-gray-100 text-gray-400'}`}>
-                      2 종료일
-                    </div>
-                  )}
-                  <span className="text-xs text-gray-400">주말·이미승인된날 선택불가</span>
+                  <div className={`px-2.5 py-1 rounded-full text-xs font-medium ${form.start&&!form.end?'bg-purple-600 text-white':'bg-gray-100 text-gray-400'}`}>
+                    {form.start&&!form.end ? '② 종료일 클릭' : form.end ? '✓ 종료일 선택됨' : '② 종료일'}
+                  </div>
+                  <span className="text-xs text-gray-400">주말·승인·신청중 선택불가</span>
                 </div>
                 <button onClick={()=>setShowCal(null)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
               </div>
@@ -586,9 +597,9 @@ export default function LeavePage() {
                       className={`h-14 rounded-lg flex flex-col items-center pt-1 transition-colors relative
                         ${isStart ? 'bg-purple-600 text-white' :
                           isEnd ? 'bg-purple-600 text-white' :
-                          inRange ? 'bg-purple-50' :
+                          inRange && approvedDates.has(cell.date!) ? 'bg-red-50' : inRange && pendingDates.has(cell.date!) ? 'bg-amber-50' : inRange ? 'bg-purple-50/70' :
                           isAlreadyApproved ? 'bg-red-50 cursor-not-allowed' :
-                          isPending ? 'bg-amber-50 cursor-not-allowed' :
+                          isPending ? 'bg-amber-100 cursor-not-allowed' :
                           isWeekend||isHol ? 'opacity-30 cursor-not-allowed' :
                           isEndDisabled ? 'opacity-20 cursor-not-allowed' :
                           'hover:bg-gray-100 cursor-pointer'}
@@ -596,13 +607,13 @@ export default function LeavePage() {
                       <span className={`text-xs font-medium ${
                         isStart||isEnd ? 'text-white' :
                         isAlreadyApproved ? 'text-red-400' :
-                        isPending ? 'text-amber-500' :
+                        isPending ? 'text-amber-600 font-semibold' :
                         dow===0||isHol ? 'text-red-500' :
                         dow===6 ? 'text-blue-500' :
                         isToday ? 'text-purple-600 font-bold' : 'text-gray-700'
                       }`}>{cell.day}</span>
                       {isAlreadyApproved && <span className="text-red-300" style={{fontSize:'7px'}}>승인됨</span>}
-                      {isPending && <span className="text-amber-400" style={{fontSize:'7px'}}>신청중</span>}
+                      {isPending && <span className="text-amber-600 font-bold" style={{fontSize:'8px'}}>신청중</span>}
                       {isToday && !isStart && !isEnd && !isAlreadyApproved && !isPending && <div className="w-1 h-1 rounded-full bg-purple-400 mt-0.5"/>}
                       <div className="flex flex-col gap-0.5 w-full px-0.5 mt-0.5">
                         {dayEvs.slice(0,2).map((e:any,i:number)=>(
@@ -634,7 +645,11 @@ export default function LeavePage() {
                       return days > 0 ? <span className="ml-2 text-green-600 font-medium">→ {days}일 사용</span> : null
                     })()}
                   </div>
-                  <button onClick={()=>setShowCal(null)} className="btn-primary text-xs px-4 py-1.5">확인</button>
+                  <div className="flex gap-2">
+                    <button onClick={()=>{ setForm(f=>({...f,start:'',end:''})); setShowCal('start') }}
+                      className="btn-secondary text-xs px-3 py-1.5">🔄 초기화</button>
+                    <button onClick={()=>setShowCal(null)} className="btn-primary text-xs px-4 py-1.5">확인</button>
+                  </div>
                 </div>
               </div>
             </div>
