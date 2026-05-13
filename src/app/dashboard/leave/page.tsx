@@ -252,7 +252,7 @@ export default function LeavePage() {
 
   const approverName = approvers.find(a=>a.id===form.approverId)?.name || '-'
   const isMultiDay = ['연차','병가','출장','특별휴가'].includes(form.type)
-  const needsTime = ['출장','외근'].includes(form.type)
+  const needsTime = ['출장','외근','반반차'].includes(form.type) // 반반차도 시간 직접 입력
   const leaveTypeSelected = ['연차','반차(오전)','반차(오후)','반반차'].includes(form.type)
   const reqDays = calcRequestDays(form.type, form.start, form.end)
   const afterLeave = remainLeave - reqDays
@@ -328,7 +328,7 @@ export default function LeavePage() {
               {/* 유형별 안내 */}
               {['반반차','반차(오전)','반차(오후)'].includes(form.type) && (
                 <div className="text-xs text-purple-600 bg-purple-50 px-3 py-2 rounded-lg">
-                  {form.type === '반반차' && '⏰ 반반차: 09:00 ~ 11:00 (2시간 = 연차 0.25일)'}
+                  {form.type === '반반차' && '⏰ 반반차: 날짜 선택 후 시작·종료 시간을 직접 입력하세요 (연차 0.25일)'}
                   {form.type === '반차(오전)' && '⏰ 오전반차: 09:00 ~ 13:00 (연차 0.5일)'}
                   {form.type === '반차(오후)' && '⏰ 오후반차: 14:00 ~ 18:00 (연차 0.5일)'}
                 </div>
@@ -443,6 +443,7 @@ export default function LeavePage() {
         }
 
         const isSingleDay = ['반차(오전)','반차(오후)','반반차'].includes(form.type)
+        const isHalfHalf = form.type === '반반차'
 
         function selectDate(ds: string) {
           const dow = new Date(ds + 'T00:00:00').getDay()
@@ -452,10 +453,10 @@ export default function LeavePage() {
           if (pendingDates.has(ds)) return
 
           if (isSingleDay) {
-            // 반차/반반차: 시작일 클릭 즉시 완료 (종료일 선택 없음)
+            // 반차/반반차: 날짜 1개만 선택 후 닫기
             setForm(f=>({...f, start:ds, end:ds}))
             setLeaveError('')
-            setShowCal(null) // 바로 닫기
+            setShowCal(null)
           } else if (!form.start || (form.start && form.end)) {
             // 연차 등: 첫 클릭 → 시작일
             setForm(f=>({...f, start:ds, end:''}))
@@ -483,7 +484,7 @@ export default function LeavePage() {
                 <div className="flex items-center gap-2">
                   {isSingleDay ? (
                     <div className="px-2.5 py-1 rounded-full text-xs font-medium bg-purple-600 text-white">
-                      날짜 선택 (1일)
+                      {isHalfHalf ? '날짜 선택 후 시간 입력' : '날짜 선택 (1일)'}
                     </div>
                   ) : (
                     <>
@@ -613,8 +614,8 @@ export default function LeavePage() {
             <div className="p-5 space-y-3">
               {[
                 {label:'신청 유형', val:form.type},
-                {label:'시작', val:`${form.start}${needsTime?' '+form.startTime:''}`},
-                {label:'종료', val:`${form.end||form.start}${needsTime?' '+form.endTime:''}`},
+                {label:'시작', val:`${form.start}${(needsTime||form.type==='반반차')?' '+form.startTime:''}`},
+                {label:'종료', val:`${form.end||form.start}${(needsTime||form.type==='반반차')?' '+form.endTime:''}`},
                 {label:'결재자', val:approverName},
                 {label:'사유', val:form.reason||'(없음)'},
                 ...(leaveTypeSelected && reqDays > 0 ? [{label:'사용 연차', val:`${reqDays}일 (잔여: ${afterLeave}일)`}] : []),
