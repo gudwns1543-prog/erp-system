@@ -15,10 +15,14 @@ export default function PaySlipPage() {
   const [payslipFiles, setPayslipFiles] = useState<any[]>([])
   const [uploading, setUploading] = useState(false)
   const [alert, setAlert] = useState('')
-  const [activeTab, setActiveTab] = useState<'erp'|'office'>('erp')
+  const [activeTab, setActiveTab] = useState<'erp'|'office'|'compare'>('erp')
   const [tripDays, setTripDays] = useState(0)
   const [tripAllowance, setTripAllowance] = useState(0)
   const [deductItems, setDeductItems] = useState<any[]>([])
+  // 비교 - 사무실 명세서 추출값 (수동/AI 둘 다 가능)
+  const [officeData, setOfficeData] = useState<Record<string, number | null>>({})
+  const [extracting, setExtracting] = useState(false)
+  const [officeFileId, setOfficeFileId] = useState<string>('') // 어떤 파일에서 가져온 값인지
   const fileInputRef = useRef<HTMLInputElement>(null)
   const years = Array.from({length:5},(_,i)=>new Date().getFullYear()-i)
 
@@ -107,6 +111,58 @@ export default function PaySlipPage() {
     setTimeout(()=>setAlert(''),2000); load()
   }
 
+  // PDF에서 AI로 자동 추출
+  async function handleExtractFile(file: any) {
+    setExtracting(true)
+    setOfficeFileId(file.id)
+    try {
+      const res = await fetch('/api/payslip-extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pdf_url: file.file_url }),
+      })
+      const data = await res.json()
+      if (!data.success) {
+        window.alert('AI 추출 실패: ' + (data.error || '알 수 없는 오류'))
+        setExtracting(false)
+        return
+      }
+      // DB에 추출 결과 저장
+      const supabase = createClient()
+      await supabase.from('payslip_files')
+        .update({ extracted_data: data.extracted, extracted_at: new Date().toISOString() })
+        .eq('id', file.id)
+      setOfficeData(data.extracted)
+      setAlert('✅ AI 추출 완료. 비교 탭으로 이동합니다.')
+      setTimeout(()=>setAlert(''),2500)
+      setActiveTab('compare')
+      load()
+    } catch (e:any) {
+      window.alert('오류: ' + e.message)
+    } finally {
+      setExtracting(false)
+    }
+  }
+
+  // 추출된 파일이 있으면 비교 탭에서 자동 로드
+  function loadOfficeFromFile(file: any) {
+    if (file.extracted_data) {
+      setOfficeData(file.extracted_data)
+      setOfficeFileId(file.id)
+    }
+  }
+
+  async function saveOfficeData() {
+    if (!officeFileId) return
+    const supabase = createClient()
+    await supabase.from('payslip_files')
+      .update({ extracted_data: officeData })
+      .eq('id', officeFileId)
+    setAlert('✅ 사무실 명세서 값 저장 완료')
+    setTimeout(()=>setAlert(''),2000)
+    load()
+  }
+
   const targetName = profile?.role==='director'
     ? (staffList.find(s=>s.id===selStaffId)?.name||'') : profile?.name
 
@@ -153,6 +209,11 @@ export default function PaySlipPage() {
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors
             ${activeTab==='office'?'border-green-600 text-green-700':'border-transparent text-gray-500 hover:text-gray-700'}`}>
           📎 세무사무실 계산
+        </button>
+        <button onClick={()=>setActiveTab('compare')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors
+            ${activeTab==='compare'?'border-amber-600 text-amber-700':'border-transparent text-gray-500 hover:text-gray-700'}`}>
+          ⚖️ 비교
         </button>
       </div>
 
@@ -325,6 +386,11 @@ export default function PaySlipPage() {
                     </div>
                   </div>
                   <div className="flex gap-2 flex-shrink-0 ml-4">
+                    <button onClick={()=>handleExtractFile(f)}
+                      disabled={extracting}
+                      className="btn-secondary text-xs px-3 py-1.5 text-amber-700 border-amber-300 hover:bg-amber-50 disabled:opacity-50">
+                      {extracting && officeFileId === f.id ? '⏳ 추출 중...' : f.extracted_data ? '✅ 추출됨' : '🤖 AI 추출'}
+                    </button>
                     <a href={f.file_url} target="_blank" rel="noreferrer"
                       className="btn-primary text-xs px-3 py-1.5">⬇ 다운로드</a>
                     {profile?.role==='director' && (
@@ -338,6 +404,219 @@ export default function PaySlipPage() {
           )}
         </div>
       )}
+
+      {/* 비교 탭 - 세로표로 ERP vs 사무실 */}
+      {activeTab==='compare' && (
+        <CompareTab
+          result={result}
+          salary={salary}
+          tripPay={tripPay}
+          payslipFiles={payslipFiles}
+          officeData={officeData}
+          setOfficeData={setOfficeData}
+          officeFileId={officeFileId}
+          loadOfficeFromFile={loadOfficeFromFile}
+          saveOfficeData={saveOfficeData}
+          selYear={selYear}
+          selMonth={selMonth}
+          targetName={targetName}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── 비교 탭 컴포넌트 ──────
+function CompareTab({
+  result, salary, tripPay, payslipFiles, officeData, setOfficeData,
+  officeFileId, loadOfficeFromFile, saveOfficeData,
+  selYear, selMonth, targetName
+}: any) {
+  // ERP 자체 계산값 → 표준 키로 매핑 (calcSalary 결과 + input 합쳐서)
+  const erpData: Record<string, number | null> = {
+    basic_pay: result?.base ? Math.round(result.base) : null,
+    overtime_pay: result?.payExt ? Math.round(result.payExt) : null,
+    night_pay: result?.payNight ? Math.round(result.payNight) : null,
+    holiday_pay: result ? Math.round((result.payHol || 0) + (result.payHolExt || 0) + (result.payHolNight || 0)) || null : null,
+    annual_leave_pay: null,
+    meal_allowance: salary?.meal || null,
+    comm_allowance: salary?.comm || null,
+    trip_allowance: tripPay || null,
+    other_pay: null,
+    income_tax: result?.incomeTax || null,
+    local_tax: result?.localTax || null,
+    national_pension: result?.pension || null,
+    health_insurance: result?.health || null,
+    longterm_care: result?.ltc || null,
+    employment_insurance: result?.employ || null,
+    other_deduct: null,
+    total_pay: result?.grossTotal ? Math.round(result.grossTotal) : null,
+    total_deduct: result?.totalDeduct || null,
+    net_pay: result?.netPay ? Math.round(result.netPay) : null,
+  }
+
+  const ROWS = [
+    { key: 'basic_pay', label: '기본급', section: '지급' },
+    { key: 'overtime_pay', label: '시간외수당', section: '지급' },
+    { key: 'night_pay', label: '야간근로수당', section: '지급' },
+    { key: 'holiday_pay', label: '휴일근로수당', section: '지급' },
+    { key: 'annual_leave_pay', label: '연차수당', section: '지급' },
+    { key: 'meal_allowance', label: '급량비(식대)', section: '지급' },
+    { key: 'comm_allowance', label: '통신비', section: '지급' },
+    { key: 'trip_allowance', label: '출장수당', section: '지급' },
+    { key: 'other_pay', label: '기타수당', section: '지급' },
+    { key: 'income_tax', label: '근로소득세', section: '공제' },
+    { key: 'local_tax', label: '지방소득세', section: '공제' },
+    { key: 'national_pension', label: '국민연금', section: '공제' },
+    { key: 'health_insurance', label: '건강보험', section: '공제' },
+    { key: 'longterm_care', label: '장기요양보험', section: '공제' },
+    { key: 'employment_insurance', label: '고용보험', section: '공제' },
+    { key: 'other_deduct', label: '기타공제', section: '공제' },
+    { key: 'total_pay', label: '지급항목 합계', section: '합계' },
+    { key: 'total_deduct', label: '공제항목 합계', section: '합계' },
+    { key: 'net_pay', label: '실수령액', section: '합계' },
+  ]
+
+  function fmt(v: number | null | undefined) {
+    if (v === null || v === undefined) return '-'
+    return v.toLocaleString('ko-KR') + '원'
+  }
+
+  function diffClass(diff: number) {
+    if (diff === 0) return 'text-gray-400'
+    const absDiff = Math.abs(diff)
+    if (absDiff < 1000) return 'text-amber-600 font-medium'
+    return 'text-red-600 font-bold'
+  }
+
+  // 추출된 파일들 (해당 월)
+  const extractedFiles = payslipFiles.filter((f:any) => f.extracted_data)
+
+  // 모든 차이 합계 계산 (참고용)
+  const totalDiff = ROWS.filter(r => r.section !== '합계').reduce((sum, r) => {
+    const erp = erpData[r.key] || 0
+    const office = officeData[r.key] || 0
+    return sum + (office - erp)
+  }, 0)
+
+  return (
+    <div className="space-y-4">
+      {/* 파일 선택 & AI 추출 안내 */}
+      <div className="card p-3 flex items-center justify-between flex-wrap gap-2">
+        <div className="text-sm text-gray-600">
+          📌 <strong>{selYear}년 {selMonth}월 · {targetName}</strong> · ERP 자체 계산값과 세무사무실 명세서를 비교합니다.
+        </div>
+        <div className="flex items-center gap-2">
+          {extractedFiles.length > 0 && (
+            <select className="text-xs border border-gray-200 rounded px-2 py-1"
+              value={officeFileId}
+              onChange={e=>{
+                const f = extractedFiles.find((x:any)=>x.id===e.target.value)
+                if (f) loadOfficeFromFile(f)
+              }}>
+              <option value="">📂 추출된 파일 선택...</option>
+              {extractedFiles.map((f:any) => (
+                <option key={f.id} value={f.id}>{f.file_name}</option>
+              ))}
+            </select>
+          )}
+          {officeFileId && (
+            <button onClick={saveOfficeData} className="text-xs btn-primary px-3 py-1">💾 저장</button>
+          )}
+        </div>
+      </div>
+
+      {extractedFiles.length === 0 && Object.keys(officeData).length === 0 && (
+        <div className="card py-8 text-center">
+          <div className="text-3xl mb-2">📋</div>
+          <div className="text-sm text-gray-600 mb-1">세무사무실 명세서가 없습니다.</div>
+          <div className="text-xs text-gray-400">
+            <strong>세무사무실 계산</strong> 탭에서 PDF 등록 후, <strong>🤖 AI 추출</strong> 버튼을 눌러주세요.<br />
+            추출된 값은 아래 표에서 수동으로 수정도 가능합니다.
+          </div>
+        </div>
+      )}
+
+      {/* 비교 세로표 */}
+      <div className="card overflow-hidden p-0">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50">
+            <tr className="border-b border-gray-200">
+              <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 w-24"></th>
+              <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">항목</th>
+              <th className="text-right px-3 py-2.5 text-xs font-semibold text-purple-700 w-32">📊 ERP 계산</th>
+              <th className="text-right px-3 py-2.5 text-xs font-semibold text-green-700 w-40">📎 사무실 명세서</th>
+              <th className="text-right px-3 py-2.5 text-xs font-semibold text-amber-700 w-32">차이</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ROWS.map((row, idx) => {
+              const erp = erpData[row.key]
+              const office = officeData[row.key]
+              const hasErp = erp !== null && erp !== undefined
+              const hasOffice = office !== null && office !== undefined
+              const diff = hasErp && hasOffice ? (office! - erp!) : null
+              const prevSection = idx > 0 ? ROWS[idx-1].section : ''
+              const sectionChanged = row.section !== prevSection
+              const isTotal = row.section === '합계'
+              return (
+                <tr key={row.key} className={`border-b border-gray-50 ${isTotal ? 'bg-gray-50' : ''}`}>
+                  <td className="px-3 py-2 text-xs">
+                    {sectionChanged && (
+                      <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                        row.section === '지급' ? 'bg-purple-100 text-purple-700' :
+                        row.section === '공제' ? 'bg-red-100 text-red-700' :
+                        'bg-amber-100 text-amber-700'
+                      }`}>{row.section}</span>
+                    )}
+                  </td>
+                  <td className={`px-3 py-2 ${isTotal ? 'font-bold text-gray-800' : 'text-gray-700'}`}>
+                    {row.label}
+                  </td>
+                  <td className="px-3 py-2 text-right text-gray-700 tabular-nums">
+                    {fmt(erp)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {/* 사무실 값 - 인라인 편집 가능 */}
+                    <input
+                      type="text"
+                      value={hasOffice ? office!.toLocaleString('ko-KR') : ''}
+                      onChange={e=>{
+                        const raw = e.target.value.replace(/[^\d-]/g, '')
+                        const num = raw === '' ? null : parseInt(raw, 10)
+                        setOfficeData((d:any) => ({ ...d, [row.key]: num }))
+                      }}
+                      placeholder="-"
+                      className="w-full text-right text-sm bg-transparent border-0 hover:bg-green-50 focus:bg-green-50 focus:outline-none focus:ring-1 focus:ring-green-300 rounded px-1.5 py-0.5"
+                    />
+                  </td>
+                  <td className={`px-3 py-2 text-right tabular-nums ${diff !== null ? diffClass(diff) : 'text-gray-300'}`}>
+                    {diff === null ? '-' : (diff === 0 ? '✓ 일치' : (diff > 0 ? '+' : '') + diff.toLocaleString('ko-KR') + '원')}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 차이 요약 */}
+      <div className="card p-4 bg-amber-50 border-amber-200">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium text-amber-800">📊 검증 결과</div>
+            <div className="text-xs text-amber-600 mt-0.5">
+              ERP 계산값과 사무실 명세서의 차이를 확인하세요. 1,000원 이상 차이나면 빨간색으로 강조됩니다.
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs text-amber-700">전체 차이 (지급-공제, 사무실 - ERP)</div>
+            <div className={`text-xl font-bold ${Math.abs(totalDiff) < 1000 ? 'text-green-600' : 'text-red-600'}`}>
+              {totalDiff === 0 ? '✓ 완전 일치' : (totalDiff > 0 ? '+' : '') + totalDiff.toLocaleString('ko-KR') + '원'}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
