@@ -586,8 +586,8 @@ export default function HomePage() {
             <div className="text-sm text-gray-400 mt-0.5">{dateStr}</div>
           </div>
 
-          {/* 가운데 - 공지사항 (빈 공간 활용) */}
-          <div className="flex-1 max-w-md min-w-0 mx-4 cursor-pointer hover:opacity-80 transition-opacity"
+          {/* 가운데 - 공지사항 (빈 공간 최대 활용) */}
+          <div className="flex-1 min-w-0 cursor-pointer hover:opacity-80 transition-opacity"
             onClick={()=>{
               if (typeof window !== 'undefined' && profile?.id) {
                 localStorage.setItem('notice_read_' + profile.id, new Date().toISOString())
