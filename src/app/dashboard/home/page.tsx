@@ -95,6 +95,8 @@ export default function HomePage() {
   // 통합 알림 (홈 화면 상단)
   const [notifications, setNotifications] = useState<any[]>([])
   const [notificationsOpen, setNotificationsOpen] = useState(true)
+  // 사용자가 X로 닫은 알림 ID들 (localStorage에 보관, 새로 안 뜸)
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
   const [kecoFilter, setKecoFilter] = useState('전체')
   // 캘린더에 스티커로 표시할 업무 (마감일 있는 본인 관련 + 공유)
   const [calendarTasks, setCalendarTasks] = useState<any[]>([])
@@ -483,12 +485,49 @@ export default function HomePage() {
       }
     }
 
+    // dismissed된 알림은 제외
+    const dismissed = typeof window !== 'undefined'
+      ? JSON.parse(localStorage.getItem(`notif_dismissed_${session.user.id}`) || '[]')
+      : []
+    const dismissedSet = new Set<string>(dismissed)
+    setDismissedIds(dismissedSet)
+    const filteredNotifs = notifs.filter(n => !dismissedSet.has(n.id))
+
     // 긴급한 것 먼저
-    notifs.sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0))
-    setNotifications(notifs)
+    filteredNotifs.sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0))
+    setNotifications(filteredNotifs)
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // 알림 개별 닫기 (X 버튼)
+  function dismissNotification(notifId: string) {
+    if (!profile?.id || typeof window === 'undefined') return
+    const stored = JSON.parse(localStorage.getItem(`notif_dismissed_${profile.id}`) || '[]')
+    if (!stored.includes(notifId)) {
+      stored.push(notifId)
+      // 오래된 dismissed는 잘라냄 (최대 200개 유지 - localStorage 비대화 방지)
+      const trimmed = stored.slice(-200)
+      localStorage.setItem(`notif_dismissed_${profile.id}`, JSON.stringify(trimmed))
+    }
+    setNotifications(prev => prev.filter(n => n.id !== notifId))
+  }
+
+  // 알림 클릭하면 닫고 페이지 이동
+  function clickNotification(n: any) {
+    dismissNotification(n.id)
+    router.push(n.href)
+  }
+
+  // 모두 닫기 (모두 dismissed 처리)
+  function dismissAll() {
+    if (!profile?.id || typeof window === 'undefined') return
+    const stored = JSON.parse(localStorage.getItem(`notif_dismissed_${profile.id}`) || '[]')
+    const allIds = notifications.map(n => n.id)
+    const merged = Array.from(new Set([...stored, ...allIds])).slice(-200)
+    localStorage.setItem(`notif_dismissed_${profile.id}`, JSON.stringify(merged))
+    setNotifications([])
+  }
 
   // 한국환경공단 게시글 로드
   useEffect(() => {
@@ -509,6 +548,8 @@ export default function HomePage() {
 
       const today = todayStr()
       const todayDate = new Date()
+      // 날짜 비교용 - 시간을 0시 0분으로 정규화 (오늘 21시에 비교해도 정확)
+      const todayMidnight = new Date(today + 'T00:00:00')
       const days = ['일','월','화','수','목','금','토']
 
       // 내 프로필
@@ -646,9 +687,11 @@ export default function HomePage() {
         const priorityMark = t.priority === 'high' ? '🔴 높음' : t.priority === 'normal' ? '🟡 보통' : '🔵 낮음'
         let dueLabel = ''
         if (t.due_date) {
-          const diff = Math.round((new Date(t.due_date+'T00:00:00').getTime() - todayDate.getTime()) / 86400000)
-          dueLabel = diff < 0 ? `⚠️ ${Math.abs(diff)}일 지남` : diff === 0 ? '🔥 오늘' : diff === 1 ? '내일' : `${diff}일 후`
-          dueLabel += t.due_time ? ` ${t.due_time.slice(0,5)}` : ''
+          // 두 날짜 모두 자정 기준으로 비교 (시각 차이로 인한 1일 오차 방지)
+          const dueDateMidnight = new Date(t.due_date+'T00:00:00')
+          const diff = Math.round((dueDateMidnight.getTime() - todayMidnight.getTime()) / 86400000)
+          dueLabel = diff < 0 ? `⚠️ ${Math.abs(diff)}일 지남` : diff === 0 ? '🔥 오늘 마감' : diff === 1 ? '내일 마감' : `${diff}일 후 마감`
+          dueLabel += ` (${t.due_date}${t.due_time?' '+t.due_time.slice(0,5):''})`
         } else dueLabel = '마감 미정'
         myTasksDetailed.push(`"${t.title}" - ${statusKr} ${priorityMark} ${dueLabel} (본인 ${myProgress}%, 등록자: ${(t.creator as any)?.name || '본인'})`)
       }
@@ -679,7 +722,8 @@ export default function HomePage() {
 
       // AI에게 보낼 최종 데이터
       const briefData = {
-        날짜: (todayDate.getMonth()+1) + '월 ' + todayDate.getDate() + '일 ' + days[todayDate.getDay()] + '요일',
+        오늘날짜: today, // ISO 형식 (예: "2026-05-14") - AI 날짜 비교 기준
+        날짜표시: (todayDate.getMonth()+1) + '월 ' + todayDate.getDate() + '일 ' + days[todayDate.getDay()] + '요일',
         직원정보: (p?.name||'') + ' ' + (p?.grade||'') + ' / ' + (p?.dept||''),
         오늘출퇴근: attendStatus,
         이번달근태: thisMonth + '월 ' + workDays + '일 출근 / 정규 ' + monthReg + 'h / 초과 ' + monthExt + 'h',
@@ -857,12 +901,21 @@ export default function HomePage() {
                 )}
                 <span className="text-xs text-gray-400 ml-auto">{notificationsOpen ? '▲' : '▼'}</span>
               </button>
-              {/* AI 통찰 받기 버튼 */}
-              <button onClick={loadBriefing} disabled={briefingLoading}
-                className="flex items-center gap-1 px-2.5 py-1 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 text-white text-xs font-medium rounded-lg transition-colors">
-                <span>✨</span>
-                {briefingLoading ? 'AI 분석 중...' : briefing ? '🔄 통찰 새로고침' : 'AI 통찰 받기'}
-              </button>
+              {/* AI 통찰 받기 버튼 + 모두 닫기 */}
+              <div className="flex items-center gap-1.5">
+                {notifications.length > 0 && (
+                  <button onClick={dismissAll}
+                    className="text-[11px] text-gray-500 hover:text-gray-800 px-2 py-1 hover:bg-white rounded-lg transition-colors"
+                    title="모든 알림을 닫습니다">
+                    모두 닫기
+                  </button>
+                )}
+                <button onClick={loadBriefing} disabled={briefingLoading}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 text-white text-xs font-medium rounded-lg transition-colors">
+                  <span>✨</span>
+                  {briefingLoading ? 'AI 분석 중...' : briefing ? '🔄 통찰 새로고침' : 'AI 통찰 받기'}
+                </button>
+              </div>
             </div>
             {notificationsOpen && (
               <div className="mt-2 pt-2 border-t border-amber-200 space-y-2">
@@ -893,26 +946,32 @@ export default function HomePage() {
                 ) : (
                   <div className="space-y-1 max-h-64 overflow-y-auto">
                     {notifications.slice(0, 15).map(n => (
-                      <button key={n.id} onClick={()=>router.push(n.href)}
-                        className={`w-full flex items-start gap-2 p-1.5 rounded text-left hover:bg-white/70 transition-colors ${
+                      <div key={n.id}
+                        className={`group flex items-start gap-2 p-1.5 rounded transition-colors hover:bg-white/70 ${
                           n.urgent ? 'bg-red-50/70' : ''
                         }`}>
-                        <span className="text-base flex-shrink-0">{n.icon}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                              n.type === '결재 반려' || n.type === '마감 임박' ? 'bg-red-100 text-red-700' :
-                              n.type === '결재 승인' ? 'bg-green-100 text-green-700' :
-                              n.type === '신규 일정' ? 'bg-blue-100 text-blue-700' :
-                              n.type === '결재 대기' ? 'bg-amber-100 text-amber-700' :
-                              'bg-gray-100 text-gray-700'
-                            }`}>{n.type}</span>
+                        <div onClick={()=>clickNotification(n)}
+                          className="flex items-start gap-2 flex-1 min-w-0 cursor-pointer">
+                          <span className="text-base flex-shrink-0">{n.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                n.type === '결재 반려' || n.type === '마감 임박' ? 'bg-red-100 text-red-700' :
+                                n.type === '결재 승인' ? 'bg-green-100 text-green-700' :
+                                n.type === '신규 일정' ? 'bg-blue-100 text-blue-700' :
+                                n.type === '결재 대기' ? 'bg-amber-100 text-amber-700' :
+                                'bg-gray-100 text-gray-700'
+                              }`}>{n.type}</span>
+                            </div>
+                            <div className="text-xs text-gray-700 mt-0.5 truncate">{n.title}</div>
+                            {n.sub && <div className="text-[10px] text-gray-500 mt-0.5">{n.sub}</div>}
                           </div>
-                          <div className="text-xs text-gray-700 mt-0.5 truncate">{n.title}</div>
-                          {n.sub && <div className="text-[10px] text-gray-500 mt-0.5">{n.sub}</div>}
+                          <span className="text-[10px] text-gray-400 flex-shrink-0 mt-1">→</span>
                         </div>
-                        <span className="text-[10px] text-gray-400 flex-shrink-0 mt-1">→</span>
-                      </button>
+                        <button onClick={(e)=>{ e.stopPropagation(); dismissNotification(n.id) }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-500 text-sm leading-none px-1 flex-shrink-0"
+                          title="이 알림 닫기">✕</button>
+                      </div>
                     ))}
                     {notifications.length > 15 && (
                       <div className="text-center text-[10px] text-gray-400 pt-1">+ {notifications.length - 15}건 더</div>
