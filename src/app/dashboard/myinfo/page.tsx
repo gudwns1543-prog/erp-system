@@ -13,6 +13,8 @@ export default function MyInfoPage() {
   const [pwError, setPwError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPw, setShowPw] = useState({current:false, next:false, confirm:false})
+  const [usedLeave, setUsedLeave] = useState(0)
+  const [pendingLeave, setPendingLeave] = useState(0)
 
   useEffect(() => {
     const supabase = createClient()
@@ -22,6 +24,43 @@ export default function MyInfoPage() {
       setProfile(p)
       const { data: s } = await supabase.from('salary_info').select('*').eq('user_id', session.user.id).maybeSingle()
       setSalary(s)
+
+      // 연차 사용량 계산 (approvals에서 본인 연차 종류만)
+      const { data: reqs } = await supabase.from('approvals')
+        .select('type, start_date, end_date, status')
+        .eq('requester_id', session.user.id)
+        .in('type', ['연차','반차(오전)','반차(오후)','반반차'])
+      const HOLIDAYS = new Set([
+        '2026-01-01','2026-02-16','2026-02-17','2026-02-18',
+        '2026-03-01','2026-05-05','2026-05-25','2026-06-03',
+        '2026-08-17','2026-09-24','2026-09-25','2026-09-26',
+        '2026-10-05','2026-10-09','2026-12-25',
+      ])
+      const isWorkday = (ds: string) => {
+        const dow = new Date(ds + 'T00:00:00').getDay()
+        return dow !== 0 && dow !== 6 && !HOLIDAYS.has(ds)
+      }
+      const addDays = (ds: string, n: number) => {
+        const d = new Date(ds + 'T00:00:00'); d.setDate(d.getDate() + n)
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+      }
+      const TYPE_H: Record<string,number> = { '연차':8, '반차(오전)':4, '반차(오후)':4, '반반차':2 }
+      let used = 0, pending = 0
+      for (const r of (reqs||[])) {
+        let hours = TYPE_H[r.type] || 0
+        if (r.type === '연차') {
+          let cnt = 0, cur = r.start_date
+          while (cur <= (r.end_date || r.start_date)) {
+            if (isWorkday(cur)) cnt++
+            cur = addDays(cur, 1)
+          }
+          hours = cnt * 8
+        }
+        if (r.status === 'approved') used += hours
+        else if (r.status === 'pending') pending += hours
+      }
+      setUsedLeave(used)
+      setPendingLeave(pending)
     })
   }, [])
 
@@ -99,8 +138,12 @@ export default function MyInfoPage() {
             <div className="text-xs text-gray-400 mt-1">{profile.grade} · {profile.dept}</div>
             <div className="mt-4 pt-4 border-t border-gray-100">
               <div className="text-xs text-gray-400 mb-1">잔여 연차</div>
-              <div className="text-2xl font-bold text-purple-600">{profile.annual_leave}</div>
-              <div className="text-xs text-gray-400">일</div>
+              <div className="text-2xl font-bold text-purple-600">
+                {(profile.annual_leave || 0) - usedLeave - pendingLeave}<span className="text-base ml-0.5">H</span>
+              </div>
+              <div className="text-xs text-gray-400 mt-0.5">
+                총 {profile.annual_leave || 0}H · 사용 {usedLeave}H{pendingLeave > 0 ? ` · 신청중 ${pendingLeave}H` : ''}
+              </div>
             </div>
             <div className="mt-4 p-2.5 bg-amber-50 rounded-lg">
               <div className="text-xs text-amber-700">정보 수정이 필요하면<br/>관리자에게 문의하세요</div>
