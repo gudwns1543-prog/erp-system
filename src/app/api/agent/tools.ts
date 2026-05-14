@@ -146,6 +146,89 @@ export const tools = [
       required: ['event_id'],
     },
   },
+  // ─── 업무(tasks) 관련 도구 ───
+  {
+    name: 'get_tasks',
+    description: '업무 목록을 조회합니다. 본인 업무 또는 전체 업무 조회 가능.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string', enum: ['mine','all'], description: 'mine=내가 담당하거나 등록한 것, all=전체' },
+        status: { type: 'string', enum: ['todo','in_progress','done','blocked','all'], description: '상태 필터' },
+        assignee_name: { type: 'string', description: '특정 직원 이름으로 필터 (선택)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'create_task',
+    description: '새 업무를 등록합니다. 담당자 이름을 주면 그 사람에게 할당됩니다.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: '업무 제목' },
+        description: { type: 'string', description: '상세 설명 (선택)' },
+        assignee_name: { type: 'string', description: '담당자 이름 (생략시 본인)' },
+        due_date: { type: 'string', description: '마감일 YYYY-MM-DD (선택)' },
+        priority: { type: 'string', enum: ['high','normal','low'], description: '우선순위 (생략시 normal)' },
+        status: { type: 'string', enum: ['todo','in_progress','done','blocked'], description: '초기 상태 (생략시 todo)' },
+      },
+      required: ['title'],
+    },
+  },
+  {
+    name: 'update_task',
+    description: '업무 정보를 수정합니다.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: '업무 ID' },
+        title: { type: 'string', description: '변경할 제목' },
+        description: { type: 'string', description: '변경할 설명' },
+        assignee_name: { type: 'string', description: '변경할 담당자 이름' },
+        due_date: { type: 'string', description: '변경할 마감일 YYYY-MM-DD' },
+        status: { type: 'string', enum: ['todo','in_progress','done','blocked'] },
+        priority: { type: 'string', enum: ['high','normal','low'] },
+        progress: { type: 'number', description: '진척률 0~100' },
+      },
+      required: ['task_id'],
+    },
+  },
+  {
+    name: 'change_task_status',
+    description: '업무 상태를 빠르게 변경합니다 (할일/진행중/완료/대기).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: '업무 ID' },
+        status: { type: 'string', enum: ['todo','in_progress','done','blocked'], description: '새 상태' },
+      },
+      required: ['task_id','status'],
+    },
+  },
+  {
+    name: 'set_task_progress',
+    description: '업무 진척률을 설정합니다 (0~100). 100이면 자동으로 완료 상태로.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: '업무 ID' },
+        progress: { type: 'number', description: '진척률 0~100' },
+      },
+      required: ['task_id','progress'],
+    },
+  },
+  {
+    name: 'delete_task',
+    description: '업무를 삭제합니다. 본인이 만들었거나 본인이 담당자인 업무만 삭제 가능.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        task_id: { type: 'string', description: '업무 ID' },
+      },
+      required: ['task_id'],
+    },
+  },
 ]
 
 // ─── 실행 컨텍스트 타입 ──────
@@ -390,6 +473,115 @@ export async function executeTool(name: string, input: any, ctx: Ctx): Promise<a
       const { error } = await supabase.from('events').delete().eq('id', input.event_id)
       if (error) return { 오류: error.message }
       return { 성공: true, 메시지: `🗑️ "${existing.title}" 일정 삭제 완료` }
+    }
+
+    // ─── 업무(tasks) 관련 도구 ───
+    // 12) 업무 조회
+    case 'get_tasks': {
+      const scope = input.scope || 'mine'
+      const status = input.status || 'all'
+      let query = supabase.from('tasks')
+        .select('id, title, description, status, priority, progress, due_date, created_at, assignee:assignee_id(id,name), creator:creator_id(id,name)')
+        .order('created_at', { ascending: false }).limit(50)
+      if (scope === 'mine') query = query.or(`assignee_id.eq.${userId},creator_id.eq.${userId}`)
+      if (status !== 'all') query = query.eq('status', status)
+      if (input.assignee_name) {
+        const { data: emp } = await supabase.from('profiles').select('id').eq('name', input.assignee_name).maybeSingle()
+        if (emp) query = query.eq('assignee_id', emp.id)
+      }
+      const { data } = await query
+      return {
+        범위: scope==='mine' ? '내 업무' : '전체 업무',
+        건수: (data||[]).length,
+        업무목록: data || []
+      }
+    }
+
+    // 13) 업무 생성
+    case 'create_task': {
+      let assigneeId = userId
+      if (input.assignee_name) {
+        const { data: emp } = await supabase.from('profiles')
+          .select('id, name').eq('name', input.assignee_name).maybeSingle()
+        if (!emp) return { 오류: `직원 '${input.assignee_name}'을(를) 찾을 수 없습니다.` }
+        assigneeId = emp.id
+      }
+      const { data, error } = await supabase.from('tasks').insert({
+        title: input.title,
+        description: input.description || null,
+        assignee_id: assigneeId,
+        creator_id: userId,
+        due_date: input.due_date || null,
+        priority: input.priority || 'normal',
+        status: input.status || 'todo',
+      }).select('*, assignee:assignee_id(name)').single()
+      if (error) return { 오류: error.message }
+      return {
+        성공: true,
+        업무ID: data.id,
+        메시지: `✅ 업무 등록 완료: "${data.title}" (담당: ${(data.assignee as any)?.name || '미지정'}${data.due_date ? `, 마감 ${data.due_date}` : ''})`,
+      }
+    }
+
+    // 14) 업무 수정
+    case 'update_task': {
+      const updateData: any = {}
+      if (input.title !== undefined) updateData.title = input.title
+      if (input.description !== undefined) updateData.description = input.description
+      if (input.due_date !== undefined) updateData.due_date = input.due_date
+      if (input.status !== undefined) updateData.status = input.status
+      if (input.priority !== undefined) updateData.priority = input.priority
+      if (input.progress !== undefined) updateData.progress = Math.min(100, Math.max(0, input.progress))
+      if (input.assignee_name) {
+        const { data: emp } = await supabase.from('profiles')
+          .select('id').eq('name', input.assignee_name).maybeSingle()
+        if (!emp) return { 오류: `직원 '${input.assignee_name}'을(를) 찾을 수 없습니다.` }
+        updateData.assignee_id = emp.id
+      }
+      if (Object.keys(updateData).length === 0) return { 오류: '변경할 항목이 없습니다.' }
+      updateData.updated_at = new Date().toISOString()
+      const { data, error } = await supabase.from('tasks')
+        .update(updateData).eq('id', input.task_id).select().single()
+      if (error) return { 오류: error.message }
+      return { 성공: true, 메시지: `✅ 업무 수정 완료: "${data.title}"` }
+    }
+
+    // 15) 상태만 변경
+    case 'change_task_status': {
+      const updateData: any = { status: input.status, updated_at: new Date().toISOString() }
+      if (input.status === 'done') updateData.progress = 100
+      if (input.status === 'todo') updateData.progress = 0
+      const { data, error } = await supabase.from('tasks')
+        .update(updateData).eq('id', input.task_id).select().single()
+      if (error) return { 오류: error.message }
+      const labels: Record<string,string> = { todo:'할일', in_progress:'진행중', done:'완료', blocked:'대기/막힘' }
+      return { 성공: true, 메시지: `✅ "${data.title}" → ${labels[input.status]}` }
+    }
+
+    // 16) 진척률 설정
+    case 'set_task_progress': {
+      const progress = Math.min(100, Math.max(0, input.progress))
+      const updateData: any = { progress, updated_at: new Date().toISOString() }
+      // 100이면 자동 완료, 0이면 자동 할일
+      if (progress === 100) updateData.status = 'done'
+      else if (progress > 0) updateData.status = 'in_progress'
+      const { data, error } = await supabase.from('tasks')
+        .update(updateData).eq('id', input.task_id).select().single()
+      if (error) return { 오류: error.message }
+      return { 성공: true, 메시지: `✅ "${data.title}" 진척률 ${progress}%${progress===100?' (완료)':''}` }
+    }
+
+    // 17) 업무 삭제
+    case 'delete_task': {
+      const { data: existing } = await supabase.from('tasks')
+        .select('id, title, creator_id, assignee_id').eq('id', input.task_id).maybeSingle()
+      if (!existing) return { 오류: '업무를 찾을 수 없습니다.' }
+      if (existing.creator_id !== userId && existing.assignee_id !== userId) {
+        return { 오류: '본인이 만들거나 담당하는 업무만 삭제할 수 있습니다.' }
+      }
+      const { error } = await supabase.from('tasks').delete().eq('id', input.task_id)
+      if (error) return { 오류: error.message }
+      return { 성공: true, 메시지: `🗑️ "${existing.title}" 업무 삭제 완료` }
     }
 
     default:
