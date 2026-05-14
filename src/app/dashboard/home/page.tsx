@@ -581,12 +581,9 @@ export default function HomePage() {
       {/* 인사말 + 공지사항(가운데) + 출퇴근 */}
       <div className="mb-5">
         <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <Logo size={36} />
-            <div>
-              <div className="text-xl font-semibold text-gray-800">안녕하세요, {profile?.name} {profile?.grade}님 👋</div>
-              <div className="text-sm text-gray-400 mt-0.5">{dateStr}</div>
-            </div>
+          <div className="flex-shrink-0">
+            <div className="text-xl font-semibold text-gray-800">안녕하세요, {profile?.name} {profile?.grade}님 👋</div>
+            <div className="text-sm text-gray-400 mt-0.5">{dateStr}</div>
           </div>
 
           {/* 가운데 - 공지사항 (빈 공간 활용) */}
@@ -655,13 +652,13 @@ export default function HomePage() {
         {/* ─── 좌측 메인 영역 ─── */}
         <div className="space-y-4 min-w-0">
 
-          {/* 상단 슬림: 업무 + 출근현황 (공지는 상단 헤더로 이동) */}
+          {/* 1단: 내 업무(슬림) + AI 브리핑(슬림) - 높이 낮게 */}
           <div className="grid grid-cols-2 gap-3">
-            {/* 업무 미니 */}
+            {/* 업무 미니 - 한 줄로 슬림 */}
             <div className="card cursor-pointer hover:border-purple-200 transition-colors p-3"
               onClick={()=>router.push('/dashboard/tasks')}>
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 flex-shrink-0">
                   <span className="text-sm">✔️</span>
                   <span className="text-xs font-semibold text-gray-800">내 업무</span>
                   {taskCounts.overdue > 0 && (
@@ -670,67 +667,25 @@ export default function HomePage() {
                     </span>
                   )}
                 </div>
-                <span className="text-[10px] text-gray-400">→</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="flex-1 bg-gray-50 rounded p-1.5 text-center">
-                  <div className="text-[9px] text-gray-500">할일</div>
-                  <div className="text-base font-bold text-gray-700 leading-tight">{taskCounts.todo}</div>
-                </div>
-                <div className="flex-1 bg-blue-50 rounded p-1.5 text-center">
-                  <div className="text-[9px] text-blue-600">진행</div>
-                  <div className="text-base font-bold text-blue-700 leading-tight">{taskCounts.in_progress}</div>
-                </div>
-                <div className="flex-1 bg-red-50 rounded p-1.5 text-center">
-                  <div className="text-[9px] text-red-600">막힘</div>
-                  <div className="text-base font-bold text-red-700 leading-tight">{taskCounts.blocked}</div>
+                <div className="flex items-center gap-2 flex-1 justify-end">
+                  <div className="flex items-center gap-1 px-2 py-0.5 bg-gray-50 rounded">
+                    <span className="text-[10px] text-gray-500">할일</span>
+                    <span className="text-sm font-bold text-gray-700">{taskCounts.todo}</span>
+                  </div>
+                  <div className="flex items-center gap-1 px-2 py-0.5 bg-blue-50 rounded">
+                    <span className="text-[10px] text-blue-600">진행</span>
+                    <span className="text-sm font-bold text-blue-700">{taskCounts.in_progress}</span>
+                  </div>
+                  <div className="flex items-center gap-1 px-2 py-0.5 bg-red-50 rounded">
+                    <span className="text-[10px] text-red-600">막힘</span>
+                    <span className="text-sm font-bold text-red-700">{taskCounts.blocked}</span>
+                  </div>
+                  <span className="text-[10px] text-gray-400 ml-1">→</span>
                 </div>
               </div>
             </div>
 
-            {/* 팀원 현황 (전체 - 모든 직원) */}
-            <div className="card cursor-pointer hover:border-purple-200 transition-colors p-3"
-              onClick={()=>router.push('/dashboard/attendance')}>
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm">👥</span>
-                  <span className="text-xs font-semibold text-gray-800">출근현황</span>
-                </div>
-                <span className="text-[10px] text-gray-400">→</span>
-              </div>
-              {teamStatus.length === 0 ? (
-                <div className="text-[11px] text-gray-300 py-1">정보 없음</div>
-              ) : (
-                <div className="space-y-1 max-h-[120px] overflow-y-auto">
-                  {teamStatus.map((u:any)=>(
-                    <div key={u.id}
-                      className="flex items-center gap-1.5 py-0.5"
-                      title={`${u.name} ${u.status==='working'?'근무중':u.status==='done'?'퇴근':'미출근'}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                        u.status==='working'?'bg-green-400':u.status==='done'?'bg-purple-400':'bg-gray-300'
-                      }`} />
-                      <span className="text-[11px] font-medium text-gray-700 w-12 flex-shrink-0 truncate">{u.name}</span>
-                      <span className="text-[10px] text-gray-400 flex-1 tabular-nums">
-                        {u.checkIn ? (
-                          <>
-                            {u.checkIn.slice(0,5)}
-                            {u.checkOut ? <span className="text-gray-300"> ~ </span> : <span className="text-green-500"> ~</span>}
-                            {u.checkOut ? u.checkOut.slice(0,5) : <span className="text-green-500">근무중</span>}
-                          </>
-                        ) : (
-                          <span className="text-gray-300">미출근</span>
-                        )}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* AI 브리핑 + 뉴스 (캘린더 위로) */}
-          <div className="grid grid-cols-2 gap-3">
-            {/* AI 브리핑 (접힘 - 빈 상태 매우 슬림) */}
+            {/* AI 브리핑 - 한 줄 토글, 펼치면 내용 보임 */}
             <div className="card border-purple-100 bg-gradient-to-r from-purple-50/50 to-white p-3">
               <button onClick={()=>{ setBriefingOpen(o => !o); if (!briefingOpen && !briefing && !briefingLoading) loadBriefing() }}
                 className="w-full flex items-center justify-between hover:opacity-80 transition-opacity">
@@ -738,6 +693,7 @@ export default function HomePage() {
                   <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center text-[10px]">✨</div>
                   <span className="text-xs font-semibold text-gray-800">AI 업무 브리핑</span>
                   {!briefingOpen && <span className="text-[10px] text-gray-400">클릭하여 분석</span>}
+                  {briefingLoading && <span className="text-[10px] text-purple-500">분석 중...</span>}
                 </div>
                 <span className="text-[10px] text-gray-400">{briefingOpen ? '▲' : '▼'}</span>
               </button>
@@ -766,8 +722,50 @@ export default function HomePage() {
                 </div>
               )}
             </div>
+          </div>
 
-            {/* 환경공단 뉴스 (2개) */}
+          {/* 2단: 출근현황 + 공단소식 - 비슷한 높이 */}
+          <div className="grid grid-cols-2 gap-3">
+            {/* 출근현황 */}
+            <div className="card cursor-pointer hover:border-purple-200 transition-colors p-3"
+              onClick={()=>router.push('/dashboard/attendance')}>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm">👥</span>
+                  <span className="text-xs font-semibold text-gray-800">출근현황</span>
+                </div>
+                <span className="text-[10px] text-gray-400">→</span>
+              </div>
+              {teamStatus.length === 0 ? (
+                <div className="text-[11px] text-gray-300 py-1">정보 없음</div>
+              ) : (
+                <div className="space-y-1 max-h-[140px] overflow-y-auto">
+                  {teamStatus.map((u:any)=>(
+                    <div key={u.id}
+                      className="flex items-center gap-1.5 py-0.5"
+                      title={`${u.name} ${u.status==='working'?'근무중':u.status==='done'?'퇴근':'미출근'}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                        u.status==='working'?'bg-green-400':u.status==='done'?'bg-purple-400':'bg-gray-300'
+                      }`} />
+                      <span className="text-[11px] font-medium text-gray-700 w-12 flex-shrink-0 truncate">{u.name}</span>
+                      <span className="text-[10px] text-gray-400 flex-1 tabular-nums">
+                        {u.checkIn ? (
+                          <>
+                            {u.checkIn.slice(0,5)}
+                            {u.checkOut ? <span className="text-gray-300"> ~ </span> : <span className="text-green-500"> ~</span>}
+                            {u.checkOut ? u.checkOut.slice(0,5) : <span className="text-green-500">근무중</span>}
+                          </>
+                        ) : (
+                          <span className="text-gray-300">미출근</span>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 환경공단 뉴스 */}
             <div className="card p-3">
               <div className="flex items-center justify-between mb-1.5">
                 <div className="flex items-center gap-1.5">
@@ -794,7 +792,7 @@ export default function HomePage() {
               ) : (
                 (() => {
                   const list = (kecoFilter === '전체' ? kecoItems : kecoItems.filter(i => i.type === kecoFilter))
-                  const displayed = newsExpanded ? list.slice(0, 10) : list.slice(0, 2)
+                  const displayed = newsExpanded ? list.slice(0, 10) : list.slice(0, 3)
                   return (
                     <>
                       <div className="space-y-0.5">
@@ -814,10 +812,10 @@ export default function HomePage() {
                           </a>
                         ))}
                       </div>
-                      {list.length > 2 && (
+                      {list.length > 3 && (
                         <button onClick={()=>setNewsExpanded(v=>!v)}
                           className="w-full mt-1.5 text-[10px] text-gray-500 hover:text-green-600 py-0.5 border-t border-gray-100">
-                          {newsExpanded ? '▲ 접기' : `▼ ${list.length-2}개 더보기`}
+                          {newsExpanded ? '▲ 접기' : `▼ ${list.length-3}개 더보기`}
                         </button>
                       )}
                     </>
