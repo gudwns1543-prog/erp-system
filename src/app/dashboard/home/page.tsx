@@ -310,20 +310,22 @@ export default function HomePage() {
         .select('*, requester:requester_id(name,color,tc,avatar_url)')
         .eq('approver_id', session.user.id).eq('status','pending').limit(4)
       setPendingApprovals(apps||[])
-      const { data: allStaff } = await supabase.from('profiles').select('id,name,dept,color,tc,avatar_url').eq('status','active').neq('id', session.user.id)
-      const { data: todayAtts } = await supabase.from('attendance').select('user_id,check_in,check_out').eq('work_date', todayStr())
-      // user_id 중복 제거 - 각 직원의 가장 최근 세션만 사용
-      const attMap: Record<string,any> = {}
-      ;(todayAtts||[]).forEach((a:any) => {
-        if (!attMap[a.user_id] || (a.check_in > (attMap[a.user_id].check_in||''))) {
-          attMap[a.user_id] = a
-        }
-      })
-      setTeamStatus((allStaff||[]).map((s:any)=>{
-        const att = attMap[s.id]
-        return { ...s, checkIn: att?.check_in, status: att?.check_out?'done':att?.check_in?'working':'absent' }
-      }).slice(0,5))
     }
+    // 팀원 현황 - 모든 사용자가 볼 수 있도록 (전 직원, 본인 포함)
+    const { data: allStaff } = await supabase.from('profiles')
+      .select('id,name,dept,color,tc,avatar_url,grade').eq('status','active')
+    const { data: todayAtts } = await supabase.from('attendance').select('user_id,check_in,check_out').eq('work_date', todayStr())
+    // user_id 중복 제거 - 각 직원의 가장 최근 세션만 사용
+    const attMap: Record<string,any> = {}
+    ;(todayAtts||[]).forEach((a:any) => {
+      if (!attMap[a.user_id] || (a.check_in > (attMap[a.user_id].check_in||''))) {
+        attMap[a.user_id] = a
+      }
+    })
+    setTeamStatus((allStaff||[]).map((s:any)=>{
+      const att = attMap[s.id]
+      return { ...s, checkIn: att?.check_in, status: att?.check_out?'done':att?.check_in?'working':'absent' }
+    }))
     const { data: notices } = await supabase.from('notices')
       .select('*, author:author_id(name)').order('created_at',{ascending:false}).limit(3)
     setRecentNotices(notices||[])
@@ -608,92 +610,218 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* 상단 슬림 영역: 공지사항 + 업무 미니카드 */}
-      <div className="grid grid-cols-3 gap-3 mb-5">
+      {/* 메인 컨테이너: 좌측 main + 우측 바로가기 세로 */}
+      <div className="grid grid-cols-[1fr_auto] gap-4">
 
-        {/* 공지사항 슬림 카드 */}
-        <div className="card cursor-pointer hover:border-purple-200 transition-colors"
-          onClick={()=>{
-            if (typeof window !== 'undefined' && profile?.id) {
-              localStorage.setItem('notice_read_' + profile.id, new Date().toISOString())
-            }
-            router.push('/dashboard/notice')
-          }}>
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm">📢</span>
-              <span className="text-sm font-semibold text-gray-800">공지사항</span>
-              {hasNewNotice && (
-                <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ml-0.5">N</span>
-              )}
-            </div>
-            <span className="text-xs text-gray-400">전체 →</span>
-          </div>
-          {recentNotices.length === 0 ? (
-            <div className="text-xs text-gray-300 py-2">공지사항이 없습니다</div>
-          ) : (
-            <div className="space-y-1">
-              {recentNotices.slice(0,2).map((n:any)=>(
-                <div key={n.id} className="flex items-center gap-1.5 group">
-                  <span className="text-xs text-gray-700 group-hover:text-purple-600 truncate flex-1">
-                    {n.title || '(제목없음)'}
-                  </span>
-                  <span className="text-[10px] text-gray-300 flex-shrink-0">
-                    {n.created_at?.slice(5,10).replace('-','/')}
-                  </span>
+        {/* ─── 좌측 메인 영역 ─── */}
+        <div className="space-y-4 min-w-0">
+
+          {/* 상단 슬림: 공지 + 업무 + 팀원현황 */}
+          <div className="grid grid-cols-3 gap-3">
+            {/* 공지사항 */}
+            <div className="card cursor-pointer hover:border-purple-200 transition-colors p-3"
+              onClick={()=>{
+                if (typeof window !== 'undefined' && profile?.id) {
+                  localStorage.setItem('notice_read_' + profile.id, new Date().toISOString())
+                }
+                router.push('/dashboard/notice')
+              }}>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm">📢</span>
+                  <span className="text-xs font-semibold text-gray-800">공지사항</span>
+                  {hasNewNotice && (
+                    <span className="bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">N</span>
+                  )}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* 업무 미니카드 */}
-        <div className="card cursor-pointer hover:border-purple-200 transition-colors col-span-2"
-          onClick={()=>router.push('/dashboard/tasks')}>
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm">✔️</span>
-              <span className="text-sm font-semibold text-gray-800">내 업무</span>
-              {taskCounts.overdue > 0 && (
-                <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ml-0.5">
-                  ⚠️ 마감 지남 {taskCounts.overdue}
-                </span>
+                <span className="text-[10px] text-gray-400">→</span>
+              </div>
+              {recentNotices.length === 0 ? (
+                <div className="text-[11px] text-gray-300 py-1">공지사항 없음</div>
+              ) : (
+                <div className="space-y-0.5">
+                  {recentNotices.slice(0,2).map((n:any)=>(
+                    <div key={n.id} className="flex items-center gap-1 group">
+                      <span className="text-[11px] text-gray-700 group-hover:text-purple-600 truncate flex-1">
+                        {n.title || '(제목없음)'}
+                      </span>
+                      <span className="text-[10px] text-gray-300 flex-shrink-0">
+                        {n.created_at?.slice(5,10).replace('-','/')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
-            <span className="text-xs text-gray-400">전체 →</span>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="bg-gray-50 rounded-lg p-2 text-center">
-              <div className="text-xs text-gray-500 mb-0.5">할일</div>
-              <div className="text-lg font-bold text-gray-700">{taskCounts.todo}</div>
-            </div>
-            <div className="bg-blue-50 rounded-lg p-2 text-center">
-              <div className="text-xs text-blue-600 mb-0.5">진행중</div>
-              <div className="text-lg font-bold text-blue-700">{taskCounts.in_progress}</div>
-            </div>
-            <div className="bg-red-50 rounded-lg p-2 text-center">
-              <div className="text-xs text-red-600 mb-0.5">대기/막힘</div>
-              <div className="text-lg font-bold text-red-700">{taskCounts.blocked}</div>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      {/* 요약 카드 */}
-      <div className="grid grid-cols-4 gap-3 mb-5">
-        {[
-          {label:'출근 시간', val:leaveNotes.includes(today?.note) ? today.note : (today?.check_in?.slice(0,5)||'--:--'), sub:leaveNotes.includes(today?.note) ? '승인됨' : today?.check_out?'퇴근완료':today?.check_in?'근무중':'미출근', c:'text-gray-800'},
-          {label:'이번달 근태', val:Math.round(stats.monthReg*10)/10+'h', sub:'정규 근무', c:'text-purple-600'},
-          {label:'잔여 연차', val:stats.remainLeave+'H', sub:'사용 가능', c:'text-teal-600'},
-          {label:profile?.role==='director'?'미결 결재':'대기 결재', val:stats.pendingApprovals+'건', sub:'승인 대기', c:stats.pendingApprovals>0?'text-amber-600':'text-gray-400'},
-        ].map(m=>(
-          <div key={m.label} className="card">
-            <div className="text-xs text-gray-400 mb-1">{m.label}</div>
-            <div className={`text-2xl font-semibold ${m.c}`}>{m.val}</div>
-            <div className="text-xs text-gray-400 mt-1">{m.sub}</div>
+            {/* 업무 미니 */}
+            <div className="card cursor-pointer hover:border-purple-200 transition-colors p-3"
+              onClick={()=>router.push('/dashboard/tasks')}>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm">✔️</span>
+                  <span className="text-xs font-semibold text-gray-800">내 업무</span>
+                  {taskCounts.overdue > 0 && (
+                    <span className="bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                      ⚠️ {taskCounts.overdue}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[10px] text-gray-400">→</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="flex-1 bg-gray-50 rounded p-1.5 text-center">
+                  <div className="text-[9px] text-gray-500">할일</div>
+                  <div className="text-base font-bold text-gray-700 leading-tight">{taskCounts.todo}</div>
+                </div>
+                <div className="flex-1 bg-blue-50 rounded p-1.5 text-center">
+                  <div className="text-[9px] text-blue-600">진행</div>
+                  <div className="text-base font-bold text-blue-700 leading-tight">{taskCounts.in_progress}</div>
+                </div>
+                <div className="flex-1 bg-red-50 rounded p-1.5 text-center">
+                  <div className="text-[9px] text-red-600">막힘</div>
+                  <div className="text-base font-bold text-red-700 leading-tight">{taskCounts.blocked}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* 팀원 현황 (전체 - 모든 직원) */}
+            <div className="card cursor-pointer hover:border-purple-200 transition-colors p-3"
+              onClick={()=>router.push('/dashboard/attendance')}>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm">👥</span>
+                  <span className="text-xs font-semibold text-gray-800">출근현황</span>
+                </div>
+                <span className="text-[10px] text-gray-400">→</span>
+              </div>
+              {teamStatus.length === 0 ? (
+                <div className="text-[11px] text-gray-300 py-1">정보 없음</div>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {teamStatus.slice(0,8).map((u:any)=>(
+                    <div key={u.id}
+                      className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                        u.status==='working' ? 'bg-green-50 text-green-700' :
+                        u.status==='done' ? 'bg-purple-50 text-purple-700' :
+                        'bg-gray-100 text-gray-400'
+                      }`}
+                      title={`${u.name} ${u.status==='working'?'근무중':u.status==='done'?'퇴근':'미출근'}`}>
+                      <span className={`w-1 h-1 rounded-full ${
+                        u.status==='working'?'bg-green-400':u.status==='done'?'bg-purple-400':'bg-gray-300'
+                      }`} />
+                      {u.name}
+                    </div>
+                  ))}
+                  {teamStatus.length > 8 && (
+                    <div className="px-1.5 py-0.5 text-[10px] text-gray-400">+{teamStatus.length-8}</div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        ))}
-      </div>
+
+          {/* AI 브리핑 + 뉴스 (캘린더 위로) */}
+          <div className="grid grid-cols-2 gap-3">
+            {/* AI 브리핑 (접힘 - 빈 상태 매우 슬림) */}
+            <div className="card border-purple-100 bg-gradient-to-r from-purple-50/50 to-white p-3">
+              <button onClick={()=>{ setBriefingOpen(o => !o); if (!briefingOpen && !briefing && !briefingLoading) loadBriefing() }}
+                className="w-full flex items-center justify-between hover:opacity-80 transition-opacity">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center text-[10px]">✨</div>
+                  <span className="text-xs font-semibold text-gray-800">AI 업무 브리핑</span>
+                  {!briefingOpen && <span className="text-[10px] text-gray-400">클릭하여 분석</span>}
+                </div>
+                <span className="text-[10px] text-gray-400">{briefingOpen ? '▲' : '▼'}</span>
+              </button>
+              {briefingOpen && (
+                <div className="mt-2 pt-2 border-t border-purple-100">
+                  <div className="flex justify-end mb-1.5">
+                    <button onClick={loadBriefing} disabled={briefingLoading}
+                      className="text-[10px] text-purple-600 hover:text-purple-800 disabled:text-gray-400">
+                      {briefingLoading ? '⏳ 분석 중...' : '🔄 새로고침'}
+                    </button>
+                  </div>
+                  {briefingLoading ? (
+                    <div className="flex items-center gap-2 py-1.5">
+                      <div className="flex gap-1">
+                        <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'0ms'}}/>
+                        <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'150ms'}}/>
+                        <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'300ms'}}/>
+                      </div>
+                      <span className="text-[11px] text-gray-400">AI가 분석 중...</span>
+                    </div>
+                  ) : briefing ? (
+                    <div className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{briefing}</div>
+                  ) : (
+                    <div className="text-xs text-gray-400 py-1">새로고침을 눌러주세요</div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* 환경공단 뉴스 (2개) */}
+            <div className="card p-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm">🌿</span>
+                  <span className="text-xs font-semibold text-gray-800">한국환경공단 소식</span>
+                </div>
+                <a href="https://www.keco.or.kr" target="_blank" rel="noreferrer"
+                  className="text-[10px] text-gray-400 hover:text-green-600">공단 →</a>
+              </div>
+              <div className="flex gap-1 mb-1.5 flex-wrap">
+                {['전체','공지사항','언론보도','보도자료','입찰공고'].map(f => (
+                  <button key={f} onClick={() => setKecoFilter(f)}
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                      kecoFilter === f ? 'bg-green-600 text-white font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}>
+                    {f}
+                  </button>
+                ))}
+              </div>
+              {kecoLoading ? (
+                <div className="text-[11px] text-gray-400 py-2 text-center">불러오는 중...</div>
+              ) : kecoItems.length === 0 ? (
+                <div className="text-[11px] text-gray-400 py-2 text-center">게시글 없음</div>
+              ) : (
+                (() => {
+                  const list = (kecoFilter === '전체' ? kecoItems : kecoItems.filter(i => i.type === kecoFilter))
+                  const displayed = newsExpanded ? list.slice(0, 10) : list.slice(0, 2)
+                  return (
+                    <>
+                      <div className="space-y-0.5">
+                        {displayed.map((item, idx) => (
+                          <a key={idx} href={item.url} target="_blank" rel="noreferrer"
+                            className="flex items-start gap-1.5 p-1 rounded hover:bg-gray-50 group">
+                            <span className={`text-[10px] px-1 py-0.5 rounded font-medium flex-shrink-0 ${
+                              item.type === '공지사항' ? 'bg-blue-100 text-blue-700' :
+                              item.type === '언론보도' ? 'bg-green-100 text-green-700' :
+                              item.type === '보도자료' ? 'bg-teal-100 text-teal-700' :
+                              'bg-amber-100 text-amber-700'
+                            }`}>{item.type}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[11px] text-gray-700 group-hover:text-green-600 line-clamp-1">{item.title}</div>
+                              <div className="text-[10px] text-gray-400">{item.date}</div>
+                            </div>
+                          </a>
+                        ))}
+                      </div>
+                      {list.length > 2 && (
+                        <button onClick={()=>setNewsExpanded(v=>!v)}
+                          className="w-full mt-1.5 text-[10px] text-gray-500 hover:text-green-600 py-0.5 border-t border-gray-100">
+                          {newsExpanded ? '▲ 접기' : `▼ ${list.length-2}개 더보기`}
+                        </button>
+                      )}
+                    </>
+                  )
+                })()
+              )}
+            </div>
+          </div>
+
+
+      {/* 요약 카드 - 캘린더 아래로 이동, 슬림하게 (아래 코드 참고) */}
 
       {/* 캘린더 - 풀 폭 */}
       <div className="card mb-5">
@@ -809,187 +937,57 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* AI 브리핑 + 환경공단 소식 (접힘 슬림) */}
-      <div className="grid grid-cols-2 gap-3 mb-5">
-        {/* AI 업무 브리핑 (접힘) */}
-        <div className="card border-purple-100 bg-gradient-to-r from-purple-50/50 to-white">
-          <button onClick={()=>{ setBriefingOpen(o => !o); if (!briefingOpen && !briefing && !briefingLoading) loadBriefing() }}
-            className="w-full flex items-center justify-between hover:opacity-80 transition-opacity">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-full bg-purple-600 flex items-center justify-center text-xs">✨</div>
-              <span className="text-sm font-semibold text-gray-800">AI 업무 브리핑</span>
-              <span className="text-xs text-gray-400">{briefingOpen ? '' : '클릭하여 펼치기'}</span>
-            </div>
-            <span className="text-xs text-gray-400">{briefingOpen ? '▲' : '▼'}</span>
-          </button>
-          {briefingOpen && (
-            <div className="mt-3 pt-3 border-t border-purple-100">
-              <div className="flex justify-end mb-2">
-                <button onClick={loadBriefing} disabled={briefingLoading}
-                  className="text-xs text-purple-600 hover:text-purple-800 disabled:text-gray-400">
-                  {briefingLoading ? '⏳ 분석 중...' : '🔄 새로고침'}
-                </button>
-              </div>
-              {briefingLoading ? (
-                <div className="flex items-center gap-2 py-2">
-                  <div className="flex gap-1">
-                    <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'0ms'}}/>
-                    <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'150ms'}}/>
-                    <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'300ms'}}/>
-                  </div>
-                  <span className="text-xs text-gray-400">AI가 분석 중...</span>
-                </div>
-              ) : briefing ? (
-                <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{briefing}</div>
-              ) : (
-                <div className="text-sm text-gray-400 py-1">새로고침을 눌러주세요</div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* 환경공단 뉴스 (2개 + 더보기) */}
-        <div className="card">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <span className="text-base">🌿</span>
-              <span className="text-sm font-semibold text-gray-800">한국환경공단 최신 소식</span>
-            </div>
-            <a href="https://www.keco.or.kr" target="_blank" rel="noreferrer"
-              className="text-xs text-gray-400 hover:text-green-600">공단 →</a>
-          </div>
-          <div className="flex gap-1 mb-2 flex-wrap">
-            {['전체','공지사항','언론보도','보도자료','입찰공고'].map(f => (
-              <button key={f} onClick={() => setKecoFilter(f)}
-                className={`text-xs px-2 py-0.5 rounded-full ${
-                  kecoFilter === f ? 'bg-green-600 text-white font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                }`}>
-                {f}
-              </button>
-            ))}
-          </div>
-          {kecoLoading ? (
-            <div className="text-xs text-gray-400 py-3 text-center">공단 소식을 불러오는 중...</div>
-          ) : kecoItems.length === 0 ? (
-            <div className="text-xs text-gray-400 py-3 text-center">게시글을 불러올 수 없습니다.</div>
-          ) : (
-            (() => {
-              const list = (kecoFilter === '전체' ? kecoItems : kecoItems.filter(i => i.type === kecoFilter))
-              const displayed = newsExpanded ? list.slice(0, 10) : list.slice(0, 2)
-              return (
-                <>
-                  <div className="space-y-0.5">
-                    {displayed.map((item, idx) => (
-                      <a key={idx} href={item.url} target="_blank" rel="noreferrer"
-                        className="flex items-start gap-2 p-1.5 rounded-lg hover:bg-gray-50 group">
-                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0 mt-0.5 ${
-                          item.type === '공지사항' ? 'bg-blue-100 text-blue-700' :
-                          item.type === '언론보도' ? 'bg-green-100 text-green-700' :
-                          item.type === '보도자료' ? 'bg-teal-100 text-teal-700' :
-                          'bg-amber-100 text-amber-700'
-                        }`}>{item.type}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs text-gray-700 group-hover:text-green-600 line-clamp-1">{item.title}</div>
-                          <div className="text-xs text-gray-400">{item.date}</div>
-                        </div>
-                      </a>
-                    ))}
-                  </div>
-                  {list.length > 2 && (
-                    <button onClick={()=>setNewsExpanded(v=>!v)}
-                      className="w-full mt-2 text-xs text-gray-500 hover:text-green-600 py-1 border-t border-gray-100">
-                      {newsExpanded ? '▲ 접기' : `▼ ${list.length-2}개 더보기`}
-                    </button>
-                  )}
-                </>
-              )
-            })()
-          )}
-        </div>
-      </div>
-
-      {/* 하단 3열 */}
-      <div className="grid grid-cols-3 gap-4">
-        {/* 바로가기 */}
-        <div className="card">
-          <div className="text-sm font-medium text-gray-700 mb-3">🚀 바로가기</div>
+          {/* 통계 슬림 카드 (캘린더 아래) */}
           <div className="grid grid-cols-4 gap-2">
-            {SHORTCUTS.map(s=>(
-              <button key={s.href} onClick={()=>router.push(s.href)}
-                className="flex flex-col items-center gap-1 p-2 bg-gray-50 rounded-xl hover:bg-purple-50 transition-colors group">
-                <span style={{fontSize:18}}>{s.icon}</span>
-                <span className="text-xs text-gray-500 group-hover:text-purple-600">{s.label}</span>
-              </button>
+            {[
+              {label:'출근', val:leaveNotes.includes(today?.note) ? today.note : (today?.check_in?.slice(0,5)||'--:--'), c:'text-gray-800'},
+              {label:'이번달 근태', val:Math.round(stats.monthReg*10)/10+'h', c:'text-purple-600'},
+              {label:'잔여 연차', val:stats.remainLeave+'H', c:'text-teal-600'},
+              {label:profile?.role==='director'?'미결 결재':'대기 결재', val:stats.pendingApprovals+'건', c:stats.pendingApprovals>0?'text-amber-600':'text-gray-400'},
+            ].map(m=>(
+              <div key={m.label} className="card p-2.5 flex items-center justify-between">
+                <div className="text-xs text-gray-500">{m.label}</div>
+                <div className={`text-sm font-bold ${m.c}`}>{m.val}</div>
+              </div>
             ))}
           </div>
-        </div>
 
-        {/* 결재대기 */}
-        <div className="space-y-3">
+          {/* 결재대기 (관리자만, 있을 때만) */}
           {profile?.role==='director' && pendingApprovals.length>0 && (
-            <div className="card">
+            <div className="card p-3">
               <div className="flex justify-between items-center mb-2">
-                <div className="text-sm font-medium text-gray-700">✅ 결재 대기</div>
+                <div className="text-sm font-medium text-gray-700">✅ 결재 대기 ({pendingApprovals.length}건)</div>
                 <button onClick={()=>router.push('/dashboard/approval')} className="text-xs text-purple-600">결재함 →</button>
               </div>
-              {pendingApprovals.map((a:any)=>(
-                <div key={a.id} className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0">
-                  <div className="flex items-center gap-2">
+              <div className="flex flex-wrap gap-2">
+                {pendingApprovals.map((a:any)=>(
+                  <div key={a.id} className="flex items-center gap-1.5 px-2 py-1 bg-amber-50 rounded-lg">
                     <Avatar u={a.requester} size={5} />
-                    <div>
-                      <div className="text-xs font-medium text-gray-800">{(a.requester as any)?.name}</div>
-                      <div className="text-xs text-gray-400">{a.type}</div>
-                    </div>
+                    <span className="text-xs font-medium text-gray-800">{(a.requester as any)?.name}</span>
+                    <span className="text-xs text-gray-500">{a.type}</span>
                   </div>
-                  <span className="text-xs bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">대기</span>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
         </div>
+        {/* ─── 좌측 메인 영역 끝 ─── */}
 
-        {/* 팀원현황 + 나의결재 */}
-        <div className="space-y-3">
-          {profile?.role==='director' && (
-            <div className="card">
-              <div className="flex justify-between items-center mb-2">
-                <div className="text-sm font-medium text-gray-700">👥 팀원 현황</div>
-                <button onClick={()=>router.push('/dashboard/attendance')} className="text-xs text-purple-600">전체 →</button>
-              </div>
-              {teamStatus.map((u:any)=>(
-                <div key={u.id} className="flex items-center gap-2 py-1.5 border-b border-gray-50 last:border-0">
-                  <div className={`w-2 h-2 rounded-full flex-shrink-0
-                    ${u.status==='working'?'bg-green-400':u.status==='done'?'bg-purple-400':'bg-gray-300'}`} />
-                  <span className="text-xs font-medium text-gray-800 flex-1">{u.name}</span>
-                  <span className="text-xs text-gray-400">{u.dept}</span>
-                  <span className={`text-xs px-1.5 py-0.5 rounded-full flex-shrink-0
-                    ${u.status==='working'?'bg-green-50 text-green-700':u.status==='done'?'bg-purple-50 text-purple-700':'bg-gray-100 text-gray-500'}`}>
-                    {u.checkIn?u.checkIn.slice(0,5):''} {u.status==='working'?'근무중':u.status==='done'?'퇴근':'미출근'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="card">
-            <div className="flex justify-between items-center mb-2">
-              <div className="text-sm font-medium text-gray-700">📝 나의 결재</div>
-              <button onClick={()=>router.push('/dashboard/leave')} className="text-xs text-purple-600">신청 →</button>
-            </div>
-            <div className="space-y-1.5">
-              <button onClick={()=>router.push('/dashboard/leave')}
-                className="w-full text-left p-2 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors">
-                <div className="text-xs font-medium text-purple-700">+ 휴가·출장 신청</div>
-                <div className="text-xs text-purple-400 mt-0.5">연차 · 반차 · 출장 · 외근</div>
+        {/* ─── 우측 사이드바: 바로가기 세로 ─── */}
+        <div className="card p-2 w-[88px] h-fit sticky top-4">
+          <div className="text-[10px] font-medium text-gray-500 mb-1.5 text-center">🚀 바로가기</div>
+          <div className="space-y-1">
+            {SHORTCUTS.map(s=>(
+              <button key={s.href} onClick={()=>router.push(s.href)}
+                className="w-full flex flex-col items-center gap-0.5 p-2 bg-gray-50 rounded-lg hover:bg-purple-50 transition-colors group">
+                <span style={{fontSize:18}}>{s.icon}</span>
+                <span className="text-[10px] text-gray-500 group-hover:text-purple-600 text-center leading-tight">{s.label}</span>
               </button>
-              <button onClick={()=>router.push('/dashboard/approval')}
-                className="w-full text-left p-2 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
-                <div className="text-xs font-medium text-gray-700">결재함 확인</div>
-                <div className="text-xs text-gray-400 mt-0.5">보낸 결재 · 받은 결재</div>
-              </button>
-            </div>
+            ))}
           </div>
         </div>
       </div>
+      {/* 메인 컨테이너 끝 */}
 
       {/* 어제 퇴근 미기록 알림 모달 - 강제 (닫을 수 없음) */}
       {unclockedSession && (
