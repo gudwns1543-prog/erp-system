@@ -9,6 +9,7 @@ type Task = {
   assignees: string[] | null // uuid 배열
   creator_id: string | null
   due_date: string | null
+  due_time: string | null // HH:MM:SS
   status: 'todo' | 'in_progress' | 'done' | 'blocked'
   priority: 'high' | 'normal' | 'low'
   progress: number
@@ -66,7 +67,7 @@ export default function TasksPage() {
     const { data: p } = await supabase.from('profiles').select('id,name,role,dept').eq('id', session.user.id).single()
     setProfile(p)
     const { data: emps } = await supabase.from('profiles')
-      .select('id,name,color,tc,dept,grade').eq('status','active').order('name')
+      .select('id,name,color,tc,dept,grade,avatar_url').eq('status','active').order('name')
     setEmployees(emps || [])
     const { data } = await supabase.from('tasks')
       .select('*, creator:creator_id(id,name)')
@@ -120,6 +121,16 @@ export default function TasksPage() {
     if (!profile) return false
     if (profile.role === 'director') return true
     return task.creator_id === profile.id
+  }
+
+  // 모달 열기 전 최신 데이터로 fetch (다른 사람이 변경한 내용 반영)
+  async function openEditing(task: Task) {
+    const supabase = createClient()
+    const { data: fresh } = await supabase.from('tasks')
+      .select('*, creator:creator_id(id,name)')
+      .eq('id', task.id)
+      .maybeSingle()
+    setEditing(fresh || task)
   }
 
   async function deleteTask(id: string) {
@@ -222,7 +233,7 @@ export default function TasksPage() {
                 )}
                 {grouped[st].map(t => (
                   <KanbanCard key={t.id} task={t} empMap={empMap}
-                    onClick={()=>setEditing(t)} dueDateStatus={dueDateStatus} />
+                    onClick={()=>openEditing(t)} dueDateStatus={dueDateStatus} />
                 ))}
               </div>
             </div>
@@ -251,7 +262,7 @@ export default function TasksPage() {
                 const dueStat = dueDateStatus(t.due_date)
                 const asgs = (t.assignees || []).map(id => empMap[id]).filter(Boolean)
                 return (
-                  <tr key={t.id} className="border-b border-gray-50 hover:bg-purple-50/30 cursor-pointer" onClick={()=>setEditing(t)}>
+                  <tr key={t.id} className="border-b border-gray-50 hover:bg-purple-50/30 cursor-pointer" onClick={()=>openEditing(t)}>
                     <td className="px-3 py-2.5 text-center">
                       <span title={t.visibility === 'private' ? '개인 업무' : '공유 업무'}>
                         {t.visibility === 'private' ? '🔒' : '👥'}
@@ -287,7 +298,7 @@ export default function TasksPage() {
                           dueStat === 'overdue' ? 'text-red-500 font-bold' :
                           dueStat === 'today' ? 'text-orange-500 font-bold' :
                           dueStat === 'soon' ? 'text-amber-600 font-medium' : 'text-gray-600'
-                        }`}>{t.due_date}{dueStat==='overdue'?' ⚠️':dueStat==='today'?' 🔥':''}</span>
+                        }`}>{t.due_date}{t.due_time?` ${t.due_time.slice(0,5)}`:''}{dueStat==='overdue'?' ⚠️':dueStat==='today'?' 🔥':''}</span>
                       ) : <span className="text-xs text-gray-300">-</span>}
                     </td>
                     <td className="px-3 py-2.5 text-center">
@@ -367,7 +378,7 @@ function KanbanCard({ task, empMap, onClick, dueDateStatus }: {
             dueStat === 'overdue' ? 'text-red-500 font-bold' :
             dueStat === 'today' ? 'text-orange-500 font-bold' :
             dueStat === 'soon' ? 'text-amber-600' : 'text-gray-500'
-          }`}>{task.due_date.slice(5)}{dueStat==='overdue'?' ⚠️':dueStat==='today'?' 🔥':''}</span>
+          }`}>{task.due_date.slice(5)}{task.due_time?` ${task.due_time.slice(0,5)}`:''}{dueStat==='overdue'?' ⚠️':dueStat==='today'?' 🔥':''}</span>
         )}
       </div>
       {(() => {
@@ -400,6 +411,7 @@ function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved
     description: task?.description || '',
     assignees: (task?.assignees || [currentUserId]).filter(Boolean),
     due_date: task?.due_date || '',
+    due_time: (task as any)?.due_time?.slice(0,5) || '', // HH:MM
     status: task?.status || 'todo',
     priority: task?.priority || 'normal',
     visibility: task?.visibility || 'shared', // 기본 = 공유
@@ -458,32 +470,46 @@ function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved
     for (const aid of form.assignees) {
       cleanedProgress[aid] = assigneeProgress[aid] || 0
     }
+    let error: any = null
     if (task) {
-      await supabase.from('tasks').update({
+      const result = await supabase.from('tasks').update({
         title: form.title,
         description: form.description || null,
         assignees: form.assignees,
         due_date: form.due_date || null,
+        due_time: form.due_time || null,
         status: form.status,
         priority: form.priority,
         progress: avgProg, // 평균 진척률 자동 계산
         assignee_progress: cleanedProgress,
         visibility: form.visibility,
         updated_at: new Date().toISOString(),
-      }).eq('id', task.id)
+      }).eq('id', task.id).select()
+      error = result.error
+      // 0행이 영향받았다 = RLS 실패 (조용히)
+      if (!error && (!result.data || result.data.length === 0)) {
+        error = { message: '저장 실패: 권한이 없거나 데이터를 찾을 수 없습니다. (RLS 정책 확인 필요)' }
+      }
     } else {
-      await supabase.from('tasks').insert({
+      const result = await supabase.from('tasks').insert({
         title: form.title,
         description: form.description || null,
         assignees: form.assignees,
         creator_id: currentUserId,
         due_date: form.due_date || null,
+        due_time: form.due_time || null,
         status: form.status,
         priority: form.priority,
         progress: avgProg,
         assignee_progress: cleanedProgress,
         visibility: form.visibility,
-      })
+      }).select()
+      error = result.error
+    }
+    if (error) {
+      alert('저장 실패:\n' + error.message)
+      console.error('Task save error:', error)
+      return
     }
     onSaved()
   }
@@ -575,8 +601,21 @@ function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">마감일</label>
-              <input type="date" className="input"
-                value={form.due_date} onChange={e=>setForm(f=>({...f,due_date:e.target.value}))} />
+              <div className="flex gap-1">
+                <input type="date" className="input flex-1"
+                  value={form.due_date} onChange={e=>setForm(f=>({...f,due_date:e.target.value}))} />
+                <input type="time" className="input w-24"
+                  value={form.due_time}
+                  placeholder="--:--"
+                  disabled={!form.due_date}
+                  title={form.due_date ? '마감 시간 (선택)' : '먼저 날짜를 지정하세요'}
+                  onChange={e=>setForm(f=>({...f,due_time:e.target.value}))} />
+              </div>
+              {form.due_date && (
+                <div className="text-[10px] text-gray-400 mt-0.5">
+                  {form.due_time ? `📅 ${form.due_date} ${form.due_time}까지` : `📅 ${form.due_date} (시간 미지정)`}
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">우선순위</label>
@@ -617,31 +656,43 @@ function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved
                   const myProg = assigneeProgress[aid] || 0
                   const isMe = aid === currentUserId
                   return (
-                    <div key={aid} className="flex items-center gap-2">
-                      <span className="text-xs px-2 py-0.5 rounded font-medium w-20 flex-shrink-0 text-center"
+                    <div key={aid} className={`flex items-center gap-2 ${isMe ? 'bg-purple-100/50 rounded-md py-1 px-1 -mx-1' : ''}`}>
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium w-20 flex-shrink-0 text-center ${
+                        isMe ? 'ring-2 ring-purple-500 ring-offset-1' : ''
+                      }`}
                         style={{backgroundColor: emp.color || '#E6F1FB', color: emp.tc || '#185FA5'}}>
-                        {emp.name}{isMe ? ' 👈' : ''}
+                        {emp.name}{isMe ? ' (나)' : ''}
                       </span>
                       {/* 진척률 바 */}
-                      <div className="flex-1 relative h-5 bg-white rounded-full overflow-hidden border border-gray-200">
-                        <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-purple-400 to-purple-600 transition-all"
-                          style={{width:`${myProg}%`}} />
-                        {/* 말 (이모지) */}
+                      <div className="flex-1 relative h-6 bg-white rounded-full overflow-hidden border border-gray-200">
+                        <div className={`absolute inset-y-0 left-0 transition-all ${
+                          isMe ? 'bg-gradient-to-r from-purple-500 to-purple-700' : 'bg-gradient-to-r from-purple-300 to-purple-500'
+                        }`} style={{width:`${myProg}%`}} />
+                        {/* 말 - 직원 사진 또는 이름 색박스 */}
                         <div className="absolute inset-y-0 flex items-center transition-all"
                           style={{left: `calc(${myProg}% - 12px)`}}>
-                          <span className="text-base" style={{filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.2))'}}>
-                            {isMe ? '🏃' : '🚶'}
-                          </span>
+                          {emp.avatar_url ? (
+                            <div className={`w-6 h-6 rounded-full overflow-hidden border-2 ${isMe ? 'border-purple-700' : 'border-white'} shadow-md`}>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={emp.avatar_url} alt={emp.name} className="w-full h-full object-cover" />
+                            </div>
+                          ) : (
+                            // 사진 없으면 이름 첫 글자 원
+                            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border-2 ${isMe ? 'border-purple-700' : 'border-white'} shadow-md`}
+                              style={{backgroundColor: emp.color || '#E6F1FB', color: emp.tc || '#185FA5'}}>
+                              {emp.name?.slice(-2) || '?'}
+                            </div>
+                          )}
                         </div>
                       </div>
-                      <span className="text-xs font-bold text-gray-700 w-10 text-right">{myProg}%</span>
+                      <span className={`text-xs font-bold w-10 text-right ${isMe ? 'text-purple-700' : 'text-gray-700'}`}>{myProg}%</span>
                       {/* 본인 것만 조정 버튼 */}
                       {isMe ? (
                         <div className="flex gap-0.5">
                           <button onClick={()=>adjustMyProgress(-10)}
-                            className="px-1.5 py-0.5 text-xs bg-white border border-gray-200 rounded hover:bg-gray-50">⬅</button>
+                            className="px-1.5 py-0.5 text-xs bg-white border border-purple-300 text-purple-700 rounded hover:bg-purple-50">⬅</button>
                           <button onClick={()=>adjustMyProgress(10)}
-                            className="px-1.5 py-0.5 text-xs bg-white border border-gray-200 rounded hover:bg-gray-50">➡</button>
+                            className="px-1.5 py-0.5 text-xs bg-white border border-purple-300 text-purple-700 rounded hover:bg-purple-50">➡</button>
                         </div>
                       ) : (
                         <span className="text-xs text-gray-300 w-12 text-center">읽기만</span>

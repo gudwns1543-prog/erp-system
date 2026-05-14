@@ -378,7 +378,7 @@ export default function CalendarPage() {
                           isPending = matchNew[1] === '신청중'
                           typeName = matchNew[2]
                           personName = matchNew[3]
-                        } else if (matchOld && ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가'].includes(matchOld[1])) {
+                        } else if (matchOld && ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가'].includes(matchOld[1])) {
                           // 옛날 형식: "[연차] 박형준"
                           isApproval = true
                           isPending = false // 옛날 형식은 events에 들어왔으니 승인된 것
@@ -423,21 +423,24 @@ export default function CalendarPage() {
 
       {/* 일정 등록/수정 모달 */}
       {showForm && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
-            <div className="p-5 border-b border-gray-100">
-              <div className="text-sm font-semibold text-gray-800">{editMode?'일정 수정':'일정 등록'}</div>
-              {/* 일정 유형 선택 */}
-              <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-                <button type="button"
-                  onClick={()=>setForm(f=>({...f, calendar_type:'personal'}))}
-                  className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-all ${
-                    form.calendar_type==='personal'
-                      ? 'bg-white text-purple-700 shadow-sm'
-                      : 'text-gray-400 hover:text-gray-600'
-                  }`}>
-                  👤 개인 일정
-                </button>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={()=>{ setShowForm(false); setEditMode(false); setEditingEventId(null); resetForm() }}>
+          <div className="bg-white rounded-xl w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto"
+            onClick={e=>e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100 flex items-start justify-between">
+              <div className="flex-1">
+                <div className="text-sm font-semibold text-gray-800 mb-2">{editMode?'일정 수정':'일정 등록'}</div>
+                {/* 일정 유형 선택 */}
+                <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+                  <button type="button"
+                    onClick={()=>setForm(f=>({...f, calendar_type:'personal'}))}
+                    className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-all ${
+                      form.calendar_type==='personal'
+                        ? 'bg-white text-purple-700 shadow-sm'
+                        : 'text-gray-400 hover:text-gray-600'
+                    }`}>
+                    👤 개인 일정
+                  </button>
                 <button type="button"
                   onClick={()=>setForm(f=>({...f, calendar_type:'company'}))}
                   className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-all ${
@@ -448,6 +451,9 @@ export default function CalendarPage() {
                   🏢 전사 공유
                 </button>
               </div>
+              </div>
+              <button onClick={()=>{ setShowForm(false); setEditMode(false); setEditingEventId(null); resetForm() }}
+                className="text-gray-300 hover:text-gray-600 text-2xl leading-none ml-3 flex-shrink-0">✕</button>
             </div>
             <div className="p-5 space-y-3">
               <div>
@@ -569,8 +575,9 @@ export default function CalendarPage() {
 
       {/* 일정 상세 모달 */}
       {showDetail && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-md shadow-xl">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={()=>setShowDetail(null)}>
+          <div className="bg-white rounded-xl w-full max-w-md shadow-xl" onClick={e=>e.stopPropagation()}>
             <div className="p-5 border-b border-gray-100 flex items-start gap-3">
               <div className="w-3 h-3 rounded-full mt-1 flex-shrink-0" style={{background:showDetail.color||'#534AB7'}}></div>
               <div className="flex-1">
@@ -589,6 +596,8 @@ export default function CalendarPage() {
                 )}
                 {showDetail.location && <div className="text-xs text-gray-400 mt-0.5">📍 {showDetail.location}</div>}
               </div>
+              <button onClick={()=>setShowDetail(null)}
+                className="text-gray-300 hover:text-gray-600 text-2xl leading-none flex-shrink-0">✕</button>
             </div>
             <div className="p-5 space-y-3">
               {showDetail.description && (

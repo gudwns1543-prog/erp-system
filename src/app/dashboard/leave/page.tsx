@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { isHoliday, classifyWork, minutesToHours } from '@/lib/attendance'
 
-const TYPES = ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가']
+const TYPES = ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가']
 
 // 공휴일 이름 (캘린더 셀 표시용) - calendar 페이지와 동일
 const HOLIDAY_NAMES_LEAVE: Record<string,string> = {
@@ -20,6 +20,7 @@ const TYPE_TIMES: Record<string, {startTime:string, endTime:string}> = {
   '반차(오후)': { startTime:'14:00', endTime:'18:00' },
   '반반차':     { startTime:'09:00', endTime:'11:00' },
   '병가':       { startTime:'09:00', endTime:'18:00' },
+  '공가':       { startTime:'09:00', endTime:'18:00' },
   '출장':       { startTime:'09:00', endTime:'18:00' },
   '외근':       { startTime:'09:00', endTime:'18:00' },
   '특별휴가':   { startTime:'09:00', endTime:'18:00' },
@@ -734,7 +735,7 @@ export default function LeavePage() {
                               isPending = matchNew[1] === '신청중'
                               typeName = matchNew[2]
                               personName = matchNew[3]
-                            } else if (matchOld && ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가'].includes(matchOld[1])) {
+                            } else if (matchOld && ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가'].includes(matchOld[1])) {
                               isPending = false
                               typeName = matchOld[1]
                               personName = matchOld[2]

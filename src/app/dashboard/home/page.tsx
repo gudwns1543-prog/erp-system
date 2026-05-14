@@ -12,7 +12,7 @@ function todayStr() {
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
 }
 
-const leaveNotes = ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가']
+const leaveNotes = ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가']
 
 // UTC timestamp → KST 날짜 문자열 (YYYY-MM-DD)
 function toKSTDate(utcStr: string): string {
@@ -912,7 +912,7 @@ export default function HomePage() {
                     isPending = matchNew[1] === '신청중'
                     typeName = matchNew[2]
                     personName = matchNew[3]
-                  } else if (matchOld && ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가'].includes(matchOld[1])) {
+                  } else if (matchOld && ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가'].includes(matchOld[1])) {
                     isApproval = true
                     isPending = false
                     typeName = matchOld[1]

@@ -226,34 +226,42 @@ export default function ApprovalPage() {
     setTimeout(()=>setAlert(''),3000)
   }
 
-  // 결재 번복 (승인 취소 → pending으로 되돌리기)
+  // 결재 철회 (승인/반려 → pending으로 되돌리기)
+  // 양방향 가능: 결재자가 처리한 것을 다시 대기로 + 신청자가 본인 신청 취소도 가능
   async function handleRevoke(id: string) {
-    if (!confirm('승인을 취소하고 대기 상태로 되돌리시겠습니까?\n\n관련 근태기록과 캘린더 일정도 함께 삭제됩니다.')) return
     const supabase = createClient()
-    // 해당 결재 정보 조회
+    // 해당 결재 정보 먼저 조회 (현재 상태 확인용)
     const { data: approval } = await supabase.from('approvals')
       .select('*, requester:requester_id(name)').eq('id', id).single()
     if (!approval) return
+
+    const statusKr = approval.status==='approved' ? '승인' : approval.status==='rejected' ? '반려' : '대기'
+    const msg = `이 결재 건을 [${statusKr}] 상태에서 [대기] 상태로 철회하시겠습니까?` +
+      (approval.status==='approved' ? '\n\n관련 근태기록과 캘린더 일정도 함께 삭제됩니다.' : '')
+    if (!confirm(msg)) return
+
     // 1. 상태를 pending으로 되돌리기
     await supabase.from('approvals').update({status:'pending', updated_at: new Date().toISOString()}).eq('id', id)
-    // 2. 관련 근태기록 삭제
-    const dates = getDateRange(approval.start_date, approval.end_date || approval.start_date)
-    for (const dateStr of dates) {
-      await supabase.from('attendance')
+    // 2. 승인 건이었던 경우만 관련 근태기록/캘린더 삭제 (반려 건은 어차피 처리된 게 없음)
+    if (approval.status === 'approved') {
+      const dates = getDateRange(approval.start_date, approval.end_date || approval.start_date)
+      for (const dateStr of dates) {
+        await supabase.from('attendance')
+          .delete()
+          .eq('user_id', approval.requester_id)
+          .eq('work_date', dateStr)
+          .eq('note', approval.type)
+      }
+      // 관련 캘린더 이벤트 삭제
+      await supabase.from('events')
         .delete()
-        .eq('user_id', approval.requester_id)
-        .eq('work_date', dateStr)
-        .eq('note', approval.type)
+        .eq('creator_id', approval.requester_id)
+        .eq('is_locked', true)
+        .like('title', `[${approval.type}]%`)
+        .gte('start_at', `${approval.start_date}T00:00:00`)
+        .lte('start_at', `${(approval.end_date||approval.start_date)}T23:59:59`)
     }
-    // 3. 관련 캘린더 이벤트 삭제
-    await supabase.from('events')
-      .delete()
-      .eq('creator_id', approval.requester_id)
-      .eq('is_locked', true)
-      .like('title', `[${approval.type}]%`)
-      .gte('start_at', `${approval.start_date}T00:00:00`)
-      .lte('start_at', `${(approval.end_date||approval.start_date)}T23:59:59`)
-    setAlert('승인이 취소되었습니다. 결재 대기 상태로 변경되었습니다.')
+    setAlert(`${statusKr} 처리가 철회되었습니다. 결재 대기 상태로 변경되었습니다.`)
     setShowDetail(null); load()
     setTimeout(()=>setAlert(''),3000)
   }
@@ -293,8 +301,8 @@ export default function ApprovalPage() {
                         <button onClick={()=>handle(r.id,'rejected')} className="btn-danger text-xs px-2 py-1">반려</button>
                       </>
                     )}
-                    {profile?.role==='director' && r.status==='approved' && (
-                      <button onClick={()=>handleRevoke(r.id)} className="btn-secondary text-xs px-2 py-1 text-orange-600 border-orange-200 hover:bg-orange-50">번복</button>
+                    {profile?.role==='director' && (r.status==='approved' || r.status==='rejected') && (
+                      <button onClick={()=>handleRevoke(r.id)} className="btn-secondary text-xs px-2 py-1 text-orange-600 border-orange-200 hover:bg-orange-50">철회</button>
                     )}
                   </div>
                 </td>
@@ -370,9 +378,11 @@ export default function ApprovalPage() {
                     className="btn-secondary text-sm text-green-700 border-green-200 hover:bg-green-50">승인</button>
                 </>
               )}
-              {profile?.role==='director' && showDetail.status==='approved' && (
+              {profile?.role==='director' && (showDetail.status==='approved' || showDetail.status==='rejected') && (
                 <button onClick={()=>handleRevoke(showDetail.id)}
-                  className="btn-secondary text-sm text-orange-600 border-orange-200 hover:bg-orange-50">승인 번복</button>
+                  className="btn-secondary text-sm text-orange-600 border-orange-200 hover:bg-orange-50">
+                  {showDetail.status==='approved' ? '승인 철회' : '반려 철회'}
+                </button>
               )}
             </div>
           </div>
