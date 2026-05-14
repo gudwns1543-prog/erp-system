@@ -3,7 +3,19 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { isHoliday, classifyWork, minutesToHours } from '@/lib/attendance'
 
-const TYPES = ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가']
+// 한국어 조사 자동 (은/는, 이/가, 을/를)
+function josa(word: string, eunNun: '은/는' | '이/가' | '을/를' = '은/는'): string {
+  if (!word) return ''
+  const last = word.charCodeAt(word.length - 1)
+  // 한글 음절 범위 확인
+  if (last < 0xAC00 || last > 0xD7A3) return eunNun === '은/는' ? '는' : eunNun === '이/가' ? '가' : '를'
+  const hasFinal = (last - 0xAC00) % 28 !== 0 // 종성(받침) 유무
+  if (eunNun === '은/는') return hasFinal ? '은' : '는'
+  if (eunNun === '이/가') return hasFinal ? '이' : '가'
+  return hasFinal ? '을' : '를' // 을/를
+}
+
+const TYPES = ['연차','반차(오전)','반차(오후)','반반차','병가','공가','외근','특별휴가']
 
 // 공휴일 이름 (캘린더 셀 표시용) - calendar 페이지와 동일
 const HOLIDAY_NAMES_LEAVE: Record<string,string> = {
@@ -21,7 +33,6 @@ const TYPE_TIMES: Record<string, {startTime:string, endTime:string}> = {
   '반반차':     { startTime:'09:00', endTime:'11:00' },
   '병가':       { startTime:'09:00', endTime:'18:00' },
   '공가':       { startTime:'09:00', endTime:'18:00' },
-  '출장':       { startTime:'09:00', endTime:'18:00' },
   '외근':       { startTime:'09:00', endTime:'18:00' },
   '특별휴가':   { startTime:'09:00', endTime:'18:00' },
 }
@@ -166,7 +177,7 @@ export default function LeavePage() {
     const { data: allApprovals } = await supabase.from('approvals')
       .select('id,type,start_date,end_date,requester_id,status,requester:requester_id(name)')
       .in('status',['pending','approved'])
-      .in('type',['연차','반차(오전)','반차(오후)','반반차','출장','병가','외근','특별휴가'])
+      .in('type',['연차','반차(오전)','반차(오후)','반반차','병가','공가','외근','특별휴가'])
     const typeColors: Record<string,string> = {
       '연차':'#EF4444','반차(오전)':'#F97316','반차(오후)':'#F97316',
       '반반차':'#F59E0B','출장':'#3B82F6','병가':'#8B5CF6','외근':'#06B6D4','특별휴가':'#EC4899',
@@ -302,28 +313,40 @@ export default function LeavePage() {
   }
 
   async function handleCancel(id: string, isApproved = false) {
-    const msg = isApproved
-      ? '승인된 결재를 취소하시겠습니까?\n\n관련 근태기록과 캘린더 일정도 함께 삭제됩니다.'
-      : '결재 신청을 취소하시겠습니까?'
-    if (!confirm(msg)) return
     const supabase = createClient()
     if (isApproved) {
-      // 승인 취소 시 근태기록 + 캘린더 이벤트 삭제
+      // 승인된 결재의 철회 요청 (결재자 승인 필요)
       const { data: approval } = await supabase.from('approvals')
-        .select('*').eq('id', id).single()
-      if (approval) {
-        const dates = getDateRange(approval.start_date, approval.end_date || approval.start_date)
-        for (const dateStr of dates) {
-          await supabase.from('attendance').delete()
-            .eq('user_id', approval.requester_id).eq('work_date', dateStr).eq('note', approval.type)
-        }
-        await supabase.from('events').delete()
-          .eq('creator_id', approval.requester_id).eq('is_locked', true)
-          .like('title', `[${approval.type}]%`)
-          .gte('start_at', `${approval.start_date}T00:00:00`)
-          .lte('start_at', `${(approval.end_date||approval.start_date)}T23:59:59`)
-      }
+        .select('*, approver:approver_id(name)').eq('id', id).single()
+      if (!approval) return
+      const reason = window.prompt(
+        `${approval.start_date}${approval.end_date && approval.end_date !== approval.start_date ? ' ~ ' + approval.end_date : ''} ${approval.type} 철회 사유를 입력해주세요.\n` +
+        `(예: 업무 사정으로 정상 출근 예정)`,
+        ''
+      )
+      if (reason === null) return // 취소
+      if (!reason.trim()) { window.alert('철회 사유를 입력해주세요.'); return }
+
+      // 철회 요청 결재 생성 (type=철회요청)
+      const { error } = await supabase.from('approvals').insert({
+        type: '철회요청',
+        requester_id: approval.requester_id,
+        approver_id: approval.approver_id, // 원본과 같은 결재자
+        start_date: approval.start_date,
+        end_date: approval.end_date || approval.start_date,
+        start_time: approval.start_time,
+        end_time: approval.end_time,
+        status: 'pending',
+        reason: `[원본: ${approval.type}] ${reason}\n원본결재ID: ${approval.id}`,
+      })
+      if (error) { window.alert('철회 요청 실패: ' + error.message); return }
+      setAlert(`철회 요청이 ${(approval.approver as any)?.name || '결재자'}님께 발송되었습니다.`)
+      setTimeout(()=>setAlert(''), 3000)
+      load()
+      return
     }
+    // pending 상태는 즉시 삭제 (기존 동작)
+    if (!confirm('결재 신청을 취소하시겠습니까?')) return
     await supabase.from('approvals').delete().eq('id', id)
     setAlert('취소되었습니다.')
     setTimeout(()=>setAlert(''), 2000)
@@ -378,7 +401,7 @@ export default function LeavePage() {
                       <button onClick={()=>handleCancel(r.id)} className="btn-danger text-xs px-2 py-1">취소</button>
                     )}
                     {r.status==='approved' && r.requester_id===profile?.id && (
-                      <button onClick={()=>handleCancel(r.id, true)} className="btn-secondary text-xs px-2 py-1 text-orange-600 border-orange-200 hover:bg-orange-50">취소 요청</button>
+                      <button onClick={()=>handleCancel(r.id, true)} className="btn-secondary text-xs px-2 py-1 text-orange-600 border-orange-200 hover:bg-orange-50">철회 신청</button>
                     )}
                   </div>
                 </td>
@@ -391,8 +414,8 @@ export default function LeavePage() {
   )
 
   const approverName = approvers.find(a=>a.id===form.approverId)?.name || '-'
-  const isMultiDay = ['연차','병가','출장','특별휴가'].includes(form.type)
-  const needsTime = ['출장','외근','반반차'].includes(form.type)
+  const isMultiDay = ['연차','병가','공가','특별휴가'].includes(form.type)
+  const needsTime = ['외근','반반차'].includes(form.type)
   const leaveTypeSelected = ['연차','반차(오전)','반차(오후)','반반차'].includes(form.type)
   const reqDays = calcRequestHours(form.type, form.start, form.end)
   const afterLeave = remainLeave - reqDays
@@ -406,7 +429,7 @@ export default function LeavePage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <h1 className="text-lg font-semibold text-gray-800 mb-5">휴가·출장 신청</h1>
+      <h1 className="text-lg font-semibold text-gray-800 mb-5">결재 신청</h1>
       {alert && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{alert}</div>}
 
       <div className="flex gap-1 border-b border-gray-200 mb-5">
@@ -447,7 +470,7 @@ export default function LeavePage() {
               )}
               {!leaveTypeSelected && (
                 <div className="text-xs text-gray-500 mt-1.5">
-                  💡 {form.type}은 연차에서 차감되지 않습니다.
+                  💡 {form.type}{josa(form.type)} 연차에서 차감되지 않습니다.
                 </div>
               )}
               {leaveError && (
@@ -458,7 +481,7 @@ export default function LeavePage() {
             </div>
 
           <div className="card py-3 px-3">
-            <div className="text-sm font-semibold text-gray-700 mb-2">📋 휴가·출장 신청</div>
+            <div className="text-sm font-semibold text-gray-700 mb-2">📋 결재 신청</div>
             <form onSubmit={handleApplyClick} className="space-y-2">
               {/* 유형 + 시작일 + 종료일 가로 배치 */}
               <div className={`grid gap-2 ${!['반차(오전)','반차(오후)','반반차'].includes(form.type) ? 'grid-cols-3' : 'grid-cols-2'}`}>
@@ -932,7 +955,7 @@ export default function LeavePage() {
               )}
               {showDetail.requester_id===profile?.id && showDetail.status==='approved' && (
                 <button onClick={()=>handleCancel(showDetail.id, true)}
-                  className="btn-secondary text-sm text-orange-600 border-orange-200 hover:bg-orange-50">승인 취소</button>
+                  className="btn-secondary text-sm text-orange-600 border-orange-200 hover:bg-orange-50">철회 신청</button>
               )}
               {profile?.role==='director' && showDetail.status==='pending' && (
                 <>
@@ -940,10 +963,6 @@ export default function LeavePage() {
                   <button onClick={()=>handleApprove(showDetail.id,'approved')}
                     className="btn-secondary text-sm text-green-700 border-green-200 hover:bg-green-50">승인</button>
                 </>
-              )}
-              {profile?.role==='director' && showDetail.status==='approved' && (
-                <button onClick={()=>handleCancel(showDetail.id, true)}
-                  className="btn-secondary text-sm text-orange-600 border-orange-200 hover:bg-orange-50">승인 번복</button>
               )}
             </div>
           </div>

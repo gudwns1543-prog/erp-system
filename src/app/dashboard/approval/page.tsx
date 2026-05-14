@@ -219,6 +219,33 @@ export default function ApprovalPage() {
             .in('note', ['수정요청중', '야간자동컷오프'])
         }
       }
+
+      // 철회요청 승인: 원본 결재의 근태/캘린더 정리 + 원본 삭제
+      if (approval && approval.type === '철회요청' && status === 'approved') {
+        // reason에서 원본결재ID 추출
+        const match = (approval.reason || '').match(/원본결재ID:\s*([a-f0-9-]+)/)
+        const origId = match?.[1]
+        if (origId) {
+          const { data: orig } = await supabase.from('approvals')
+            .select('*').eq('id', origId).single()
+          if (orig) {
+            // 1. 근태기록 삭제
+            const dates = getDateRange(orig.start_date, orig.end_date || orig.start_date)
+            for (const dateStr of dates) {
+              await supabase.from('attendance').delete()
+                .eq('user_id', orig.requester_id).eq('work_date', dateStr).eq('note', orig.type)
+            }
+            // 2. 캘린더 이벤트 삭제 (옛 형식)
+            await supabase.from('events').delete()
+              .eq('creator_id', orig.requester_id).eq('is_locked', true)
+              .like('title', `[${orig.type}]%`)
+              .gte('start_at', `${orig.start_date}T00:00:00`)
+              .lte('start_at', `${(orig.end_date||orig.start_date)}T23:59:59`)
+            // 3. 원본 결재 삭제
+            await supabase.from('approvals').delete().eq('id', origId)
+          }
+        }
+      }
     }
 
     setAlert(status==='approved'?'승인되었습니다.':'반려되었습니다.')

@@ -20,7 +20,7 @@ const NAV = [
     { href: '/dashboard/payroll', label: '급여 일괄계산', icon: '📊', adminOnly: true },
   ]},
   { group: '결재', items: [
-    { href: '/dashboard/leave', label: '휴가·출장 신청', icon: '📝' },
+    { href: '/dashboard/leave', label: '결재 신청', icon: '📝' },
     { href: '/dashboard/annual', label: '연차 관리', icon: '📅' },
     { href: '/dashboard/approval', label: '결재함', icon: '✅' },
   ]},
