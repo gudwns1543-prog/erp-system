@@ -50,6 +50,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [unreadNotice, setUnreadNotice] = useState(0)
   const [pendingInvite, setPendingInvite] = useState(0)
   const [pendingLeave, setPendingLeave] = useState(0)
+  const [pendingSignup, setPendingSignup] = useState(0) // 가입 승인 대기 (관리자만)
+  const [approvedCount, setApprovedCount] = useState(0) // 본인의 승인된 결재 (미확인)
+  const [unreadTasks, setUnreadTasks] = useState(0)
+  const [rejectedCount, setRejectedCount] = useState(0)
   const [showProfilePhoto, setShowProfilePhoto] = useState(false)
   const [chatToast, setChatToast] = useState<{name:string,avatar:string|null,color:string,tc:string,room:string,text:string,roomId:string}|null>(null)
   const [toastTimer, setToastTimer] = useState<any>(null)
@@ -72,16 +76,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           .from('approvals').select('*', { count: 'exact', head: true })
           .eq('approver_id', session.user.id).eq('status', 'pending')
         setPendingCount(count || 0)
-        // 가입 승인 대기
+        // 가입 승인 대기 (별도 변수)
         const { count: lc } = await supabase
           .from('signup_requests').select('*', { count: 'exact', head: true }).eq('status','pending')
-        setPendingLeave(lc || 0)
-      } else {
-        const { count: myLeave } = await supabase
-          .from('approvals').select('*', { count: 'exact', head: true })
-          .eq('requester_id', session.user.id).eq('status','pending')
-        setPendingLeave(myLeave || 0)
+        setPendingSignup(lc || 0)
       }
+      // 모든 직원: 본인이 신청한 대기 중인 결재
+      const { count: myLeave } = await supabase
+        .from('approvals').select('*', { count: 'exact', head: true })
+        .eq('requester_id', session.user.id).eq('status','pending')
+      setPendingLeave(myLeave || 0)
+      // 본인의 승인된 결재 (마지막 확인 이후)
+      const lastReadApproved = typeof window !== 'undefined'
+        ? localStorage.getItem(`approved_read_${session.user.id}`) || '2000-01-01'
+        : '2000-01-01'
+      const { count: ac } = await supabase.from('approvals')
+        .select('*',{count:'exact',head:true})
+        .eq('requester_id', session.user.id)
+        .eq('status','approved')
+        .gt('updated_at', lastReadApproved)
+      setApprovedCount(ac || 0)
       // 채팅 미읽음
       const { data: myRooms } = await supabase.from('chat_members').select('room_id').eq('user_id', session.user.id)
       const roomIds = (myRooms||[]).map((r:any)=>r.room_id)
@@ -106,6 +120,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       const { count: ic } = await supabase.from('event_attendees')
         .select('*',{count:'exact',head:true}).eq('user_id', session.user.id).eq('status','pending')
       setPendingInvite(ic||0)
+
+      // 업무 - 본인이 담당자이고 마지막 본 시점 이후 변경된 미완료 업무
+      const lastReadTasks = typeof window !== 'undefined'
+        ? localStorage.getItem(`tasks_read_${session.user.id}`) || '2000-01-01'
+        : '2000-01-01'
+      const { data: myTasksUpd } = await supabase.from('tasks')
+        .select('id, status, assignees, creator_id, updated_at')
+        .neq('status', 'done')
+        .gt('updated_at', lastReadTasks)
+      let taskUpdCount = 0
+      for (const t of (myTasksUpd || [])) {
+        const isMine = t.creator_id === session.user.id || (t.assignees || []).includes(session.user.id)
+        if (isMine) taskUpdCount++
+      }
+      setUnreadTasks(taskUpdCount)
+
+      // 반려된 본인 결재 - 마지막 확인 이후 새로 반려된 것
+      const lastReadRejected = typeof window !== 'undefined'
+        ? localStorage.getItem(`rejected_read_${session.user.id}`) || '2000-01-01'
+        : '2000-01-01'
+      const { count: rc } = await supabase.from('approvals')
+        .select('*',{count:'exact',head:true})
+        .eq('requester_id', session.user.id)
+        .eq('status','rejected')
+        .gt('updated_at', lastReadRejected)
+      setRejectedCount(rc||0)
     })
   }, [router])
 
@@ -265,18 +305,27 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             .select('*',{count:'exact',head:true})
             .eq('approver_id', session.user.id).eq('status','pending')
           setPendingCount(count||0)
-        } else {
-          const { count } = await supabase.from('approvals')
-            .select('*',{count:'exact',head:true})
-            .eq('requester_id', session.user.id).eq('status','pending')
-          setPendingLeave(count||0)
-          setPendingCount(0)
         }
+        const { count: lc } = await supabase.from('approvals')
+          .select('*',{count:'exact',head:true})
+          .eq('requester_id', session.user.id).eq('status','pending')
+        setPendingLeave(lc||0)
       })
+      // leave 페이지 진입 시 반려/승인 read 처리
+      if (pathname === '/dashboard/leave' && typeof window !== 'undefined' && profile?.id) {
+        localStorage.setItem(`rejected_read_${profile.id}`, new Date().toISOString())
+        localStorage.setItem(`approved_read_${profile.id}`, new Date().toISOString())
+        setRejectedCount(0)
+        setApprovedCount(0)
+      }
     }
-    if (pathname === '/dashboard/signup') {
-      setPendingLeave(0)
-      // 가입승인도 읽음 처리
+    // tasks 페이지 진입 시 업무 read 처리
+    if (pathname === '/dashboard/tasks' && typeof window !== 'undefined' && profile?.id) {
+      localStorage.setItem(`tasks_read_${profile.id}`, new Date().toISOString())
+      setUnreadTasks(0)
+    }
+    if (pathname === '/dashboard/signup' && profile?.role==='director') {
+      setPendingSignup(0)
     }
   }, [pathname, profile])
 
@@ -345,10 +394,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingInvite}</span>
                       )}
                     {item.href === '/dashboard/leave' && pendingLeave > 0 && (
-                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingLeave}</span>
+                        <span className="bg-amber-500 text-white text-xs px-1.5 py-0.5 rounded-full" title="대기 중인 결재">{pendingLeave}</span>
                       )}
-                    {item.href === '/dashboard/signup' && pendingLeave > 0 && profile?.role==='director' && (
-                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingLeave}</span>
+                    {item.href === '/dashboard/leave' && rejectedCount > 0 && pathname !== '/dashboard/leave' && (
+                        <span className="bg-orange-500 text-white text-xs px-1.5 py-0.5 rounded-full" title="반려된 결재">⚠️{rejectedCount}</span>
+                      )}
+                    {item.href === '/dashboard/leave' && approvedCount > 0 && pathname !== '/dashboard/leave' && (
+                        <span className="bg-green-500 text-white text-xs px-1.5 py-0.5 rounded-full" title="새로 승인된 결재">✓{approvedCount}</span>
+                      )}
+                    {item.href === '/dashboard/tasks' && unreadTasks > 0 && pathname !== '/dashboard/tasks' && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{unreadTasks}</span>
+                      )}
+                    {item.href === '/dashboard/signup' && pendingSignup > 0 && profile?.role==='director' && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingSignup}</span>
                       )}
                     </Link>
                   )

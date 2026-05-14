@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { GRADE_ORDER, isHoliday } from '@/lib/attendance'
 
@@ -66,9 +67,11 @@ function toKSTDate(utcStr: string): string {
 
 export default function CalendarPage() {
   const [profile, setProfile] = useState<any>(null)
+  const router = useRouter()
   const [allUsers, setAllUsers] = useState<any[]>([])
   const [events, setEvents] = useState<any[]>([])
   const [attendees, setAttendees] = useState<any[]>([])
+  const [tasks, setTasks] = useState<any[]>([]) // 캘린더에 스티커로 표시할 업무
   const [curYear, setCurYear] = useState(new Date().getFullYear())
   const [curMonth, setCurMonth] = useState(new Date().getMonth())
   const [selDate, setSelDate] = useState<string|null>(null)
@@ -136,7 +139,18 @@ export default function CalendarPage() {
       .select('*, event:event_id(title,start_at,end_at,creator:creator_id(name))')
       .eq('user_id', session.user.id).eq('status','pending')
     setMyInvites(inv||[])
-  }, [])
+
+    // 업무(tasks) - 현재 보는 월에 마감일 있는 것만
+    const monthStart = `${curYear}-${String(curMonth+1).padStart(2,'0')}-01`
+    const nextMonthDate = new Date(curYear, curMonth+1, 1)
+    const monthEnd = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth()+1).padStart(2,'0')}-01`
+    const { data: ts } = await supabase.from('tasks')
+      .select('id, title, due_date, due_time, status, priority, progress, visibility, assignees, creator_id, creator:creator_id(name)')
+      .not('due_date', 'is', null)
+      .gte('due_date', monthStart)
+      .lt('due_date', monthEnd)
+    setTasks(ts || [])
+  }, [curYear, curMonth])
 
   useEffect(() => { load() }, [load])
 
@@ -151,6 +165,18 @@ export default function CalendarPage() {
       if (a.isMe && !b.isMe) return -1
       if (!a.isMe && b.isMe) return 1
       return 0
+    })
+  }
+
+  // 해당 날짜에 마감인 본인 업무 (스티커 메모로 표시)
+  function getTasksForDate(dateStr: string) {
+    return tasks.filter((t:any) => {
+      if (t.due_date !== dateStr) return false
+      if (t.status === 'done') return false // 완료된 건 안 보임
+      // 본인 관련 (담당자거나 등록자)
+      const isMine = t.creator_id === profile?.id || (t.assignees || []).includes(profile?.id)
+      // 공유 업무는 모두 보임
+      return isMine || t.visibility === 'shared'
     })
   }
 
@@ -339,6 +365,13 @@ export default function CalendarPage() {
                 const day = i+1
                 const dateStr = `${curYear}-${String(curMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
                 const dayEvents = getEventsForDate(dateStr)
+                // 그 날짜에 마감인 업무들 (본인 관련만)
+                const dayTasks = tasks.filter((t:any) => {
+                  if (t.due_date !== dateStr) return false
+                  // 공유는 모두 / 개인은 본인만
+                  if (t.visibility === 'shared') return true
+                  return t.creator_id === profile?.id || (t.assignees || []).includes(profile?.id)
+                })
                 const isToday = dateStr === today
                 const dow = (firstDay + i) % 7
                 const isHol = isHoliday(dateStr)
@@ -412,6 +445,29 @@ export default function CalendarPage() {
                         )
                       })}
                       {dayEvents.length>3 && <div className="text-gray-500 font-medium pl-1" style={{fontSize:'12px'}}>+{dayEvents.length-3}개</div>}
+                      {/* 업무 스티커 - 마감일 표시 */}
+                      {dayTasks.slice(0, 2).map((t:any) => (
+                        <div key={'task-'+t.id}
+                          className="relative cursor-pointer hover:scale-105 transition-transform"
+                          onClick={(e)=>{e.stopPropagation(); router.push('/dashboard/tasks')}}
+                          title={`업무 마감: ${t.title}${t.due_time ? ' '+t.due_time.slice(0,5) : ''}`}
+                          style={{
+                            background: t.status === 'done' ? '#FEF3C7' : t.priority === 'high' ? '#FECACA' : '#FED7AA',
+                            border: '1px dashed ' + (t.status === 'done' ? '#F59E0B' : t.priority === 'high' ? '#EF4444' : '#F97316'),
+                            borderRadius: '3px',
+                            padding: '1px 4px',
+                            fontSize: '11px',
+                            lineHeight: '14px',
+                            color: t.status === 'done' ? '#92400E' : '#7C2D12',
+                            transform: `rotate(${(t.id.charCodeAt(0) % 5) - 2}deg)`, // 살짝 비스듬히 (스티커 느낌)
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                          }}>
+                          <span className="font-medium">📌 {t.title.length > 8 ? t.title.slice(0,8)+'…' : t.title}</span>
+                        </div>
+                      ))}
+                      {dayTasks.length > 2 && (
+                        <div className="text-orange-600 text-[10px] font-medium pl-1">+업무 {dayTasks.length-2}개</div>
+                      )}
                     </div>
                   </div>
                 )

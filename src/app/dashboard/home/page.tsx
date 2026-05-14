@@ -12,6 +12,17 @@ function todayStr() {
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
 }
 
+// 한국어 조사 자동 (은/는, 이/가, 을/를)
+function josa(word: string, eunNun: '은/는' | '이/가' | '을/를' = '은/는'): string {
+  if (!word) return ''
+  const last = word.charCodeAt(word.length - 1)
+  if (last < 0xAC00 || last > 0xD7A3) return eunNun === '은/는' ? '는' : eunNun === '이/가' ? '가' : '를'
+  const hasFinal = (last - 0xAC00) % 28 !== 0
+  if (eunNun === '은/는') return hasFinal ? '은' : '는'
+  if (eunNun === '이/가') return hasFinal ? '이' : '가'
+  return hasFinal ? '을' : '를'
+}
+
 const leaveNotes = ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가']
 
 // UTC timestamp → KST 날짜 문자열 (YYYY-MM-DD)
@@ -81,7 +92,12 @@ export default function HomePage() {
   const [taskCounts, setTaskCounts] = useState({ todo: 0, in_progress: 0, blocked: 0, overdue: 0 })
   // 공지사항 새글 여부 (마지막 읽은 시각 이후)
   const [hasNewNotice, setHasNewNotice] = useState(false)
+  // 통합 알림 (홈 화면 상단)
+  const [notifications, setNotifications] = useState<any[]>([])
+  const [notificationsOpen, setNotificationsOpen] = useState(true)
   const [kecoFilter, setKecoFilter] = useState('전체')
+  // 캘린더에 스티커로 표시할 업무 (마감일 있는 본인 관련 + 공유)
+  const [calendarTasks, setCalendarTasks] = useState<any[]>([])
 
   function nowStr() {
     const n = new Date()
@@ -339,11 +355,16 @@ export default function HomePage() {
 
     // 업무 카운트 (내가 담당자거나 등록자)
     const { data: myTasks } = await supabase.from('tasks')
-      .select('status, due_date, assignees, creator_id')
+      .select('id, title, status, priority, due_date, due_time, assignees, creator_id, visibility')
     const today = todayStr()
     const counts = { todo: 0, in_progress: 0, blocked: 0, overdue: 0 }
+    const calTasks: any[] = []
     for (const t of (myTasks || [])) {
       const isMine = t.creator_id === session.user.id || (t.assignees || []).includes(session.user.id)
+      // 캘린더 스티커용 - 본인 관련 + 공유 업무, 미완료 + 마감일 있음
+      if (t.due_date && t.status !== 'done' && (isMine || t.visibility === 'shared')) {
+        calTasks.push(t)
+      }
       if (!isMine) continue
       if (t.status === 'done') continue
       if (t.status === 'todo') counts.todo++
@@ -353,6 +374,118 @@ export default function HomePage() {
       if (t.due_date && t.due_date < today) counts.overdue++
     }
     setTaskCounts(counts)
+    setCalendarTasks(calTasks)
+
+    // ─── 통합 알림 수집 ───
+    const notifs: any[] = []
+    const lastNotifRead = typeof window !== 'undefined'
+      ? localStorage.getItem(`notif_read_${session.user.id}`) || '2000-01-01'
+      : '2000-01-01'
+
+    // 1) 신규 일정 초대
+    const { data: invs } = await supabase.from('event_attendees')
+      .select('id, event:event_id(id,title,start_at,creator:creator_id(name))')
+      .eq('user_id', session.user.id).eq('status','pending').limit(5)
+    for (const inv of (invs || [])) {
+      const ev: any = inv.event
+      if (!ev) continue
+      notifs.push({
+        id: 'invite-'+inv.id,
+        icon: '🆕',
+        type: '신규 일정',
+        title: `${ev.creator?.name || '누군가'}가 "${ev.title}"에 초대했습니다`,
+        sub: ev.start_at?.slice(0,10),
+        href: '/dashboard/calendar',
+        urgent: false,
+      })
+    }
+
+    // 2) 최근 변경된 본인 업무 (마지막 본 시점 이후)
+    const { data: recentTasks } = await supabase.from('tasks')
+      .select('id, title, status, due_date, assignees, creator_id, updated_at, creator:creator_id(name)')
+      .gt('updated_at', lastNotifRead)
+      .neq('status', 'done')
+      .order('updated_at', { ascending: false }).limit(10)
+    for (const t of (recentTasks || [])) {
+      const isMine = t.creator_id === session.user.id || (t.assignees || []).includes(session.user.id)
+      if (!isMine) continue
+      notifs.push({
+        id: 'task-'+t.id,
+        icon: '✔️',
+        type: '업무 변경',
+        title: `"${t.title}" - ${t.status==='todo'?'할일':t.status==='in_progress'?'진행중':'대기'}`,
+        sub: t.due_date ? `마감 ${t.due_date}` : '',
+        href: '/dashboard/tasks',
+        urgent: false,
+      })
+    }
+
+    // 3) 마감 임박 업무 (오늘~3일 이내, 미완료, 본인 거)
+    const todayDate = new Date(today + 'T00:00:00')
+    const threeDaysLater = new Date(todayDate.getTime() + 3 * 86400000)
+    const threeDaysLaterStr = threeDaysLater.toISOString().slice(0,10)
+    const { data: dueTasks } = await supabase.from('tasks')
+      .select('id, title, due_date, assignees, creator_id, status')
+      .neq('status', 'done')
+      .gte('due_date', today)
+      .lte('due_date', threeDaysLaterStr)
+      .order('due_date', { ascending: true })
+    for (const t of (dueTasks || [])) {
+      const isMine = t.creator_id === session.user.id || (t.assignees || []).includes(session.user.id)
+      if (!isMine) continue
+      const days = Math.round((new Date(t.due_date+'T00:00:00').getTime() - todayDate.getTime()) / 86400000)
+      notifs.push({
+        id: 'duetask-'+t.id,
+        icon: days === 0 ? '🔥' : '⏰',
+        type: '마감 임박',
+        title: `"${t.title}"`,
+        sub: days === 0 ? '오늘 마감' : days === 1 ? '내일 마감' : `${days}일 후 마감`,
+        href: '/dashboard/tasks',
+        urgent: days <= 1,
+      })
+    }
+
+    // 4) 결재 처리 결과 (승인/반려, 본인 결재)
+    const { data: processedApps } = await supabase.from('approvals')
+      .select('id, type, status, start_date, end_date, updated_at, approver:approver_id(name)')
+      .eq('requester_id', session.user.id)
+      .in('status', ['approved', 'rejected'])
+      .gt('updated_at', lastNotifRead)
+      .order('updated_at', { ascending: false }).limit(10)
+    for (const a of (processedApps || [])) {
+      notifs.push({
+        id: 'app-'+a.id,
+        icon: a.status === 'approved' ? '✅' : '❌',
+        type: a.status === 'approved' ? '결재 승인' : '결재 반려',
+        title: `${(a.approver as any)?.name || '결재자'}가 ${a.start_date} ${a.type}${josa(a.type, '을/를')} ${a.status==='approved'?'승인':'반려'}했습니다`,
+        sub: '',
+        href: '/dashboard/leave',
+        urgent: a.status === 'rejected',
+      })
+    }
+
+    // 5) 본인에게 온 결재 (관리자인 경우)
+    if (p?.role === 'director') {
+      const { data: incomingApps } = await supabase.from('approvals')
+        .select('id, type, start_date, requester:requester_id(name)')
+        .eq('approver_id', session.user.id).eq('status', 'pending')
+        .order('created_at', { ascending: false }).limit(5)
+      for (const a of (incomingApps || [])) {
+        notifs.push({
+          id: 'incoming-'+a.id,
+          icon: '📋',
+          type: '결재 대기',
+          title: `${(a.requester as any)?.name}의 ${a.type} 결재 대기`,
+          sub: a.start_date,
+          href: '/dashboard/approval',
+          urgent: false,
+        })
+      }
+    }
+
+    // 긴급한 것 먼저
+    notifs.sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0))
+    setNotifications(notifs)
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -654,6 +787,62 @@ export default function HomePage() {
             )}
           </div>
 
+          {/* 통합 알림 센터 */}
+          {notifications.length > 0 && (
+            <div className="card border-amber-200 bg-amber-50/40 p-3">
+              <button onClick={()=>{
+                  const next = !notificationsOpen
+                  setNotificationsOpen(next)
+                  // 펼치면 read 시점 기록 (다음 로드때 사라지도록)
+                  if (next && typeof window !== 'undefined' && profile?.id) {
+                    setTimeout(() => {
+                      localStorage.setItem(`notif_read_${profile.id}`, new Date().toISOString())
+                    }, 3000) // 3초 후 (읽었다고 간주)
+                  }
+                }}
+                className="w-full flex items-center justify-between hover:opacity-80">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">📬</span>
+                  <span className="text-sm font-semibold text-gray-800">새 소식</span>
+                  <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{notifications.length}</span>
+                  {notifications.some(n => n.urgent) && (
+                    <span className="text-xs text-red-600 font-medium">⚠️ 긴급 {notifications.filter(n=>n.urgent).length}건</span>
+                  )}
+                </div>
+                <span className="text-xs text-gray-400">{notificationsOpen ? '▲ 접기' : '▼ 펼치기'}</span>
+              </button>
+              {notificationsOpen && (
+                <div className="mt-2 pt-2 border-t border-amber-200 space-y-1 max-h-64 overflow-y-auto">
+                  {notifications.slice(0, 15).map(n => (
+                    <button key={n.id} onClick={()=>router.push(n.href)}
+                      className={`w-full flex items-start gap-2 p-1.5 rounded text-left hover:bg-white/70 transition-colors ${
+                        n.urgent ? 'bg-red-50/70' : ''
+                      }`}>
+                      <span className="text-base flex-shrink-0">{n.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                            n.type === '결재 반려' || n.type === '마감 임박' ? 'bg-red-100 text-red-700' :
+                            n.type === '결재 승인' ? 'bg-green-100 text-green-700' :
+                            n.type === '신규 일정' ? 'bg-blue-100 text-blue-700' :
+                            n.type === '결재 대기' ? 'bg-amber-100 text-amber-700' :
+                            'bg-gray-100 text-gray-700'
+                          }`}>{n.type}</span>
+                        </div>
+                        <div className="text-xs text-gray-700 mt-0.5 truncate">{n.title}</div>
+                        {n.sub && <div className="text-[10px] text-gray-500 mt-0.5">{n.sub}</div>}
+                      </div>
+                      <span className="text-[10px] text-gray-400 flex-shrink-0 mt-1">→</span>
+                    </button>
+                  ))}
+                  {notifications.length > 15 && (
+                    <div className="text-center text-[10px] text-gray-400 pt-1">+ {notifications.length - 15}건 더</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* 1단: 내 업무(슬림) + AI 브리핑(슬림) - 높이 낮게 */}
           <div className="grid grid-cols-2 gap-3">
             {/* 업무 미니 - 한 줄로 슬림 */}
@@ -951,6 +1140,30 @@ export default function HomePage() {
                   )
                 })}
                 {dayEvs.length>3 && <div className="text-gray-500 font-medium" style={{fontSize:'12px'}}>+{dayEvs.length-3}</div>}
+                {/* 업무 스티커 (마감일 본인 업무) */}
+                {calendarTasks.filter((t:any) => t.due_date === ds).slice(0, 2).map((t:any) => (
+                  <div key={'task-'+t.id}
+                    onClick={(e)=>{e.stopPropagation(); router.push('/dashboard/tasks')}}
+                    title={`📌 업무: ${t.title}${t.due_time ? ' '+t.due_time.slice(0,5) : ''}`}
+                    className="cursor-pointer hover:scale-105 transition-transform"
+                    style={{
+                      background: t.priority === 'high' ? '#FECACA' : '#FED7AA',
+                      border: '1px dashed ' + (t.priority === 'high' ? '#EF4444' : '#F97316'),
+                      borderRadius: '3px',
+                      padding: '0 4px',
+                      fontSize: '11px',
+                      lineHeight: '15px',
+                      color: '#7C2D12',
+                      transform: `rotate(${(t.id.charCodeAt(0) % 5) - 2}deg)`,
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                      marginTop: '2px',
+                    }}>
+                    📌 {t.title.length > 7 ? t.title.slice(0,7)+'…' : t.title}
+                  </div>
+                ))}
+                {calendarTasks.filter((t:any) => t.due_date === ds).length > 2 && (
+                  <div className="text-orange-600 font-medium" style={{fontSize:'10px',marginTop:'2px'}}>+업무 {calendarTasks.filter((t:any) => t.due_date === ds).length-2}</div>
+                )}
               </div>
             )
           })}

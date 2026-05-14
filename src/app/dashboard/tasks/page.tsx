@@ -77,6 +77,13 @@ export default function TasksPage() {
 
   useEffect(() => { load() }, [load])
 
+  // 페이지 진입 시 tasks 읽음 시점 기록 (사이드바 배지 사라지게)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && profile?.id) {
+      localStorage.setItem(`tasks_read_${profile.id}`, new Date().toISOString())
+    }
+  }, [profile?.id])
+
   // 직원 ID → 직원 정보 매핑 (담당자 표시용)
   const empMap: Record<string, any> = {}
   for (const e of employees) empMap[e.id] = e
