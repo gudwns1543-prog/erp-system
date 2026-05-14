@@ -324,7 +324,7 @@ export default function HomePage() {
     })
     setTeamStatus((allStaff||[]).map((s:any)=>{
       const att = attMap[s.id]
-      return { ...s, checkIn: att?.check_in, status: att?.check_out?'done':att?.check_in?'working':'absent' }
+      return { ...s, checkIn: att?.check_in, checkOut: att?.check_out, status: att?.check_out?'done':att?.check_in?'working':'absent' }
     }))
     const { data: notices } = await supabase.from('notices')
       .select('*, author:author_id(name)').order('created_at',{ascending:false}).limit(3)
@@ -578,17 +578,56 @@ export default function HomePage() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      {/* 인사말 + 출퇴근 */}
+      {/* 인사말 + 공지사항(가운데) + 출퇴근 */}
       <div className="mb-5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 flex-shrink-0">
             <Logo size={36} />
             <div>
               <div className="text-xl font-semibold text-gray-800">안녕하세요, {profile?.name} {profile?.grade}님 👋</div>
               <div className="text-sm text-gray-400 mt-0.5">{dateStr}</div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+
+          {/* 가운데 - 공지사항 (빈 공간 활용) */}
+          <div className="flex-1 max-w-md min-w-0 mx-4 cursor-pointer hover:opacity-80 transition-opacity"
+            onClick={()=>{
+              if (typeof window !== 'undefined' && profile?.id) {
+                localStorage.setItem('notice_read_' + profile.id, new Date().toISOString())
+              }
+              router.push('/dashboard/notice')
+            }}>
+            <div className="bg-white rounded-xl border border-gray-100 px-3 py-2 shadow-sm">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm">📢</span>
+                  <span className="text-xs font-semibold text-gray-700">공지사항</span>
+                  {hasNewNotice && (
+                    <span className="bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">N</span>
+                  )}
+                </div>
+                <span className="text-[10px] text-gray-400">전체 →</span>
+              </div>
+              {recentNotices.length === 0 ? (
+                <div className="text-[11px] text-gray-300">공지사항이 없습니다</div>
+              ) : (
+                <div className="space-y-0.5">
+                  {recentNotices.slice(0,2).map((n:any)=>(
+                    <div key={n.id} className="flex items-center gap-1.5 group">
+                      <span className="text-[11px] text-gray-700 group-hover:text-purple-600 truncate flex-1">
+                        {n.title || '(제목없음)'}
+                      </span>
+                      <span className="text-[10px] text-gray-300 flex-shrink-0">
+                        {n.created_at?.slice(5,10).replace('-','/')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 flex-shrink-0">
             <div className="text-xl font-bold text-gray-700 tabular-nums">{time}</div>
             <div className="flex gap-2">
               <button onClick={handleCheckIn} disabled={!!today?.check_in || leaveNotes.includes(today?.note)}
@@ -616,44 +655,8 @@ export default function HomePage() {
         {/* ─── 좌측 메인 영역 ─── */}
         <div className="space-y-4 min-w-0">
 
-          {/* 상단 슬림: 공지 + 업무 + 팀원현황 */}
-          <div className="grid grid-cols-3 gap-3">
-            {/* 공지사항 */}
-            <div className="card cursor-pointer hover:border-purple-200 transition-colors p-3"
-              onClick={()=>{
-                if (typeof window !== 'undefined' && profile?.id) {
-                  localStorage.setItem('notice_read_' + profile.id, new Date().toISOString())
-                }
-                router.push('/dashboard/notice')
-              }}>
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm">📢</span>
-                  <span className="text-xs font-semibold text-gray-800">공지사항</span>
-                  {hasNewNotice && (
-                    <span className="bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">N</span>
-                  )}
-                </div>
-                <span className="text-[10px] text-gray-400">→</span>
-              </div>
-              {recentNotices.length === 0 ? (
-                <div className="text-[11px] text-gray-300 py-1">공지사항 없음</div>
-              ) : (
-                <div className="space-y-0.5">
-                  {recentNotices.slice(0,2).map((n:any)=>(
-                    <div key={n.id} className="flex items-center gap-1 group">
-                      <span className="text-[11px] text-gray-700 group-hover:text-purple-600 truncate flex-1">
-                        {n.title || '(제목없음)'}
-                      </span>
-                      <span className="text-[10px] text-gray-300 flex-shrink-0">
-                        {n.created_at?.slice(5,10).replace('-','/')}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
+          {/* 상단 슬림: 업무 + 출근현황 (공지는 상단 헤더로 이동) */}
+          <div className="grid grid-cols-2 gap-3">
             {/* 업무 미니 */}
             <div className="card cursor-pointer hover:border-purple-200 transition-colors p-3"
               onClick={()=>router.push('/dashboard/tasks')}>
@@ -698,24 +701,28 @@ export default function HomePage() {
               {teamStatus.length === 0 ? (
                 <div className="text-[11px] text-gray-300 py-1">정보 없음</div>
               ) : (
-                <div className="flex flex-wrap gap-1">
-                  {teamStatus.slice(0,8).map((u:any)=>(
+                <div className="space-y-1 max-h-[120px] overflow-y-auto">
+                  {teamStatus.map((u:any)=>(
                     <div key={u.id}
-                      className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                        u.status==='working' ? 'bg-green-50 text-green-700' :
-                        u.status==='done' ? 'bg-purple-50 text-purple-700' :
-                        'bg-gray-100 text-gray-400'
-                      }`}
+                      className="flex items-center gap-1.5 py-0.5"
                       title={`${u.name} ${u.status==='working'?'근무중':u.status==='done'?'퇴근':'미출근'}`}>
-                      <span className={`w-1 h-1 rounded-full ${
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
                         u.status==='working'?'bg-green-400':u.status==='done'?'bg-purple-400':'bg-gray-300'
                       }`} />
-                      {u.name}
+                      <span className="text-[11px] font-medium text-gray-700 w-12 flex-shrink-0 truncate">{u.name}</span>
+                      <span className="text-[10px] text-gray-400 flex-1 tabular-nums">
+                        {u.checkIn ? (
+                          <>
+                            {u.checkIn.slice(0,5)}
+                            {u.checkOut ? <span className="text-gray-300"> ~ </span> : <span className="text-green-500"> ~</span>}
+                            {u.checkOut ? u.checkOut.slice(0,5) : <span className="text-green-500">근무중</span>}
+                          </>
+                        ) : (
+                          <span className="text-gray-300">미출근</span>
+                        )}
+                      </span>
                     </div>
                   ))}
-                  {teamStatus.length > 8 && (
-                    <div className="px-1.5 py-0.5 text-[10px] text-gray-400">+{teamStatus.length-8}</div>
-                  )}
                 </div>
               )}
             </div>
@@ -821,7 +828,20 @@ export default function HomePage() {
           </div>
 
 
-      {/* 요약 카드 - 캘린더 아래로 이동, 슬림하게 (아래 코드 참고) */}
+      {/* 요약 카드 - 캘린더 위에 (출근/근태/연차/결재) */}
+      <div className="grid grid-cols-4 gap-2">
+        {[
+          {label:'출근', val:leaveNotes.includes(today?.note) ? today.note : (today?.check_in?.slice(0,5)||'--:--'), c:'text-gray-800'},
+          {label:'이번달 근태', val:Math.round(stats.monthReg*10)/10+'h', c:'text-purple-600'},
+          {label:'잔여 연차', val:stats.remainLeave+'H', c:'text-teal-600'},
+          {label:profile?.role==='director'?'미결 결재':'대기 결재', val:stats.pendingApprovals+'건', c:stats.pendingApprovals>0?'text-amber-600':'text-gray-400'},
+        ].map(m=>(
+          <div key={m.label} className="card p-2.5 flex items-center justify-between">
+            <div className="text-xs text-gray-500">{m.label}</div>
+            <div className={`text-sm font-bold ${m.c}`}>{m.val}</div>
+          </div>
+        ))}
+      </div>
 
       {/* 캘린더 - 풀 폭 */}
       <div className="card mb-5">
@@ -936,21 +956,6 @@ export default function HomePage() {
           })}
         </div>
       </div>
-
-          {/* 통계 슬림 카드 (캘린더 아래) */}
-          <div className="grid grid-cols-4 gap-2">
-            {[
-              {label:'출근', val:leaveNotes.includes(today?.note) ? today.note : (today?.check_in?.slice(0,5)||'--:--'), c:'text-gray-800'},
-              {label:'이번달 근태', val:Math.round(stats.monthReg*10)/10+'h', c:'text-purple-600'},
-              {label:'잔여 연차', val:stats.remainLeave+'H', c:'text-teal-600'},
-              {label:profile?.role==='director'?'미결 결재':'대기 결재', val:stats.pendingApprovals+'건', c:stats.pendingApprovals>0?'text-amber-600':'text-gray-400'},
-            ].map(m=>(
-              <div key={m.label} className="card p-2.5 flex items-center justify-between">
-                <div className="text-xs text-gray-500">{m.label}</div>
-                <div className={`text-sm font-bold ${m.c}`}>{m.val}</div>
-              </div>
-            ))}
-          </div>
 
           {/* 결재대기 (관리자만, 있을 때만) */}
           {profile?.role==='director' && pendingApprovals.length>0 && (
