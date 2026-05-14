@@ -631,6 +631,52 @@ export default function HomePage() {
       const { count: noticeCount } = await supabase.from('notices')
         .select('*',{count:'exact',head:true}).gt('created_at', lastRead)
 
+      // 본인 관련 업무 상세 (통찰용)
+      const { data: myDetailTasks } = await supabase.from('tasks')
+        .select('id, title, status, priority, due_date, due_time, progress, assignee_progress, assignees, creator_id, creator:creator_id(name), updated_at')
+        .neq('status', 'done')
+        .order('due_date', { ascending: true, nullsFirst: false })
+        .limit(20)
+      const myTasksDetailed: string[] = []
+      for (const t of (myDetailTasks || [])) {
+        const isMine = t.creator_id === session.user.id || (t.assignees || []).includes(session.user.id)
+        if (!isMine) continue
+        const myProgress = (t.assignee_progress as any)?.[session.user.id] ?? 0
+        const statusKr = t.status === 'todo' ? '할일' : t.status === 'in_progress' ? '진행중' : '막힘'
+        const priorityMark = t.priority === 'high' ? '🔴 높음' : t.priority === 'normal' ? '🟡 보통' : '🔵 낮음'
+        let dueLabel = ''
+        if (t.due_date) {
+          const diff = Math.round((new Date(t.due_date+'T00:00:00').getTime() - todayDate.getTime()) / 86400000)
+          dueLabel = diff < 0 ? `⚠️ ${Math.abs(diff)}일 지남` : diff === 0 ? '🔥 오늘' : diff === 1 ? '내일' : `${diff}일 후`
+          dueLabel += t.due_time ? ` ${t.due_time.slice(0,5)}` : ''
+        } else dueLabel = '마감 미정'
+        myTasksDetailed.push(`"${t.title}" - ${statusKr} ${priorityMark} ${dueLabel} (본인 ${myProgress}%, 등록자: ${(t.creator as any)?.name || '본인'})`)
+      }
+
+      // 최근 새 소식 (홈에 표시되는 알림센터의 raw 항목)
+      const newsItems: string[] = []
+      // 신규 일정 초대
+      const { data: invs } = await supabase.from('event_attendees')
+        .select('event:event_id(title, start_at, creator:creator_id(name))')
+        .eq('user_id', session.user.id).eq('status','pending').limit(5)
+      for (const inv of (invs || [])) {
+        const ev: any = inv.event
+        if (!ev) continue
+        newsItems.push(`🆕 ${ev.creator?.name || '누군가'}가 "${ev.title}"(${ev.start_at?.slice(0,10)})에 초대`)
+      }
+      // 결재 처리 결과
+      const lastNotifReadAt = typeof window !== 'undefined'
+        ? localStorage.getItem(`notif_read_${session.user.id}`) || '2000-01-01'
+        : '2000-01-01'
+      const { data: processedAps } = await supabase.from('approvals')
+        .select('type, status, start_date, approver:approver_id(name)')
+        .eq('requester_id', session.user.id).in('status', ['approved', 'rejected'])
+        .gt('updated_at', lastNotifReadAt).limit(5)
+      for (const a of (processedAps || [])) {
+        const aprName = (a.approver as any)?.name || '결재자'
+        newsItems.push(`${a.status==='approved'?'✅':'❌'} ${aprName}이 ${a.start_date} ${a.type}을 ${a.status==='approved'?'승인':'반려'}`)
+      }
+
       // AI에게 보낼 최종 데이터
       const briefData = {
         날짜: (todayDate.getMonth()+1) + '월 ' + todayDate.getDate() + '일 ' + days[todayDate.getDay()] + '요일',
@@ -642,6 +688,8 @@ export default function HomePage() {
         향후30일일정: eventList.length ? eventList : ['등록된 일정 없음'],
         결재현황: approvalList.length ? approvalList : ['대기중인 결재 없음'],
         미읽음공지: (noticeCount||0) + '건',
+        본인업무상세: myTasksDetailed.length ? myTasksDetailed : ['진행 중인 본인 업무 없음'],
+        최근새소식: newsItems.length ? newsItems : ['새 소식 없음'],
         특이사항: [
           ...(anniversaries.length ? anniversaries : []),
           ...(teamStatus ? [teamStatus] : []),
@@ -787,9 +835,9 @@ export default function HomePage() {
             )}
           </div>
 
-          {/* 통합 알림 센터 */}
-          {notifications.length > 0 && (
-            <div className="card border-amber-200 bg-amber-50/40 p-3">
+          {/* 통합 알림 센터 + AI 통찰 */}
+          <div className="card border-amber-200 bg-amber-50/40 p-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <button onClick={()=>{
                   const next = !notificationsOpen
                   setNotificationsOpen(next)
@@ -800,118 +848,109 @@ export default function HomePage() {
                     }, 3000) // 3초 후 (읽었다고 간주)
                   }
                 }}
-                className="w-full flex items-center justify-between hover:opacity-80">
-                <div className="flex items-center gap-2">
-                  <span className="text-base">📬</span>
-                  <span className="text-sm font-semibold text-gray-800">새 소식</span>
-                  <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{notifications.length}</span>
-                  {notifications.some(n => n.urgent) && (
-                    <span className="text-xs text-red-600 font-medium">⚠️ 긴급 {notifications.filter(n=>n.urgent).length}건</span>
-                  )}
-                </div>
-                <span className="text-xs text-gray-400">{notificationsOpen ? '▲ 접기' : '▼ 펼치기'}</span>
+                className="flex items-center gap-2 hover:opacity-80 flex-1 min-w-0">
+                <span className="text-base">📬</span>
+                <span className="text-sm font-semibold text-gray-800">새 소식</span>
+                <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{notifications.length}</span>
+                {notifications.some(n => n.urgent) && (
+                  <span className="text-xs text-red-600 font-medium">⚠️ 긴급 {notifications.filter(n=>n.urgent).length}건</span>
+                )}
+                <span className="text-xs text-gray-400 ml-auto">{notificationsOpen ? '▲' : '▼'}</span>
               </button>
-              {notificationsOpen && (
-                <div className="mt-2 pt-2 border-t border-amber-200 space-y-1 max-h-64 overflow-y-auto">
-                  {notifications.slice(0, 15).map(n => (
-                    <button key={n.id} onClick={()=>router.push(n.href)}
-                      className={`w-full flex items-start gap-2 p-1.5 rounded text-left hover:bg-white/70 transition-colors ${
-                        n.urgent ? 'bg-red-50/70' : ''
-                      }`}>
-                      <span className="text-base flex-shrink-0">{n.icon}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                            n.type === '결재 반려' || n.type === '마감 임박' ? 'bg-red-100 text-red-700' :
-                            n.type === '결재 승인' ? 'bg-green-100 text-green-700' :
-                            n.type === '신규 일정' ? 'bg-blue-100 text-blue-700' :
-                            n.type === '결재 대기' ? 'bg-amber-100 text-amber-700' :
-                            'bg-gray-100 text-gray-700'
-                          }`}>{n.type}</span>
-                        </div>
-                        <div className="text-xs text-gray-700 mt-0.5 truncate">{n.title}</div>
-                        {n.sub && <div className="text-[10px] text-gray-500 mt-0.5">{n.sub}</div>}
-                      </div>
-                      <span className="text-[10px] text-gray-400 flex-shrink-0 mt-1">→</span>
-                    </button>
-                  ))}
-                  {notifications.length > 15 && (
-                    <div className="text-center text-[10px] text-gray-400 pt-1">+ {notifications.length - 15}건 더</div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 1단: 내 업무(슬림) + AI 브리핑(슬림) - 높이 낮게 */}
-          <div className="grid grid-cols-2 gap-3">
-            {/* 업무 미니 - 한 줄로 슬림 */}
-            <div className="card cursor-pointer hover:border-purple-200 transition-colors p-3"
-              onClick={()=>router.push('/dashboard/tasks')}>
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <span className="text-sm">✔️</span>
-                  <span className="text-xs font-semibold text-gray-800">내 업무</span>
-                  {taskCounts.overdue > 0 && (
-                    <span className="bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">
-                      ⚠️ {taskCounts.overdue}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 flex-1 justify-end">
-                  <div className="flex items-center gap-1 px-2 py-0.5 bg-gray-50 rounded">
-                    <span className="text-[10px] text-gray-500">할일</span>
-                    <span className="text-sm font-bold text-gray-700">{taskCounts.todo}</span>
-                  </div>
-                  <div className="flex items-center gap-1 px-2 py-0.5 bg-blue-50 rounded">
-                    <span className="text-[10px] text-blue-600">진행</span>
-                    <span className="text-sm font-bold text-blue-700">{taskCounts.in_progress}</span>
-                  </div>
-                  <div className="flex items-center gap-1 px-2 py-0.5 bg-red-50 rounded">
-                    <span className="text-[10px] text-red-600">막힘</span>
-                    <span className="text-sm font-bold text-red-700">{taskCounts.blocked}</span>
-                  </div>
-                  <span className="text-[10px] text-gray-400 ml-1">→</span>
-                </div>
-              </div>
-            </div>
-
-            {/* AI 브리핑 - 한 줄 토글, 펼치면 내용 보임 */}
-            <div className="card border-purple-100 bg-gradient-to-r from-purple-50/50 to-white p-3">
-              <button onClick={()=>{ setBriefingOpen(o => !o); if (!briefingOpen && !briefing && !briefingLoading) loadBriefing() }}
-                className="w-full flex items-center justify-between hover:opacity-80 transition-opacity">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center text-[10px]">✨</div>
-                  <span className="text-xs font-semibold text-gray-800">AI 업무 브리핑</span>
-                  {!briefingOpen && <span className="text-[10px] text-gray-400">클릭하여 분석</span>}
-                  {briefingLoading && <span className="text-[10px] text-purple-500">분석 중...</span>}
-                </div>
-                <span className="text-[10px] text-gray-400">{briefingOpen ? '▲' : '▼'}</span>
+              {/* AI 통찰 받기 버튼 */}
+              <button onClick={loadBriefing} disabled={briefingLoading}
+                className="flex items-center gap-1 px-2.5 py-1 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 text-white text-xs font-medium rounded-lg transition-colors">
+                <span>✨</span>
+                {briefingLoading ? 'AI 분석 중...' : briefing ? '🔄 통찰 새로고침' : 'AI 통찰 받기'}
               </button>
-              {briefingOpen && (
-                <div className="mt-2 pt-2 border-t border-purple-100">
-                  <div className="flex justify-end mb-1.5">
-                    <button onClick={loadBriefing} disabled={briefingLoading}
-                      className="text-[10px] text-purple-600 hover:text-purple-800 disabled:text-gray-400">
-                      {briefingLoading ? '⏳ 분석 중...' : '🔄 새로고침'}
-                    </button>
-                  </div>
-                  {briefingLoading ? (
-                    <div className="flex items-center gap-2 py-1.5">
-                      <div className="flex gap-1">
-                        <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'0ms'}}/>
-                        <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'150ms'}}/>
-                        <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'300ms'}}/>
-                      </div>
-                      <span className="text-[11px] text-gray-400">AI가 분석 중...</span>
+            </div>
+            {notificationsOpen && (
+              <div className="mt-2 pt-2 border-t border-amber-200 space-y-2">
+                {/* AI 통찰 영역 (브리핑 결과) */}
+                {(briefing || briefingLoading) && (
+                  <div className="bg-gradient-to-r from-purple-50 to-white border border-purple-100 rounded-md p-2.5">
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center text-[10px]">✨</div>
+                      <span className="text-xs font-semibold text-purple-800">AI 통찰</span>
                     </div>
-                  ) : briefing ? (
-                    <div className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{briefing}</div>
-                  ) : (
-                    <div className="text-xs text-gray-400 py-1">새로고침을 눌러주세요</div>
-                  )}
+                    {briefingLoading ? (
+                      <div className="flex items-center gap-2 py-1">
+                        <div className="flex gap-1">
+                          <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'0ms'}}/>
+                          <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'150ms'}}/>
+                          <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'300ms'}}/>
+                        </div>
+                        <span className="text-[11px] text-purple-500">우선순위 분석 중...</span>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{briefing}</div>
+                    )}
+                  </div>
+                )}
+                {/* 새 소식 raw 항목 */}
+                {notifications.length === 0 ? (
+                  <div className="text-[11px] text-gray-400 text-center py-2">새 소식이 없습니다 ✨</div>
+                ) : (
+                  <div className="space-y-1 max-h-64 overflow-y-auto">
+                    {notifications.slice(0, 15).map(n => (
+                      <button key={n.id} onClick={()=>router.push(n.href)}
+                        className={`w-full flex items-start gap-2 p-1.5 rounded text-left hover:bg-white/70 transition-colors ${
+                          n.urgent ? 'bg-red-50/70' : ''
+                        }`}>
+                        <span className="text-base flex-shrink-0">{n.icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                              n.type === '결재 반려' || n.type === '마감 임박' ? 'bg-red-100 text-red-700' :
+                              n.type === '결재 승인' ? 'bg-green-100 text-green-700' :
+                              n.type === '신규 일정' ? 'bg-blue-100 text-blue-700' :
+                              n.type === '결재 대기' ? 'bg-amber-100 text-amber-700' :
+                              'bg-gray-100 text-gray-700'
+                            }`}>{n.type}</span>
+                          </div>
+                          <div className="text-xs text-gray-700 mt-0.5 truncate">{n.title}</div>
+                          {n.sub && <div className="text-[10px] text-gray-500 mt-0.5">{n.sub}</div>}
+                        </div>
+                        <span className="text-[10px] text-gray-400 flex-shrink-0 mt-1">→</span>
+                      </button>
+                    ))}
+                    {notifications.length > 15 && (
+                      <div className="text-center text-[10px] text-gray-400 pt-1">+ {notifications.length - 15}건 더</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* 1단: 내 업무 (풀폭 슬림) - AI 브리핑은 위 알림센터로 통합됨 */}
+          <div className="card cursor-pointer hover:border-purple-200 transition-colors p-3"
+            onClick={()=>router.push('/dashboard/tasks')}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <span className="text-sm">✔️</span>
+                <span className="text-xs font-semibold text-gray-800">내 업무</span>
+                {taskCounts.overdue > 0 && (
+                  <span className="bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+                    ⚠️ {taskCounts.overdue} 지연
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 flex-1 justify-end">
+                <div className="flex items-center gap-1 px-2 py-0.5 bg-gray-50 rounded">
+                  <span className="text-[10px] text-gray-500">할일</span>
+                  <span className="text-sm font-bold text-gray-700">{taskCounts.todo}</span>
                 </div>
-              )}
+                <div className="flex items-center gap-1 px-2 py-0.5 bg-blue-50 rounded">
+                  <span className="text-[10px] text-blue-600">진행</span>
+                  <span className="text-sm font-bold text-blue-700">{taskCounts.in_progress}</span>
+                </div>
+                <div className="flex items-center gap-1 px-2 py-0.5 bg-red-50 rounded">
+                  <span className="text-[10px] text-red-600">막힘</span>
+                  <span className="text-sm font-bold text-red-700">{taskCounts.blocked}</span>
+                </div>
+                <span className="text-[10px] text-gray-400 ml-1">→</span>
+              </div>
             </div>
           </div>
 
