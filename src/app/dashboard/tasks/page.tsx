@@ -1,20 +1,20 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 
 type Task = {
   id: string
   title: string
   description: string | null
-  assignee_id: string | null
+  assignees: string[] | null // uuid 배열
   creator_id: string | null
   due_date: string | null
   status: 'todo' | 'in_progress' | 'done' | 'blocked'
   priority: 'high' | 'normal' | 'low'
   progress: number
+  visibility: 'private' | 'shared'
   created_at: string
   updated_at: string
-  assignee?: { id: string, name: string, color: string, tc: string } | null
   creator?: { id: string, name: string } | null
 }
 
@@ -24,7 +24,6 @@ const STATUS_META = {
   done: { label: '완료', color: 'bg-green-100 text-green-700 border-green-300' },
   blocked: { label: '대기/막힘', color: 'bg-red-100 text-red-700 border-red-300' },
 }
-
 const PRIORITY_META = {
   high: { label: '높음', emoji: '🔴' },
   normal: { label: '보통', emoji: '🟡' },
@@ -41,8 +40,8 @@ export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [employees, setEmployees] = useState<any[]>([])
   const [view, setView] = useState<'kanban' | 'list'>('kanban')
-  const [scope, setScope] = useState<'mine' | 'all'>('mine')
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [visibilityFilter, setVisibilityFilter] = useState<'all'|'mine'|'shared'|'private'>('all')
   const [sortBy, setSortBy] = useState<'due_date' | 'priority' | 'created_at'>('due_date')
   const [editing, setEditing] = useState<Task | null>(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -53,19 +52,31 @@ export default function TasksPage() {
     if (!session) return
     const { data: p } = await supabase.from('profiles').select('id,name,role,dept').eq('id', session.user.id).single()
     setProfile(p)
-    const { data: emps } = await supabase.from('profiles').select('id,name,color,tc,dept').eq('status','active')
+    const { data: emps } = await supabase.from('profiles')
+      .select('id,name,color,tc,dept,grade').eq('status','active').order('name')
     setEmployees(emps || [])
     const { data } = await supabase.from('tasks')
-      .select('*, assignee:assignee_id(id,name,color,tc), creator:creator_id(id,name)')
+      .select('*, creator:creator_id(id,name)')
       .order('created_at', { ascending: false })
     setTasks(data || [])
   }, [])
 
   useEffect(() => { load() }, [load])
 
+  // 직원 ID → 직원 정보 매핑 (담당자 표시용)
+  const empMap: Record<string, any> = {}
+  for (const e of employees) empMap[e.id] = e
+
   // 필터링
   const filtered = tasks.filter(t => {
-    if (scope === 'mine' && t.assignee_id !== profile?.id && t.creator_id !== profile?.id) return false
+    if (visibilityFilter === 'mine') {
+      // 내가 담당자거나 등록자
+      if (t.creator_id !== profile?.id && !(t.assignees || []).includes(profile?.id)) return false
+    } else if (visibilityFilter === 'shared') {
+      if (t.visibility !== 'shared') return false
+    } else if (visibilityFilter === 'private') {
+      if (t.visibility !== 'private') return false
+    }
     if (statusFilter !== 'all' && t.status !== statusFilter) return false
     return true
   })
@@ -84,22 +95,11 @@ export default function TasksPage() {
     return b.created_at.localeCompare(a.created_at)
   })
 
-  // 칸반용 그룹핑
   const grouped = {
     todo: sorted.filter(t => t.status === 'todo'),
     in_progress: sorted.filter(t => t.status === 'in_progress'),
     blocked: sorted.filter(t => t.status === 'blocked'),
     done: sorted.filter(t => t.status === 'done'),
-  }
-
-  async function updateTaskStatus(id: string, newStatus: string) {
-    const supabase = createClient()
-    await supabase.from('tasks').update({
-      status: newStatus,
-      progress: newStatus === 'done' ? 100 : newStatus === 'todo' ? 0 : undefined,
-      updated_at: new Date().toISOString(),
-    }).eq('id', id)
-    load()
   }
 
   async function deleteTask(id: string) {
@@ -109,7 +109,6 @@ export default function TasksPage() {
     load()
   }
 
-  // 마감일 상태 (overdue, today, upcoming)
   function dueDateStatus(date: string | null): 'overdue' | 'today' | 'soon' | 'normal' | null {
     if (!date) return null
     const today = todayStr()
@@ -122,7 +121,6 @@ export default function TasksPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      {/* 헤더 */}
       <div className="flex items-center justify-between mb-5">
         <h1 className="text-lg font-semibold text-gray-800">✔️ 업무 관리</h1>
         <button onClick={()=>{ setEditing(null); setShowCreate(true) }}
@@ -131,11 +129,11 @@ export default function TasksPage() {
         </button>
       </div>
 
-      {/* 컨트롤 바 */}
+      {/* 필터 바 */}
       <div className="card mb-4 p-3">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3 flex-wrap">
-            {/* 보기 방식 (칸반 / 목록) */}
+            {/* 보기 방식 */}
             <div className="flex bg-gray-100 rounded-lg p-1">
               <button onClick={()=>setView('kanban')}
                 className={`px-3 py-1.5 text-sm rounded-md font-medium ${view==='kanban'?'bg-white shadow-sm text-purple-600':'text-gray-500'}`}>
@@ -147,33 +145,28 @@ export default function TasksPage() {
               </button>
             </div>
 
-            {/* 공개 범위 (내 업무 / 전체) */}
-            <div className="flex bg-gray-100 rounded-lg p-1">
-              <button onClick={()=>setScope('mine')}
-                className={`px-3 py-1.5 text-sm rounded-md font-medium ${scope==='mine'?'bg-white shadow-sm text-purple-600':'text-gray-500'}`}>
-                내 업무
-              </button>
-              <button onClick={()=>setScope('all')}
-                className={`px-3 py-1.5 text-sm rounded-md font-medium ${scope==='all'?'bg-white shadow-sm text-purple-600':'text-gray-500'}`}>
-                전체
-              </button>
-            </div>
+            {/* 공개범위 필터 */}
+            <select value={visibilityFilter} onChange={e=>setVisibilityFilter(e.target.value as any)}
+              className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white">
+              <option value="all">📂 전체 업무</option>
+              <option value="mine">👤 내 업무 (내가 담당/등록)</option>
+              <option value="shared">👥 공유 업무</option>
+              <option value="private">🔒 개인 업무</option>
+            </select>
 
-            {/* 상태 필터 (목록 뷰에서만) */}
-            {view === 'list' && (
-              <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}
-                className="text-sm border border-gray-200 rounded-lg px-2 py-1.5">
-                <option value="all">모든 상태</option>
-                <option value="todo">할일</option>
-                <option value="in_progress">진행중</option>
-                <option value="blocked">대기/막힘</option>
-                <option value="done">완료</option>
-              </select>
-            )}
+            {/* 상태 필터 */}
+            <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}
+              className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white">
+              <option value="all">모든 상태</option>
+              <option value="todo">할일</option>
+              <option value="in_progress">진행중</option>
+              <option value="blocked">대기/막힘</option>
+              <option value="done">완료</option>
+            </select>
 
             {/* 정렬 */}
             <select value={sortBy} onChange={e=>setSortBy(e.target.value as any)}
-              className="text-sm border border-gray-200 rounded-lg px-2 py-1.5">
+              className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white">
               <option value="due_date">마감일순</option>
               <option value="priority">우선순위순</option>
               <option value="created_at">최근등록순</option>
@@ -202,7 +195,8 @@ export default function TasksPage() {
                   <div className="text-xs text-gray-400 text-center py-4">없음</div>
                 )}
                 {grouped[st].map(t => (
-                  <KanbanCard key={t.id} task={t} onClick={()=>setEditing(t)} dueDateStatus={dueDateStatus} />
+                  <KanbanCard key={t.id} task={t} empMap={empMap}
+                    onClick={()=>setEditing(t)} dueDateStatus={dueDateStatus} />
                 ))}
               </div>
             </div>
@@ -213,34 +207,45 @@ export default function TasksPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 w-8"></th>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500">제목</th>
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 w-24">담당자</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 w-40">담당자</th>
                 <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500 w-24">상태</th>
                 <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500 w-20">우선순위</th>
                 <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500 w-28">마감일</th>
-                <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500 w-20">진척률</th>
+                <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500 w-24">진척률</th>
                 <th className="px-3 py-2.5 w-12"></th>
               </tr>
             </thead>
             <tbody>
               {sorted.length === 0 && (
-                <tr><td colSpan={7} className="text-center py-8 text-gray-400">업무가 없습니다.</td></tr>
+                <tr><td colSpan={8} className="text-center py-8 text-gray-400">업무가 없습니다.</td></tr>
               )}
               {sorted.map(t => {
                 const dueStat = dueDateStatus(t.due_date)
+                const asgs = (t.assignees || []).map(id => empMap[id]).filter(Boolean)
                 return (
                   <tr key={t.id} className="border-b border-gray-50 hover:bg-purple-50/30 cursor-pointer" onClick={()=>setEditing(t)}>
+                    <td className="px-3 py-2.5 text-center">
+                      <span title={t.visibility === 'private' ? '개인 업무' : '공유 업무'}>
+                        {t.visibility === 'private' ? '🔒' : '👥'}
+                      </span>
+                    </td>
                     <td className="px-3 py-2.5">
                       <div className="font-medium text-gray-800">{t.title}</div>
                       {t.description && <div className="text-xs text-gray-400 truncate max-w-md">{t.description}</div>}
                     </td>
                     <td className="px-3 py-2.5">
-                      {t.assignee ? (
-                        <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-                          style={{backgroundColor: t.assignee.color || '#E6F1FB', color: t.assignee.tc || '#185FA5'}}>
-                          {t.assignee.name}
-                        </span>
-                      ) : <span className="text-xs text-gray-300">-</span>}
+                      {asgs.length === 0 && <span className="text-xs text-gray-300">-</span>}
+                      <div className="flex flex-wrap gap-1">
+                        {asgs.slice(0,3).map((a:any) => (
+                          <span key={a.id} className="text-xs px-1.5 py-0.5 rounded font-medium"
+                            style={{backgroundColor: a.color || '#E6F1FB', color: a.tc || '#185FA5'}}>
+                            {a.name}
+                          </span>
+                        ))}
+                        {asgs.length > 3 && <span className="text-xs text-gray-400">+{asgs.length-3}</span>}
+                      </div>
                     </td>
                     <td className="px-3 py-2.5 text-center">
                       <span className={`px-2 py-0.5 rounded text-xs font-bold border ${STATUS_META[t.status].color}`}>
@@ -279,7 +284,6 @@ export default function TasksPage() {
         </div>
       )}
 
-      {/* 새 업무 / 수정 모달 */}
       {(showCreate || editing) && (
         <TaskModal
           task={editing}
@@ -295,25 +299,35 @@ export default function TasksPage() {
 }
 
 // ─── 칸반 카드 ──────
-function KanbanCard({ task, onClick, dueDateStatus }: {
-  task: Task, onClick: ()=>void, dueDateStatus: (d:string|null)=>any
+function KanbanCard({ task, empMap, onClick, dueDateStatus }: {
+  task: Task, empMap: Record<string, any>, onClick: ()=>void, dueDateStatus: (d:string|null)=>any
 }) {
   const dueStat = dueDateStatus(task.due_date)
+  const asgs = (task.assignees || []).map(id => empMap[id]).filter(Boolean)
   return (
     <div onClick={onClick}
       className="bg-white rounded-lg p-2.5 border border-gray-200 hover:border-purple-300 hover:shadow-sm cursor-pointer transition-all">
       <div className="flex items-start justify-between gap-1.5 mb-1.5">
-        <div className="text-sm font-medium text-gray-800 flex-1">{task.title}</div>
+        <div className="flex items-center gap-1 flex-1 min-w-0">
+          <span className="text-xs flex-shrink-0" title={task.visibility==='private'?'개인 업무':'공유 업무'}>
+            {task.visibility==='private'?'🔒':'👥'}
+          </span>
+          <div className="text-sm font-medium text-gray-800 truncate">{task.title}</div>
+        </div>
         <span className="text-xs flex-shrink-0">{PRIORITY_META[task.priority].emoji}</span>
       </div>
       {task.description && <div className="text-xs text-gray-400 truncate mb-1.5">{task.description}</div>}
       <div className="flex items-center justify-between gap-1.5">
-        {task.assignee ? (
-          <span className="text-xs px-1.5 py-0.5 rounded font-medium truncate"
-            style={{backgroundColor: task.assignee.color || '#E6F1FB', color: task.assignee.tc || '#185FA5'}}>
-            {task.assignee.name}
-          </span>
-        ) : <span className="text-xs text-gray-300">담당자 없음</span>}
+        <div className="flex flex-wrap gap-0.5 flex-1 min-w-0">
+          {asgs.length === 0 && <span className="text-xs text-gray-300">담당자 없음</span>}
+          {asgs.slice(0,2).map((a:any)=>(
+            <span key={a.id} className="text-xs px-1.5 py-0.5 rounded font-medium truncate"
+              style={{backgroundColor: a.color || '#E6F1FB', color: a.tc || '#185FA5'}}>
+              {a.name}
+            </span>
+          ))}
+          {asgs.length > 2 && <span className="text-xs text-gray-400">+{asgs.length-2}</span>}
+        </div>
         {task.due_date && (
           <span className={`text-xs flex-shrink-0 ${
             dueStat === 'overdue' ? 'text-red-500 font-bold' :
@@ -343,39 +357,65 @@ function TaskModal({ task, employees, currentUserId, onClose, onSaved, onDelete 
   const [form, setForm] = useState({
     title: task?.title || '',
     description: task?.description || '',
-    assignee_id: task?.assignee_id || currentUserId || '',
+    assignees: (task?.assignees || [currentUserId]).filter(Boolean),
     due_date: task?.due_date || '',
     status: task?.status || 'todo',
     priority: task?.priority || 'normal',
     progress: task?.progress ?? 0,
+    visibility: task?.visibility || 'shared', // 기본 = 공유
   })
+  const [showAsgDropdown, setShowAsgDropdown] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // 드롭다운 바깥 클릭 시 닫기
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowAsgDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  function toggleAssignee(empId: string) {
+    setForm(f => {
+      if (f.assignees.includes(empId)) {
+        return { ...f, assignees: f.assignees.filter(id => id !== empId) }
+      } else {
+        return { ...f, assignees: [...f.assignees, empId] }
+      }
+    })
+  }
+
+  const selectedEmps = form.assignees.map(id => employees.find(e => e.id === id)).filter(Boolean)
 
   async function save() {
     if (!form.title.trim()) { alert('제목을 입력해주세요.'); return }
     const supabase = createClient()
     if (task) {
-      // 수정
       await supabase.from('tasks').update({
         title: form.title,
         description: form.description || null,
-        assignee_id: form.assignee_id || null,
+        assignees: form.assignees,
         due_date: form.due_date || null,
         status: form.status,
         priority: form.priority,
         progress: form.progress,
+        visibility: form.visibility,
         updated_at: new Date().toISOString(),
       }).eq('id', task.id)
     } else {
-      // 신규
       await supabase.from('tasks').insert({
         title: form.title,
         description: form.description || null,
-        assignee_id: form.assignee_id || null,
+        assignees: form.assignees,
         creator_id: currentUserId,
         due_date: form.due_date || null,
         status: form.status,
         priority: form.priority,
         progress: form.progress,
+        visibility: form.visibility,
       })
     }
     onSaved()
@@ -403,33 +443,73 @@ function TaskModal({ task, employees, currentUserId, onClose, onSaved, onDelete 
               placeholder="업무 내용을 자세히 적어주세요..."
               value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">담당자</label>
-              <select className="input" value={form.assignee_id}
-                onChange={e=>setForm(f=>({...f,assignee_id:e.target.value}))}>
-                <option value="">-</option>
-                {employees.map(e=>(
-                  <option key={e.id} value={e.id}>{e.name} {e.dept?`(${e.dept})`:''}</option>
-                ))}
-              </select>
+
+          {/* 공개 범위 */}
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">공개 범위</label>
+            <div className="flex gap-2">
+              <button type="button" onClick={()=>setForm(f=>({...f,visibility:'shared'}))}
+                className={`flex-1 px-3 py-2 rounded-lg text-sm border-2 transition-all ${
+                  form.visibility==='shared'
+                    ? 'border-purple-500 bg-purple-50 text-purple-700 font-semibold'
+                    : 'border-gray-200 text-gray-500'
+                }`}>
+                👥 공유 업무<div className="text-xs font-normal mt-0.5">회사 전체 공개</div>
+              </button>
+              <button type="button" onClick={()=>setForm(f=>({...f,visibility:'private'}))}
+                className={`flex-1 px-3 py-2 rounded-lg text-sm border-2 transition-all ${
+                  form.visibility==='private'
+                    ? 'border-purple-500 bg-purple-50 text-purple-700 font-semibold'
+                    : 'border-gray-200 text-gray-500'
+                }`}>
+                🔒 개인 업무<div className="text-xs font-normal mt-0.5">담당자만 볼 수 있음</div>
+              </button>
             </div>
+          </div>
+
+          {/* 담당자 다중 선택 */}
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">담당자 (여러 명 선택 가능)</label>
+            <div ref={dropdownRef} className="relative">
+              <button type="button"
+                onClick={()=>setShowAsgDropdown(v=>!v)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-left bg-white hover:border-purple-300 flex items-center justify-between min-h-[42px]">
+                <div className="flex flex-wrap gap-1 flex-1">
+                  {selectedEmps.length === 0 && <span className="text-gray-400">담당자를 선택하세요</span>}
+                  {selectedEmps.map((e:any)=>(
+                    <span key={e.id} className="text-xs px-2 py-0.5 rounded font-medium flex items-center gap-1"
+                      style={{backgroundColor: e.color || '#E6F1FB', color: e.tc || '#185FA5'}}>
+                      {e.name}
+                      <span onClick={(ev)=>{ev.stopPropagation();toggleAssignee(e.id)}} className="hover:opacity-60 cursor-pointer">✕</span>
+                    </span>
+                  ))}
+                </div>
+                <span className="text-gray-400 ml-2">▼</span>
+              </button>
+              {showAsgDropdown && (
+                <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                  {employees.map((e:any)=>(
+                    <label key={e.id}
+                      className="flex items-center gap-2 px-3 py-2 hover:bg-purple-50 cursor-pointer text-sm">
+                      <input type="checkbox" checked={form.assignees.includes(e.id)}
+                        onChange={()=>toggleAssignee(e.id)} className="accent-purple-600" />
+                      <span className="text-xs px-1.5 py-0.5 rounded font-medium"
+                        style={{backgroundColor: e.color || '#E6F1FB', color: e.tc || '#185FA5'}}>
+                        {e.name}
+                      </span>
+                      <span className="text-xs text-gray-400">{e.dept} · {e.grade}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">마감일</label>
               <input type="date" className="input"
                 value={form.due_date} onChange={e=>setForm(f=>({...f,due_date:e.target.value}))} />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">상태</label>
-              <select className="input" value={form.status}
-                onChange={e=>setForm(f=>({...f,status:e.target.value as any}))}>
-                <option value="todo">할일</option>
-                <option value="in_progress">진행중</option>
-                <option value="blocked">대기/막힘</option>
-                <option value="done">완료</option>
-              </select>
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">우선순위</label>
@@ -440,6 +520,16 @@ function TaskModal({ task, employees, currentUserId, onClose, onSaved, onDelete 
                 <option value="low">🔵 낮음</option>
               </select>
             </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">상태</label>
+            <select className="input" value={form.status}
+              onChange={e=>setForm(f=>({...f,status:e.target.value as any}))}>
+              <option value="todo">할일</option>
+              <option value="in_progress">진행중</option>
+              <option value="blocked">대기/막힘</option>
+              <option value="done">완료</option>
+            </select>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">진척률: {form.progress}%</label>
