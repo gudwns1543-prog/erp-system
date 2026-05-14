@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
-import { calcSalary, formatWon, sortByGrade } from '@/lib/attendance'
+import { calcSalary, formatWon, sortByGrade, getLatestPayMonth, formatPayLabel, getPayDate } from '@/lib/attendance'
 
 export default function PaySlipPage() {
   const [profile, setProfile] = useState<any>(null)
@@ -9,8 +9,10 @@ export default function PaySlipPage() {
   const [work, setWork] = useState<any>(null)
   const [staffList, setStaffList] = useState<any[]>([])
   const [selStaffId, setSelStaffId] = useState('')
-  const [selYear, setSelYear] = useState(new Date().getFullYear())
-  const [selMonth, setSelMonth] = useState(new Date().getMonth()+1)
+  // 기본값: 최신 지급된 명세서의 근무월 (예: 5/14 → 4월)
+  const initPayMonth = getLatestPayMonth()
+  const [selYear, setSelYear] = useState(initPayMonth.year)
+  const [selMonth, setSelMonth] = useState(initPayMonth.month)
   const [result, setResult] = useState<any>(null)
   const [payslipFiles, setPayslipFiles] = useState<any[]>([])
   const [uploading, setUploading] = useState(false)
@@ -180,14 +182,20 @@ export default function PaySlipPage() {
       {alert && <div className="fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg text-sm z-50 shadow-lg">{alert}</div>}
 
       {/* 상단 컨트롤 */}
-      <div className="flex justify-between items-center mb-5">
-        <h1 className="text-lg font-semibold text-gray-800">급여명세 조회</h1>
-        <div className="flex gap-2 flex-wrap justify-end">
+      <div className="flex justify-between items-center mb-5 flex-wrap gap-3">
+        <div>
+          <h1 className="text-lg font-semibold text-gray-800">급여명세 조회</h1>
+          <div className="text-xs text-gray-500 mt-0.5">
+            📅 <strong>{formatPayLabel(selYear, selMonth)}</strong>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           {profile?.role==='director' && (
             <select className="input w-auto text-sm" value={selStaffId} onChange={e=>setSelStaffId(e.target.value)}>
               {staffList.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           )}
+          <span className="text-xs text-gray-500">근무월:</span>
           <select className="input w-auto text-sm" value={selYear} onChange={e=>setSelYear(+e.target.value)}>
             {years.map(y=><option key={y} value={y}>{y}년</option>)}
           </select>
@@ -223,7 +231,7 @@ export default function PaySlipPage() {
           {!result ? (
             <div className="card py-16 text-center">
               <div className="text-3xl mb-3">📭</div>
-              <div className="text-gray-400 text-sm">{selYear}년 {selMonth}월 급여 데이터가 없습니다.</div>
+              <div className="text-gray-400 text-sm">{selYear}년 {selMonth}월 ({formatPayLabel(selYear, selMonth)}) 근무 데이터가 없습니다.</div>
               <div className="text-gray-300 text-xs mt-1">근태가 입력된 년월을 선택해 주세요</div>
             </div>
           ) : (
@@ -327,7 +335,7 @@ export default function PaySlipPage() {
               <div className="rounded-xl p-5 flex justify-between items-center mb-4" style={{background:'linear-gradient(135deg,#534AB7,#6c63d4)'}}>
                 <div>
                   <div className="text-white/80 text-sm font-medium">실 수령액</div>
-                  <div className="text-white/60 text-xs mt-0.5">{selYear}년 {selMonth}월 · {targetName}</div>
+                  <div className="text-white/60 text-xs mt-0.5">{formatPayLabel(selYear, selMonth)} · {targetName}</div>
                 </div>
                 <div className="text-white text-2xl font-bold">{formatWon(result.netPay + tripPay - customDeductTotal)}</div>
               </div>
@@ -347,7 +355,7 @@ export default function PaySlipPage() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <div className="text-sm font-semibold text-gray-700">세무사무실 급여명세서</div>
-              <div className="text-xs text-gray-400 mt-0.5">{selYear}년 {selMonth}월 · {targetName}</div>
+              <div className="text-xs text-gray-400 mt-0.5">{formatPayLabel(selYear, selMonth)} · {targetName}</div>
             </div>
             {profile?.role==='director' && (
               <>
@@ -504,7 +512,7 @@ function CompareTab({
       {/* 파일 선택 & AI 추출 안내 */}
       <div className="card p-3 flex items-center justify-between flex-wrap gap-2">
         <div className="text-sm text-gray-600">
-          📌 <strong>{selYear}년 {selMonth}월 · {targetName}</strong> · ERP 자체 계산값과 세무사무실 명세서를 비교합니다.
+          📌 <strong>{formatPayLabel(selYear, selMonth)} · {targetName}</strong> · ERP 자체 계산값과 세무사무실 명세서를 비교합니다.
         </div>
         <div className="flex items-center gap-2">
           {extractedFiles.length > 0 && (

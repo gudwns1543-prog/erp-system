@@ -169,3 +169,59 @@ export const GRADE_ORDER: Record<string,number> = {
 export function sortByGrade<T extends Record<string, any>>(arr: T[]): T[] {
   return [...arr].sort((a,b)=>(GRADE_ORDER[a.grade||'']||99)-(GRADE_ORDER[b.grade||'']||99))
 }
+
+// ─── 급여 관련 ──────
+// 회사 급여 지급일 (매월 10일)
+// 4월 근무분 → 5월 10일 지급
+export const PAY_DAY = 10
+
+/**
+ * 오늘 날짜 기준으로 "가장 최근에 지급된 급여명세서의 근무월"을 반환
+ * 예: 오늘이 5/14 → 5/10 지난 후 → {year:2026, month:4} (4월 근무분)
+ * 예: 오늘이 5/9 → 아직 5/10 지급 안 됨 → {year:2026, month:3} (3월 근무분)
+ */
+export function getLatestPayMonth(today: Date = new Date()): { year: number, month: number } {
+  const y = today.getFullYear()
+  const m = today.getMonth() + 1 // 1~12
+  const d = today.getDate()
+  // 지급일(10일)을 지났는지로 결정
+  // 5월 10일 이후 → 4월 근무분이 최신 명세서
+  // 5월 10일 이전 → 3월 근무분이 최신 명세서
+  let workMonth: number, workYear: number
+  if (d >= PAY_DAY) {
+    // 지급일 지남 → 한 달 전 근무분이 최신
+    workMonth = m - 1
+    workYear = y
+  } else {
+    // 지급일 안 지남 → 두 달 전 근무분이 최신
+    workMonth = m - 2
+    workYear = y
+  }
+  if (workMonth <= 0) {
+    workMonth += 12
+    workYear -= 1
+  }
+  return { year: workYear, month: workMonth }
+}
+
+/**
+ * 근무월 → 지급월/지급일 계산
+ * 예: {year:2026, month:4} → "5월 10일 지급" 
+ */
+export function getPayDate(workYear: number, workMonth: number): { payYear: number, payMonth: number, payDay: number } {
+  let payMonth = workMonth + 1
+  let payYear = workYear
+  if (payMonth > 12) {
+    payMonth -= 12
+    payYear += 1
+  }
+  return { payYear, payMonth, payDay: PAY_DAY }
+}
+
+/**
+ * 급여 표기 (예: "4월 근무 · 5월 10일 지급")
+ */
+export function formatPayLabel(workYear: number, workMonth: number): string {
+  const { payMonth, payDay } = getPayDate(workYear, workMonth)
+  return `${workMonth}월 근무 · ${payMonth}월 ${payDay}일 지급`
+}

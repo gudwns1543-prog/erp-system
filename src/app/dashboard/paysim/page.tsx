@@ -129,10 +129,13 @@ export default function PaySimPage() {
       <div className="flex justify-between items-center mb-1">
         <h1 className="text-lg font-semibold text-gray-800">예상 급여 조회</h1>
         <span className="text-xs bg-purple-50 text-purple-600 px-2.5 py-1 rounded-full font-medium">
-          {thisYear}년 {thisMonth}월
+          {thisYear}년 {thisMonth}월 진행 중
         </span>
       </div>
-      <p className="text-xs text-gray-400 mb-5">이번 달 현재까지 근무 기록 기반으로 계산합니다</p>
+      <p className="text-xs text-gray-400 mb-5">
+        이번 달({thisMonth}월) 현재까지의 근무 기록 기반 예상 급여입니다.
+        실제 지급은 <strong className="text-purple-600">다음 달 10일</strong>에 이루어집니다.
+      </p>
 
       {/* ① 이번달 근태 현황 */}
       <div className="mb-2">

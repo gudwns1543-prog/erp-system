@@ -1,15 +1,17 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
-import { calcSalary, formatWon, sortByGrade } from '@/lib/attendance'
+import { calcSalary, formatWon, sortByGrade, getLatestPayMonth, formatPayLabel } from '@/lib/attendance'
 
 export default function PayrollPage() {
   const [staffList, setStaffList] = useState<any[]>([])
   const [salaryList, setSalaryList] = useState<any[]>([])
   const [alert, setAlert] = useState('')
   const [selIdx, setSelIdx] = useState(0)
-  const [selYear, setSelYear] = useState(new Date().getFullYear())
-  const [month, setMonth] = useState(new Date().getMonth()+1)
+  // 기본값: 최신 지급될 명세서의 근무월 (예: 5/14 → 4월)
+  const initPay = getLatestPayMonth()
+  const [selYear, setSelYear] = useState(initPay.year)
+  const [month, setMonth] = useState(initPay.month)
   const [workData, setWorkData] = useState<any>(null)
   const [result, setResult] = useState<any>(null)
   const [bonus, setBonus] = useState(0)
@@ -115,13 +117,19 @@ export default function PayrollPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <h1 className="text-lg font-semibold text-gray-800 mb-5">급여 일괄계산</h1>
+      <div className="mb-5">
+        <h1 className="text-lg font-semibold text-gray-800">급여 일괄계산</h1>
+        <div className="text-xs text-gray-500 mt-0.5">
+          📅 <strong>{formatPayLabel(selYear, month)}</strong>
+        </div>
+      </div>
       {alert && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{alert}</div>}
 
-      <div className="flex gap-3 mb-5 flex-wrap">
+      <div className="flex items-center gap-2 mb-5 flex-wrap">
         <select className="input w-auto text-sm" value={selIdx} onChange={e=>setSelIdx(+e.target.value)}>
           {staffList.map((s,i)=><option key={s.id} value={i}>{s.name} ({s.grade})</option>)}
         </select>
+        <span className="text-xs text-gray-500 ml-2">근무월:</span>
         <select className="input w-auto text-sm" value={selYear} onChange={e=>setSelYear(+e.target.value)}>
           {years.map(y=><option key={y} value={y}>{y}년</option>)}
         </select>
