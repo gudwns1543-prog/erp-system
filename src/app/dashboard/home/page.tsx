@@ -578,81 +578,81 @@ export default function HomePage() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      {/* 인사말 + 공지사항(가운데) + 출퇴근 */}
-      <div className="mb-5">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex-shrink-0">
-            <div className="text-xl font-semibold text-gray-800">안녕하세요, {profile?.name} {profile?.grade}님 👋</div>
-            <div className="text-sm text-gray-400 mt-0.5">{dateStr}</div>
-          </div>
-
-          {/* 가운데 - 공지사항 (빈 공간 최대 활용) */}
-          <div className="flex-1 min-w-0 cursor-pointer hover:opacity-80 transition-opacity"
-            onClick={()=>{
-              if (typeof window !== 'undefined' && profile?.id) {
-                localStorage.setItem('notice_read_' + profile.id, new Date().toISOString())
-              }
-              router.push('/dashboard/notice')
-            }}>
-            <div className="bg-white rounded-xl border border-gray-100 px-3 py-2 shadow-sm">
-              <div className="flex items-center justify-between mb-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm">📢</span>
-                  <span className="text-xs font-semibold text-gray-700">공지사항</span>
-                  {hasNewNotice && (
-                    <span className="bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">N</span>
-                  )}
-                </div>
-                <span className="text-[10px] text-gray-400">전체 →</span>
-              </div>
-              {recentNotices.length === 0 ? (
-                <div className="text-[11px] text-gray-300">공지사항이 없습니다</div>
-              ) : (
-                <div className="space-y-0.5">
-                  {recentNotices.slice(0,2).map((n:any)=>(
-                    <div key={n.id} className="flex items-center gap-1.5 group">
-                      <span className="text-[11px] text-gray-700 group-hover:text-purple-600 truncate flex-1">
-                        {n.title || '(제목없음)'}
-                      </span>
-                      <span className="text-[10px] text-gray-300 flex-shrink-0">
-                        {n.created_at?.slice(5,10).replace('-','/')}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <div className="flex flex-col items-end gap-1">
-              <div className="text-lg font-bold text-gray-700 tabular-nums leading-tight">{time}</div>
-              <div className="flex gap-2">
-                <button onClick={handleCheckIn} disabled={!!today?.check_in || leaveNotes.includes(today?.note)}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                  <span style={{fontSize:13}}>🔴</span> 출근
-                </button>
-                <button onClick={handleCheckOut} disabled={!today?.check_in||!!today?.check_out}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-600 text-white hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                  <span style={{fontSize:13}}>🔴</span> 퇴근
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-        {today?.check_out && (
-          <div className="mt-3 p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-center justify-between">
-            <span className="text-xs text-amber-700">퇴근 처리됨 · 업무에 복귀하시겠습니까?</span>
-            <button onClick={handleResumeWork} className="text-xs bg-amber-600 text-white px-3 py-1.5 rounded-lg hover:bg-amber-700">🔄 근무 복귀</button>
-          </div>
-        )}
-      </div>
-
       {/* 메인 컨테이너: 좌측 main + 우측 바로가기 세로 */}
       <div className="grid grid-cols-[1fr_auto] gap-4">
 
         {/* ─── 좌측 메인 영역 ─── */}
         <div className="space-y-4 min-w-0">
+
+          {/* 인사말 + 공지사항(가운데) + 출퇴근 - 메인 영역 안에 있어서 캘린더/통계 라인에 맞춰짐 */}
+          <div>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex-shrink-0">
+                <div className="text-xl font-semibold text-gray-800">안녕하세요, {profile?.name} {profile?.grade}님 👋</div>
+                <div className="text-sm text-gray-400 mt-0.5">{dateStr}</div>
+              </div>
+
+              {/* 가운데 - 공지사항 */}
+              <div className="flex-1 min-w-0 cursor-pointer hover:opacity-80 transition-opacity"
+                onClick={()=>{
+                  if (typeof window !== 'undefined' && profile?.id) {
+                    localStorage.setItem('notice_read_' + profile.id, new Date().toISOString())
+                  }
+                  router.push('/dashboard/notice')
+                }}>
+                <div className="bg-white rounded-xl border border-gray-100 px-3 py-2 shadow-sm">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm">📢</span>
+                      <span className="text-xs font-semibold text-gray-700">공지사항</span>
+                      {hasNewNotice && (
+                        <span className="bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">N</span>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-gray-400">전체 →</span>
+                  </div>
+                  {recentNotices.length === 0 ? (
+                    <div className="text-[11px] text-gray-300">공지사항이 없습니다</div>
+                  ) : (
+                    <div className="space-y-0.5">
+                      {recentNotices.slice(0,2).map((n:any)=>(
+                        <div key={n.id} className="flex items-center gap-1.5 group">
+                          <span className="text-[11px] text-gray-700 group-hover:text-purple-600 truncate flex-1">
+                            {n.title || '(제목없음)'}
+                          </span>
+                          <span className="text-[10px] text-gray-300 flex-shrink-0">
+                            {n.created_at?.slice(5,10).replace('-','/')}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <div className="flex flex-col items-end gap-1">
+                  <div className="text-lg font-bold text-gray-700 tabular-nums leading-tight">{time}</div>
+                  <div className="flex gap-2">
+                    <button onClick={handleCheckIn} disabled={!!today?.check_in || leaveNotes.includes(today?.note)}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <span style={{fontSize:13}}>🔴</span> 출근
+                    </button>
+                    <button onClick={handleCheckOut} disabled={!today?.check_in||!!today?.check_out}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-600 text-white hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <span style={{fontSize:13}}>🔴</span> 퇴근
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {today?.check_out && (
+              <div className="mt-3 p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-center justify-between">
+                <span className="text-xs text-amber-700">퇴근 처리됨 · 업무에 복귀하시겠습니까?</span>
+                <button onClick={handleResumeWork} className="text-xs bg-amber-600 text-white px-3 py-1.5 rounded-lg hover:bg-amber-700">🔄 근무 복귀</button>
+              </div>
+            )}
+          </div>
 
           {/* 1단: 내 업무(슬림) + AI 브리핑(슬림) - 높이 낮게 */}
           <div className="grid grid-cols-2 gap-3">
