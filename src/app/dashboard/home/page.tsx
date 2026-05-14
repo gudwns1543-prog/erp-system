@@ -74,6 +74,13 @@ export default function HomePage() {
   // 어제 미퇴근 세션 (퇴근 시간 사후 입력용)
   const [unclockedSession, setUnclockedSession] = useState<any>(null)
   const [pickedCheckoutTime, setPickedCheckoutTime] = useState('')
+  // 홈 UI: 접힘 상태
+  const [briefingOpen, setBriefingOpen] = useState(false)
+  const [newsExpanded, setNewsExpanded] = useState(false)
+  // 업무 카운트
+  const [taskCounts, setTaskCounts] = useState({ todo: 0, in_progress: 0, blocked: 0, overdue: 0 })
+  // 공지사항 새글 여부 (마지막 읽은 시각 이후)
+  const [hasNewNotice, setHasNewNotice] = useState(false)
   const [kecoFilter, setKecoFilter] = useState('전체')
 
   function nowStr() {
@@ -160,13 +167,15 @@ export default function HomePage() {
     })
     const approverId = sortedDirs[0]?.id
 
-    // attendance에 본인이 입력한 시각 기록 + note 변경 (결재 전까지 임시 표시)
+    // attendance는 그대로 유지 (야간자동컷오프 상태 유지)
+    // 단 note만 '수정요청중'으로 변경하여 팝업이 다시 안 뜨도록
+    // (check_out 시각은 변경하지 않음 - 결재 승인되어야 비로소 반영)
     await supabase.from('attendance').update({
-      check_out: pickedCheckoutTime + ':00',
       note: '수정요청중',
     }).eq('id', unclockedSession.id)
 
-    // 결재자에게 알림 (approvals 테이블에 type='퇴근시간수정' 으로 기록)
+    // 결재자에게 결재 요청 (approvals 테이블에 type='퇴근시간수정')
+    // 본인이 입력한 시각은 reason에 상세히 기록 + start_time/end_time에도 기록
     if (approverId) {
       await supabase.from('approvals').insert({
         type: '퇴근시간수정',
@@ -174,8 +183,10 @@ export default function HomePage() {
         approver_id: approverId,
         start_date: unclockedSession.work_date,
         end_date: unclockedSession.work_date,
+        start_time: unclockedSession.check_in, // 출근 시각
+        end_time: pickedCheckoutTime + ':00', // 본인이 주장하는 퇴근 시각
         status: 'pending',
-        reason: `${unclockedSession.work_date} 퇴근 시간 사후 입력: ${unclockedSession.check_in.slice(0,5)} → ${pickedCheckoutTime}${outMin < 12*60 ? ' (익일)' : ''}`,
+        reason: `${unclockedSession.work_date} 퇴근시각 사후입력 요청\n출근: ${unclockedSession.check_in.slice(0,5)}\n퇴근(본인 입력): ${pickedCheckoutTime}${outMin < 12*60 ? ' (익일)' : ''}\n승인 시 근태기록에 반영됩니다.`,
       })
     }
 
@@ -316,6 +327,30 @@ export default function HomePage() {
     const { data: notices } = await supabase.from('notices')
       .select('*, author:author_id(name)').order('created_at',{ascending:false}).limit(3)
     setRecentNotices(notices||[])
+
+    // 새 공지 여부 체크 (마지막 읽은 시각보다 최신 공지가 있으면)
+    if (typeof window !== 'undefined' && notices && notices.length > 0) {
+      const lastRead = localStorage.getItem('notice_read_' + session.user.id) || '2000-01-01'
+      const newest = notices[0].created_at
+      setHasNewNotice(newest > lastRead)
+    }
+
+    // 업무 카운트 (내가 담당자거나 등록자)
+    const { data: myTasks } = await supabase.from('tasks')
+      .select('status, due_date, assignees, creator_id')
+    const today = todayStr()
+    const counts = { todo: 0, in_progress: 0, blocked: 0, overdue: 0 }
+    for (const t of (myTasks || [])) {
+      const isMine = t.creator_id === session.user.id || (t.assignees || []).includes(session.user.id)
+      if (!isMine) continue
+      if (t.status === 'done') continue
+      if (t.status === 'todo') counts.todo++
+      else if (t.status === 'in_progress') counts.in_progress++
+      else if (t.status === 'blocked') counts.blocked++
+      // 마감 지난 미완료 업무
+      if (t.due_date && t.due_date < today) counts.overdue++
+    }
+    setTaskCounts(counts)
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -493,11 +528,7 @@ export default function HomePage() {
     setBriefingLoading(false)
   }
 
-  useEffect(() => {
-    if (profile?.id) {
-      loadBriefing()
-    }
-  }, [profile?.id])
+  // 브리핑은 사용자가 펼칠 때만 호출됨 (자동 호출 제거)
   useEffect(() => {
     const id = setInterval(() => {
       const n = new Date()
@@ -577,95 +608,74 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* AI 브리핑 + 환경공단 소식 2열 */}
-      <div className="grid grid-cols-2 gap-4 mb-5">
+      {/* 상단 슬림 영역: 공지사항 + 업무 미니카드 */}
+      <div className="grid grid-cols-3 gap-3 mb-5">
 
-        {/* AI 업무 브리핑 */}
-        <div className="card border-purple-100 bg-gradient-to-r from-purple-50 to-white">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-full bg-purple-600 flex items-center justify-center text-sm">✨</div>
-              <span className="text-sm font-semibold text-gray-800">AI 업무 브리핑</span>
-              <span className="text-xs text-gray-400">오늘의 일정과 할 일을 정리했어요</span>
+        {/* 공지사항 슬림 카드 */}
+        <div className="card cursor-pointer hover:border-purple-200 transition-colors"
+          onClick={()=>{
+            if (typeof window !== 'undefined' && profile?.id) {
+              localStorage.setItem('notice_read_' + profile.id, new Date().toISOString())
+            }
+            router.push('/dashboard/notice')
+          }}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm">📢</span>
+              <span className="text-sm font-semibold text-gray-800">공지사항</span>
+              {hasNewNotice && (
+                <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ml-0.5">N</span>
+              )}
             </div>
-            <button onClick={loadBriefing} disabled={briefingLoading}
-              className="text-xs text-purple-600 hover:text-purple-800 disabled:text-gray-400 flex items-center gap-1">
-              {briefingLoading ? '⏳' : '🔄'} {briefingLoading ? '분석 중...' : '새로고침'}
-            </button>
+            <span className="text-xs text-gray-400">전체 →</span>
           </div>
-          {briefingLoading ? (
-            <div className="flex items-center gap-3 py-2">
-              <div className="flex gap-1">
-                <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'0ms'}}/>
-                <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'150ms'}}/>
-                <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'300ms'}}/>
-              </div>
-              <span className="text-xs text-gray-400">AI가 오늘의 업무를 분석하고 있어요...</span>
-            </div>
-          ) : briefing ? (
-            <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{briefing}</div>
+          {recentNotices.length === 0 ? (
+            <div className="text-xs text-gray-300 py-2">공지사항이 없습니다</div>
           ) : (
-            <div className="text-sm text-gray-400 py-1">브리핑을 불러오는 중...</div>
+            <div className="space-y-1">
+              {recentNotices.slice(0,2).map((n:any)=>(
+                <div key={n.id} className="flex items-center gap-1.5 group">
+                  <span className="text-xs text-gray-700 group-hover:text-purple-600 truncate flex-1">
+                    {n.title || '(제목없음)'}
+                  </span>
+                  <span className="text-[10px] text-gray-300 flex-shrink-0">
+                    {n.created_at?.slice(5,10).replace('-','/')}
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
-        {/* 한국환경공단 최신 소식 */}
-        <div className="card">
+        {/* 업무 미니카드 */}
+        <div className="card cursor-pointer hover:border-purple-200 transition-colors col-span-2"
+          onClick={()=>router.push('/dashboard/tasks')}>
           <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <span className="text-base">🌿</span>
-              <span className="text-sm font-semibold text-gray-800">한국환경공단 최신 소식</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm">✔️</span>
+              <span className="text-sm font-semibold text-gray-800">내 업무</span>
+              {taskCounts.overdue > 0 && (
+                <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ml-0.5">
+                  ⚠️ 마감 지남 {taskCounts.overdue}
+                </span>
+              )}
             </div>
-            <a href="https://www.keco.or.kr" target="_blank" rel="noreferrer"
-              className="text-xs text-gray-400 hover:text-green-600 transition-colors">
-              공단 바로가기 →
-            </a>
+            <span className="text-xs text-gray-400">전체 →</span>
           </div>
-          {/* 카테고리 필터 */}
-          <div className="flex gap-1 mb-2 flex-wrap">
-            {['전체','공지사항','언론보도','보도자료','입찰공고'].map(f => (
-              <button key={f} onClick={() => setKecoFilter(f)}
-                className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
-                  kecoFilter === f
-                    ? 'bg-green-600 text-white font-medium'
-                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                }`}>
-                {f}
-              </button>
-            ))}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-gray-50 rounded-lg p-2 text-center">
+              <div className="text-xs text-gray-500 mb-0.5">할일</div>
+              <div className="text-lg font-bold text-gray-700">{taskCounts.todo}</div>
+            </div>
+            <div className="bg-blue-50 rounded-lg p-2 text-center">
+              <div className="text-xs text-blue-600 mb-0.5">진행중</div>
+              <div className="text-lg font-bold text-blue-700">{taskCounts.in_progress}</div>
+            </div>
+            <div className="bg-red-50 rounded-lg p-2 text-center">
+              <div className="text-xs text-red-600 mb-0.5">대기/막힘</div>
+              <div className="text-lg font-bold text-red-700">{taskCounts.blocked}</div>
+            </div>
           </div>
-          {kecoLoading ? (
-            <div className="flex items-center gap-2 py-4 text-gray-400">
-              <div className="animate-spin text-sm">⏳</div>
-              <span className="text-xs">공단 소식을 불러오는 중...</span>
-            </div>
-          ) : kecoItems.length === 0 ? (
-            <div className="text-xs text-gray-400 py-4 text-center">게시글을 불러올 수 없습니다.</div>
-          ) : (
-            <div className="space-y-0.5">
-              {(kecoFilter === '전체' ? kecoItems : kecoItems.filter(i => i.type === kecoFilter))
-                .slice(0, 7)
-                .map((item, idx) => (
-                  <a key={idx} href={item.url} target="_blank" rel="noreferrer"
-                    className="flex items-start gap-2 p-1.5 rounded-lg hover:bg-gray-50 transition-colors group">
-                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0 mt-0.5 ${
-                      item.type === '공지사항' ? 'bg-blue-100 text-blue-700' :
-                      item.type === '언론보도' ? 'bg-green-100 text-green-700' :
-                      item.type === '보도자료' ? 'bg-teal-100 text-teal-700' :
-                      'bg-amber-100 text-amber-700'
-                    }`}>{item.type}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs text-gray-700 group-hover:text-green-600 transition-colors line-clamp-1">
-                        {item.title}
-                      </div>
-                      <div className="text-xs text-gray-400">{item.date}</div>
-                    </div>
-                    <span className="text-gray-300 group-hover:text-green-400 text-xs flex-shrink-0">↗</span>
-                  </a>
-                ))
-              }
-            </div>
-          )}
         </div>
       </div>
 
@@ -799,6 +809,105 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* AI 브리핑 + 환경공단 소식 (접힘 슬림) */}
+      <div className="grid grid-cols-2 gap-3 mb-5">
+        {/* AI 업무 브리핑 (접힘) */}
+        <div className="card border-purple-100 bg-gradient-to-r from-purple-50/50 to-white">
+          <button onClick={()=>{ setBriefingOpen(o => !o); if (!briefingOpen && !briefing && !briefingLoading) loadBriefing() }}
+            className="w-full flex items-center justify-between hover:opacity-80 transition-opacity">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded-full bg-purple-600 flex items-center justify-center text-xs">✨</div>
+              <span className="text-sm font-semibold text-gray-800">AI 업무 브리핑</span>
+              <span className="text-xs text-gray-400">{briefingOpen ? '' : '클릭하여 펼치기'}</span>
+            </div>
+            <span className="text-xs text-gray-400">{briefingOpen ? '▲' : '▼'}</span>
+          </button>
+          {briefingOpen && (
+            <div className="mt-3 pt-3 border-t border-purple-100">
+              <div className="flex justify-end mb-2">
+                <button onClick={loadBriefing} disabled={briefingLoading}
+                  className="text-xs text-purple-600 hover:text-purple-800 disabled:text-gray-400">
+                  {briefingLoading ? '⏳ 분석 중...' : '🔄 새로고침'}
+                </button>
+              </div>
+              {briefingLoading ? (
+                <div className="flex items-center gap-2 py-2">
+                  <div className="flex gap-1">
+                    <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'0ms'}}/>
+                    <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'150ms'}}/>
+                    <div className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{animationDelay:'300ms'}}/>
+                  </div>
+                  <span className="text-xs text-gray-400">AI가 분석 중...</span>
+                </div>
+              ) : briefing ? (
+                <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{briefing}</div>
+              ) : (
+                <div className="text-sm text-gray-400 py-1">새로고침을 눌러주세요</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 환경공단 뉴스 (2개 + 더보기) */}
+        <div className="card">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🌿</span>
+              <span className="text-sm font-semibold text-gray-800">한국환경공단 최신 소식</span>
+            </div>
+            <a href="https://www.keco.or.kr" target="_blank" rel="noreferrer"
+              className="text-xs text-gray-400 hover:text-green-600">공단 →</a>
+          </div>
+          <div className="flex gap-1 mb-2 flex-wrap">
+            {['전체','공지사항','언론보도','보도자료','입찰공고'].map(f => (
+              <button key={f} onClick={() => setKecoFilter(f)}
+                className={`text-xs px-2 py-0.5 rounded-full ${
+                  kecoFilter === f ? 'bg-green-600 text-white font-medium' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                }`}>
+                {f}
+              </button>
+            ))}
+          </div>
+          {kecoLoading ? (
+            <div className="text-xs text-gray-400 py-3 text-center">공단 소식을 불러오는 중...</div>
+          ) : kecoItems.length === 0 ? (
+            <div className="text-xs text-gray-400 py-3 text-center">게시글을 불러올 수 없습니다.</div>
+          ) : (
+            (() => {
+              const list = (kecoFilter === '전체' ? kecoItems : kecoItems.filter(i => i.type === kecoFilter))
+              const displayed = newsExpanded ? list.slice(0, 10) : list.slice(0, 2)
+              return (
+                <>
+                  <div className="space-y-0.5">
+                    {displayed.map((item, idx) => (
+                      <a key={idx} href={item.url} target="_blank" rel="noreferrer"
+                        className="flex items-start gap-2 p-1.5 rounded-lg hover:bg-gray-50 group">
+                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0 mt-0.5 ${
+                          item.type === '공지사항' ? 'bg-blue-100 text-blue-700' :
+                          item.type === '언론보도' ? 'bg-green-100 text-green-700' :
+                          item.type === '보도자료' ? 'bg-teal-100 text-teal-700' :
+                          'bg-amber-100 text-amber-700'
+                        }`}>{item.type}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs text-gray-700 group-hover:text-green-600 line-clamp-1">{item.title}</div>
+                          <div className="text-xs text-gray-400">{item.date}</div>
+                        </div>
+                      </a>
+                    ))}
+                  </div>
+                  {list.length > 2 && (
+                    <button onClick={()=>setNewsExpanded(v=>!v)}
+                      className="w-full mt-2 text-xs text-gray-500 hover:text-green-600 py-1 border-t border-gray-100">
+                      {newsExpanded ? '▲ 접기' : `▼ ${list.length-2}개 더보기`}
+                    </button>
+                  )}
+                </>
+              )
+            })()
+          )}
+        </div>
+      </div>
+
       {/* 하단 3열 */}
       <div className="grid grid-cols-3 gap-4">
         {/* 바로가기 */}
@@ -815,7 +924,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* 결재대기 + 공지 */}
+        {/* 결재대기 */}
         <div className="space-y-3">
           {profile?.role==='director' && pendingApprovals.length>0 && (
             <div className="card">
@@ -837,23 +946,6 @@ export default function HomePage() {
               ))}
             </div>
           )}
-          <div className="card">
-            <div className="flex justify-between items-center mb-2">
-              <div className="text-sm font-medium text-gray-700">📢 최근 공지</div>
-              <button onClick={()=>router.push('/dashboard/notice')} className="text-xs text-purple-600">전체 →</button>
-            </div>
-            {recentNotices.length===0
-              ? <div className="py-3 text-center text-gray-300 text-xs">공지사항이 없습니다</div>
-              : recentNotices.map((n:any)=>(
-                <div key={n.id}
-                  className="py-1.5 border-b border-gray-50 last:border-0 cursor-pointer hover:bg-purple-50 -mx-3 px-3 rounded transition-colors"
-                  onClick={()=>router.push(`/dashboard/notice?id=${n.id}`)}>
-                  <div className="text-xs font-medium text-gray-800 truncate">{n.title}</div>
-                  <div className="text-xs text-gray-400 mt-0.5">{(n.author as any)?.name} · {n.created_at?.slice(0,10)}</div>
-                </div>
-              ))
-            }
-          </div>
         </div>
 
         {/* 팀원현황 + 나의결재 */}

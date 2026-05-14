@@ -67,14 +67,15 @@ export default function ApprovalPage() {
     const supabase = createClient()
     await supabase.from('approvals').update({status, updated_at: new Date().toISOString()}).eq('id', id)
 
-    // 반려 시 - 퇴근시간수정 요청이면 attendance를 원래 야간컷오프 상태로 되돌림 (재요청 가능하게)
+    // 반려 시 - 퇴근시간수정 요청이면 attendance note만 '수정요청중' → '야간자동컷오프'로 복원
+    // (이제는 attendance의 check_out을 건드리지 않으므로 단순 note 복원만 필요)
     if (status === 'rejected') {
       const { data: approval } = await supabase.from('approvals')
         .select('type, requester_id, start_date').eq('id', id).single()
       if (approval && approval.type === '퇴근시간수정') {
         // 야간컷오프 상태로 복원 (다음번 접속 시 다시 팝업 뜸)
         await supabase.from('attendance')
-          .update({ check_out: '07:00:00', note: '야간자동컷오프' })
+          .update({ note: '야간자동컷오프' })
           .eq('user_id', approval.requester_id)
           .eq('work_date', approval.start_date)
           .eq('note', '수정요청중')
@@ -172,13 +173,51 @@ export default function ApprovalPage() {
         }
       }
 
-      // 퇴근시간수정 승인: attendance의 note를 '본인수정완료'로 변경
+      // 퇴근시간수정 승인: 본인이 신청한 시각으로 attendance 갱신 + 근무시간 재계산
       if (approval && approval.type === '퇴근시간수정') {
-        await supabase.from('attendance')
-          .update({ note: '본인수정완료' })
-          .eq('user_id', approval.requester_id)
-          .eq('work_date', approval.start_date)
-          .in('note', ['수정요청중', '야간자동컷오프'])
+        // approval에 저장된 본인 입력 시각 (end_time) 으로 attendance 업데이트
+        const newCheckOut = approval.end_time // "HH:MM:SS" 형식
+        const checkIn = approval.start_time // "HH:MM:SS" 형식
+        if (newCheckOut && checkIn) {
+          // 근무시간 재계산 (정규/시간외/야간)
+          const parseSec = (t: string) => {
+            const p = t.split(':').map(Number)
+            return p[0]*3600 + p[1]*60 + (p[2]||0)
+          }
+          const overlap = (s1:number,e1:number,s2:number,e2:number) =>
+            Math.max(0, Math.min(e1,e2) - Math.max(s1,s2))
+          const secToH = (s:number) => Math.round(Math.max(s,0)/360)/10
+
+          const inSec = parseSec(checkIn)
+          let outSec = parseSec(newCheckOut)
+          // 익일로 넘어간 경우 (예: 02:30 → outSec < inSec) +86400
+          if (outSec < inSec) outSec += 86400
+
+          const lunch = overlap(inSec, outSec, 43200, 46800) // 12~13시
+          const dinner = overlap(inSec, outSec, 64800, 68400) // 18~19시
+          const reg = Math.max(0, overlap(inSec, outSec, 32400, 64800) - lunch)
+          const ext = Math.max(0, overlap(inSec, outSec, 68400, 79200) - dinner)
+          const night = overlap(inSec, outSec, 79200, 111600) // 22시~익일 07시
+
+          await supabase.from('attendance')
+            .update({
+              check_out: newCheckOut,
+              reg_hours: secToH(reg),
+              ext_hours: secToH(ext),
+              night_hours: secToH(night),
+              note: '본인수정완료',
+            })
+            .eq('user_id', approval.requester_id)
+            .eq('work_date', approval.start_date)
+            .in('note', ['수정요청중', '야간자동컷오프'])
+        } else {
+          // 안전장치: 시간 정보가 없으면 note만 변경
+          await supabase.from('attendance')
+            .update({ note: '본인수정완료' })
+            .eq('user_id', approval.requester_id)
+            .eq('work_date', approval.start_date)
+            .in('note', ['수정요청중', '야간자동컷오프'])
+        }
       }
     }
 
