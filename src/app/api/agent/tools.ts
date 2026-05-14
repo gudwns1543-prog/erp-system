@@ -218,12 +218,12 @@ export const tools = [
   },
   {
     name: 'set_task_progress',
-    description: '업무 진척률을 설정합니다 (0~100). 100이면 자동으로 완료 상태로.',
+    description: '본인(담당자)의 진척률을 설정합니다 (0~100). 각 담당자마다 별도의 말이 있고, 본인 것만 움직일 수 있습니다. 전체 평균 진척률은 자동 계산됨.',
     input_schema: {
       type: 'object',
       properties: {
         task_id: { type: 'string', description: '업무 ID' },
-        progress: { type: 'number', description: '진척률 0~100' },
+        progress: { type: 'number', description: '본인의 진척률 0~100' },
       },
       required: ['task_id','progress'],
     },
@@ -602,27 +602,53 @@ export async function executeTool(name: string, input: any, ctx: Ctx): Promise<a
       return { 성공: true, 메시지: `✅ "${data.title}" → ${labels[input.status]}` }
     }
 
-    // 16) 진척률 설정
+    // 16) 진척률 설정 - 본인 말만 (담당자별)
     case 'set_task_progress': {
       const progress = Math.min(100, Math.max(0, input.progress))
-      const updateData: any = { progress, updated_at: new Date().toISOString() }
-      // 100이면 자동 완료, 0이면 자동 할일
-      if (progress === 100) updateData.status = 'done'
-      else if (progress > 0) updateData.status = 'in_progress'
+      // 기존 task 조회
+      const { data: existing } = await supabase.from('tasks')
+        .select('id, title, assignees, assignee_progress, status').eq('id', input.task_id).maybeSingle()
+      if (!existing) return { 오류: '업무를 찾을 수 없습니다.' }
+      // 본인이 담당자인지 확인
+      const isAssignee = (existing.assignees || []).includes(userId)
+      if (!isAssignee) {
+        return { 오류: '본인이 담당자인 업무의 진척률만 수정할 수 있습니다. (담당자별로 각자 말이 따로 있음)' }
+      }
+      // 본인 진척률 갱신
+      const newAsgProg: Record<string, number> = { ...(existing.assignee_progress || {}) }
+      newAsgProg[userId] = progress
+      // 전체 평균 계산
+      const assignees = existing.assignees || []
+      const avg = assignees.length === 0 ? progress :
+        Math.round(assignees.reduce((s: number, id: string) => s + (newAsgProg[id] || 0), 0) / assignees.length)
+      const updateData: any = {
+        assignee_progress: newAsgProg,
+        progress: avg,
+        updated_at: new Date().toISOString()
+      }
+      // 전체 평균 100이면 자동 완료, 0이면 자동 할일
+      if (avg === 100) updateData.status = 'done'
+      else if (avg > 0 && existing.status === 'todo') updateData.status = 'in_progress'
       const { data, error } = await supabase.from('tasks')
         .update(updateData).eq('id', input.task_id).select().single()
       if (error) return { 오류: error.message }
-      return { 성공: true, 메시지: `✅ "${data.title}" 진척률 ${progress}%${progress===100?' (완료)':''}` }
+      return {
+        성공: true,
+        메시지: `✅ "${data.title}" - 본인 진척률 ${progress}% (전체 평균 ${avg}%)${avg===100?' 🎉 완료!':''}`
+      }
     }
 
-    // 17) 업무 삭제
+    // 17) 업무 삭제 - 작성자 또는 관리자만
     case 'delete_task': {
       const { data: existing } = await supabase.from('tasks')
         .select('id, title, creator_id, assignees').eq('id', input.task_id).maybeSingle()
       if (!existing) return { 오류: '업무를 찾을 수 없습니다.' }
-      const isAssignee = (existing.assignees || []).includes(userId)
-      if (existing.creator_id !== userId && !isAssignee) {
-        return { 오류: '본인이 만들거나 담당하는 업무만 삭제할 수 있습니다.' }
+      // 본인이 작성자인지, 또는 관리자(director)인지 확인
+      const { data: me } = await supabase.from('profiles').select('role').eq('id', userId).maybeSingle()
+      const isAdmin = me?.role === 'director'
+      const isCreator = existing.creator_id === userId
+      if (!isCreator && !isAdmin) {
+        return { 오류: '업무 작성자 또는 관리자만 삭제할 수 있습니다.' }
       }
       const { error } = await supabase.from('tasks').delete().eq('id', input.task_id)
       if (error) return { 오류: error.message }

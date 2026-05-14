@@ -12,10 +12,23 @@ type Task = {
   status: 'todo' | 'in_progress' | 'done' | 'blocked'
   priority: 'high' | 'normal' | 'low'
   progress: number
+  assignee_progress: Record<string, number> | null // 담당자별 진척률
   visibility: 'private' | 'shared'
   created_at: string
   updated_at: string
   creator?: { id: string, name: string } | null
+}
+
+// 담당자 진척률 평균 계산
+function avgProgress(task: Task): number {
+  const ap = task.assignee_progress || {}
+  const assignees = task.assignees || []
+  if (assignees.length === 0) return task.progress || 0
+  let sum = 0
+  for (const aid of assignees) {
+    sum += (ap[aid] || 0)
+  }
+  return Math.round(sum / assignees.length)
 }
 
 const STATUS_META = {
@@ -102,7 +115,20 @@ export default function TasksPage() {
     done: sorted.filter(t => t.status === 'done'),
   }
 
+  // 삭제 권한 체크: 작성자 또는 관리자(director)만
+  function canDeleteTask(task: Task): boolean {
+    if (!profile) return false
+    if (profile.role === 'director') return true
+    return task.creator_id === profile.id
+  }
+
   async function deleteTask(id: string) {
+    const task = tasks.find(t => t.id === id)
+    if (!task) return
+    if (!canDeleteTask(task)) {
+      alert('업무 작성자 또는 관리자만 삭제할 수 있습니다.')
+      return
+    }
     if (!confirm('이 업무를 삭제하시겠습니까?')) return
     const supabase = createClient()
     await supabase.from('tasks').delete().eq('id', id)
@@ -265,16 +291,23 @@ export default function TasksPage() {
                       ) : <span className="text-xs text-gray-300">-</span>}
                     </td>
                     <td className="px-3 py-2.5 text-center">
-                      <div className="flex items-center gap-1.5">
-                        <div className="flex-1 bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                          <div className="bg-purple-500 h-1.5" style={{width:`${t.progress}%`}} />
-                        </div>
-                        <span className="text-xs text-gray-500 w-8 text-right">{t.progress}%</span>
-                      </div>
+                      {(() => {
+                        const avg = avgProgress(t)
+                        return (
+                          <div className="flex items-center gap-1.5">
+                            <div className="flex-1 bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                              <div className="bg-purple-500 h-1.5" style={{width:`${avg}%`}} />
+                            </div>
+                            <span className="text-xs text-gray-500 w-8 text-right">{avg}%</span>
+                          </div>
+                        )
+                      })()}
                     </td>
                     <td className="px-3 py-2.5 text-center">
-                      <button onClick={(e)=>{e.stopPropagation();deleteTask(t.id)}}
-                        className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
+                      {canDeleteTask(t) && (
+                        <button onClick={(e)=>{e.stopPropagation();deleteTask(t.id)}}
+                          className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
+                      )}
                     </td>
                   </tr>
                 )
@@ -289,6 +322,7 @@ export default function TasksPage() {
           task={editing}
           employees={employees}
           currentUserId={profile?.id}
+          canDelete={editing ? canDeleteTask(editing) : false}
           onClose={()=>{ setShowCreate(false); setEditing(null) }}
           onSaved={()=>{ setShowCreate(false); setEditing(null); load() }}
           onDelete={editing ? ()=>{ deleteTask(editing.id); setEditing(null) } : undefined}
@@ -336,20 +370,27 @@ function KanbanCard({ task, empMap, onClick, dueDateStatus }: {
           }`}>{task.due_date.slice(5)}{dueStat==='overdue'?' ⚠️':dueStat==='today'?' 🔥':''}</span>
         )}
       </div>
-      {task.progress > 0 && task.progress < 100 && (
-        <div className="mt-1.5 bg-gray-100 rounded-full h-1 overflow-hidden">
-          <div className="bg-purple-500 h-1" style={{width:`${task.progress}%`}} />
-        </div>
-      )}
+      {(() => {
+        const avg = avgProgress(task)
+        if (avg > 0 && avg < 100) {
+          return (
+            <div className="mt-1.5 bg-gray-100 rounded-full h-1 overflow-hidden">
+              <div className="bg-purple-500 h-1" style={{width:`${avg}%`}} />
+            </div>
+          )
+        }
+        return null
+      })()}
     </div>
   )
 }
 
 // ─── 새 업무 / 수정 모달 ──────
-function TaskModal({ task, employees, currentUserId, onClose, onSaved, onDelete }: {
+function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved, onDelete }: {
   task: Task | null
   employees: any[]
   currentUserId: string
+  canDelete: boolean
   onClose: ()=>void
   onSaved: ()=>void
   onDelete?: ()=>void
@@ -361,11 +402,26 @@ function TaskModal({ task, employees, currentUserId, onClose, onSaved, onDelete 
     due_date: task?.due_date || '',
     status: task?.status || 'todo',
     priority: task?.priority || 'normal',
-    progress: task?.progress ?? 0,
     visibility: task?.visibility || 'shared', // 기본 = 공유
   })
+  // 담당자별 진척률 (각자 말)
+  const [assigneeProgress, setAssigneeProgress] = useState<Record<string, number>>(
+    task?.assignee_progress || {}
+  )
   const [showAsgDropdown, setShowAsgDropdown] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // 본인 진척률만 수정 가능 - 본인 progress 조정 함수
+  function adjustMyProgress(delta: number) {
+    setAssigneeProgress(p => {
+      const cur = p[currentUserId] ?? 0
+      const next = Math.min(100, Math.max(0, cur + delta))
+      return { ...p, [currentUserId]: next }
+    })
+  }
+  function setMyProgress(value: number) {
+    setAssigneeProgress(p => ({ ...p, [currentUserId]: Math.min(100, Math.max(0, value)) }))
+  }
 
   // 드롭다운 바깥 클릭 시 닫기
   useEffect(() => {
@@ -389,10 +445,19 @@ function TaskModal({ task, employees, currentUserId, onClose, onSaved, onDelete 
   }
 
   const selectedEmps = form.assignees.map(id => employees.find(e => e.id === id)).filter(Boolean)
+  const isMyAssignee = form.assignees.includes(currentUserId)
+  // 평균 진척률 (담당자들만)
+  const avgProg = form.assignees.length === 0 ? 0 :
+    Math.round(form.assignees.reduce((s, id) => s + (assigneeProgress[id] || 0), 0) / form.assignees.length)
 
   async function save() {
     if (!form.title.trim()) { alert('제목을 입력해주세요.'); return }
     const supabase = createClient()
+    // 담당자 아닌 사람의 진척률은 정리
+    const cleanedProgress: Record<string, number> = {}
+    for (const aid of form.assignees) {
+      cleanedProgress[aid] = assigneeProgress[aid] || 0
+    }
     if (task) {
       await supabase.from('tasks').update({
         title: form.title,
@@ -401,7 +466,8 @@ function TaskModal({ task, employees, currentUserId, onClose, onSaved, onDelete 
         due_date: form.due_date || null,
         status: form.status,
         priority: form.priority,
-        progress: form.progress,
+        progress: avgProg, // 평균 진척률 자동 계산
+        assignee_progress: cleanedProgress,
         visibility: form.visibility,
         updated_at: new Date().toISOString(),
       }).eq('id', task.id)
@@ -414,7 +480,8 @@ function TaskModal({ task, employees, currentUserId, onClose, onSaved, onDelete 
         due_date: form.due_date || null,
         status: form.status,
         priority: form.priority,
-        progress: form.progress,
+        progress: avgProg,
+        assignee_progress: cleanedProgress,
         visibility: form.visibility,
       })
     }
@@ -531,18 +598,88 @@ function TaskModal({ task, employees, currentUserId, onClose, onSaved, onDelete 
               <option value="done">완료</option>
             </select>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">진척률: {form.progress}%</label>
-            <input type="range" min="0" max="100" step="10" className="w-full accent-purple-600"
-              value={form.progress} onChange={e=>setForm(f=>({...f,progress:parseInt(e.target.value)}))} />
+          {/* 진척률 트랙 (담당자별 각자 말) */}
+          <div className="bg-purple-50/40 rounded-lg p-3 border border-purple-100">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm">🏁</span>
+                <span className="text-xs font-semibold text-gray-700">담당자별 진척률 (각자 말)</span>
+              </div>
+              <span className="text-xs text-purple-700 font-bold">전체 평균 {avgProg}%</span>
+            </div>
+            {form.assignees.length === 0 ? (
+              <div className="text-xs text-gray-400 text-center py-2">담당자를 먼저 선택해주세요</div>
+            ) : (
+              <div className="space-y-2">
+                {form.assignees.map(aid => {
+                  const emp = employees.find(e => e.id === aid)
+                  if (!emp) return null
+                  const myProg = assigneeProgress[aid] || 0
+                  const isMe = aid === currentUserId
+                  return (
+                    <div key={aid} className="flex items-center gap-2">
+                      <span className="text-xs px-2 py-0.5 rounded font-medium w-20 flex-shrink-0 text-center"
+                        style={{backgroundColor: emp.color || '#E6F1FB', color: emp.tc || '#185FA5'}}>
+                        {emp.name}{isMe ? ' 👈' : ''}
+                      </span>
+                      {/* 진척률 바 */}
+                      <div className="flex-1 relative h-5 bg-white rounded-full overflow-hidden border border-gray-200">
+                        <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-purple-400 to-purple-600 transition-all"
+                          style={{width:`${myProg}%`}} />
+                        {/* 말 (이모지) */}
+                        <div className="absolute inset-y-0 flex items-center transition-all"
+                          style={{left: `calc(${myProg}% - 12px)`}}>
+                          <span className="text-base" style={{filter:'drop-shadow(0 1px 2px rgba(0,0,0,0.2))'}}>
+                            {isMe ? '🏃' : '🚶'}
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-xs font-bold text-gray-700 w-10 text-right">{myProg}%</span>
+                      {/* 본인 것만 조정 버튼 */}
+                      {isMe ? (
+                        <div className="flex gap-0.5">
+                          <button onClick={()=>adjustMyProgress(-10)}
+                            className="px-1.5 py-0.5 text-xs bg-white border border-gray-200 rounded hover:bg-gray-50">⬅</button>
+                          <button onClick={()=>adjustMyProgress(10)}
+                            className="px-1.5 py-0.5 text-xs bg-white border border-gray-200 rounded hover:bg-gray-50">➡</button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-300 w-12 text-center">읽기만</span>
+                      )}
+                    </div>
+                  )
+                })}
+                {/* 본인이 담당자라면 슬라이더로도 조정 가능 */}
+                {isMyAssignee && (
+                  <div className="pt-2 border-t border-purple-100 mt-2">
+                    <div className="text-[10px] text-gray-500 mb-1">내 진척률 슬라이더</div>
+                    <input type="range" min="0" max="100" step="5" className="w-full accent-purple-600"
+                      value={assigneeProgress[currentUserId] || 0}
+                      onChange={e=>setMyProgress(parseInt(e.target.value))} />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+
+          {/* 작성자 정보 (수정 모드일 때만) */}
+          {task && (
+            <div className="text-[11px] text-gray-400 text-right pt-1">
+              작성자: <span className="text-gray-600 font-medium">{task.creator?.name || '알 수 없음'}</span>
+              {' · '}
+              등록일: {task.created_at?.slice(0, 10)}
+            </div>
+          )}
         </div>
         <div className="p-4 border-t border-gray-100 flex justify-between gap-2">
           <div>
-            {onDelete && (
+            {onDelete && canDelete && (
               <button onClick={onDelete} className="btn-secondary text-sm text-red-500 hover:bg-red-50">
                 🗑 삭제
               </button>
+            )}
+            {task && !canDelete && (
+              <span className="text-[11px] text-gray-400">삭제는 작성자 또는 관리자만 가능</span>
             )}
           </div>
           <div className="flex gap-2">

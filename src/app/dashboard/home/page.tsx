@@ -625,16 +625,18 @@ export default function HomePage() {
           </div>
 
           <div className="flex items-center gap-3 flex-shrink-0">
-            <div className="text-xl font-bold text-gray-700 tabular-nums">{time}</div>
-            <div className="flex gap-2">
-              <button onClick={handleCheckIn} disabled={!!today?.check_in || leaveNotes.includes(today?.note)}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                <span style={{fontSize:16}}>🔴</span> 출근
-              </button>
-              <button onClick={handleCheckOut} disabled={!today?.check_in||!!today?.check_out}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium bg-gray-600 text-white hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                <span style={{fontSize:16}}>🔴</span> 퇴근
-              </button>
+            <div className="flex flex-col items-end gap-1">
+              <div className="text-lg font-bold text-gray-700 tabular-nums leading-tight">{time}</div>
+              <div className="flex gap-2">
+                <button onClick={handleCheckIn} disabled={!!today?.check_in || leaveNotes.includes(today?.note)}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                  <span style={{fontSize:13}}>🔴</span> 출근
+                </button>
+                <button onClick={handleCheckOut} disabled={!today?.check_in||!!today?.check_out}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-600 text-white hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                  <span style={{fontSize:13}}>🔴</span> 퇴근
+                </button>
+              </div>
             </div>
           </div>
         </div>
