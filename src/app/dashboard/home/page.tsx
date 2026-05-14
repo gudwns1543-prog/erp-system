@@ -741,7 +741,7 @@ export default function HomePage() {
               {teamStatus.length === 0 ? (
                 <div className="text-[11px] text-gray-300 py-1">정보 없음</div>
               ) : (
-                <div className="space-y-1 max-h-[140px] overflow-y-auto">
+                <div className="space-y-1">
                   {teamStatus.map((u:any)=>(
                     <div key={u.id}
                       className="flex items-center gap-1.5 py-0.5"
