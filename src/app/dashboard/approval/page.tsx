@@ -32,6 +32,7 @@ export default function ApprovalPage() {
   const [tab, setTab] = useState<'all'|'inbox'|'sent'>('inbox')
   const [alert, setAlert] = useState('')
   const [showDetail, setShowDetail] = useState<any>(null)
+  const [empMap, setEmpMap] = useState<Record<string, any>>({}) // 직원 ID → 정보 (참석자 표시용)
 
   const load = useCallback(async () => {
     const supabase = createClient()
@@ -39,6 +40,13 @@ export default function ApprovalPage() {
     if (!session) return
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
+
+    // 직원 캐시 (출장 참석자 이름 변환용)
+    const { data: emps } = await supabase.from('profiles')
+      .select('id,name,grade,dept').eq('status', 'active')
+    const empByIdMap: Record<string, any> = {}
+    for (const e of (emps || [])) empByIdMap[e.id] = e
+    setEmpMap(empByIdMap)
 
     // 헬퍼 - 출장 보고서를 결재 형식으로 매핑
     const mapBizTrip = (t: any) => ({
@@ -109,6 +117,79 @@ export default function ApprovalPage() {
 
     // 출장 결재 처리
     if (kind === 'biztrip') {
+      // 승인 시 - 출장 보고서의 모든 참석자(작성자 + 내부 참석자)에 대해 attendance 기록 자동 등록
+      if (status === 'approved') {
+        const { data: trip } = await supabase.from('business_trips')
+          .select('*').eq('id', id).single()
+        if (trip) {
+          // 참석자 ID 목록 파싱 ('staff:uuid1;uuid2|외부텍스트')
+          const raw = trip.attendees || ''
+          const parts = raw.split('|')
+          const idsPart = parts[0] || ''
+          const internalIds = idsPart.startsWith('staff:')
+            ? idsPart.replace('staff:', '').split(';').filter(Boolean)
+            : []
+          // 작성자도 포함 (중복 제거)
+          const allUserIds = Array.from(new Set([trip.user_id, ...internalIds]))
+
+          // 시간 계산 (종일이면 정규 8시간, 아니면 duration_hours를 정규시간으로)
+          const regH = trip.all_day ? 8 : Math.min(8, Number(trip.duration_hours || 0))
+
+          for (const userId of allUserIds) {
+            // 이미 그 날짜에 attendance 있으면 출장 표시만 추가, 없으면 새로 등록
+            const { data: existing } = await supabase.from('attendance')
+              .select('id, note').eq('user_id', userId).eq('work_date', trip.trip_date).maybeSingle()
+            if (existing) {
+              // 기존 기록에 출장 표시만 추가 (note 갱신, 시간은 건드리지 않음)
+              await supabase.from('attendance').update({
+                note: existing.note ? existing.note + ' · 출장' : '출장',
+              }).eq('id', existing.id)
+            } else {
+              // 신규 등록 - 출장 시간을 정규 근무로 기록
+              await supabase.from('attendance').insert({
+                user_id: userId,
+                work_date: trip.trip_date,
+                check_in: trip.all_day ? '09:00:00' : (trip.start_time || '09:00:00'),
+                check_out: trip.all_day ? '18:00:00' : (trip.end_time || '18:00:00'),
+                reg_hours: regH,
+                ext_hours: 0,
+                night_hours: 0,
+                hol_hours: 0,
+                hol_eve_hours: 0,
+                hol_night_hours: 0,
+                note: '출장',
+                is_holiday: false,
+              })
+            }
+          }
+        }
+      }
+      // 반려 시 - 이미 등록된 출장 attendance 정리 (만약 이전 승인 후 다시 반려된 경우)
+      if (status === 'rejected') {
+        const { data: trip } = await supabase.from('business_trips').select('user_id, trip_date, attendees').eq('id', id).single()
+        if (trip) {
+          const raw = trip.attendees || ''
+          const idsPart = raw.split('|')[0] || ''
+          const internalIds = idsPart.startsWith('staff:')
+            ? idsPart.replace('staff:', '').split(';').filter(Boolean) : []
+          const allUserIds = Array.from(new Set([trip.user_id, ...internalIds]))
+          for (const userId of allUserIds) {
+            // note에 '출장'만 있으면 삭제, 다른 내용도 있으면 출장만 제거
+            const { data: existing } = await supabase.from('attendance')
+              .select('id, note').eq('user_id', userId).eq('work_date', trip.trip_date).maybeSingle()
+            if (existing) {
+              if (existing.note === '출장') {
+                await supabase.from('attendance').delete().eq('id', existing.id)
+              } else if (existing.note?.includes('출장')) {
+                await supabase.from('attendance').update({
+                  note: existing.note.replace(/\s*·?\s*출장/, '').replace(/^·\s*/, '') || null
+                }).eq('id', existing.id)
+              }
+            }
+          }
+        }
+      }
+
       const { error } = await supabase.from('business_trips')
         .update({ status, updated_at: new Date().toISOString() }).eq('id', id)
       if (error) {
@@ -116,7 +197,9 @@ export default function ApprovalPage() {
         setTimeout(() => setAlert(''), 3000)
         return
       }
-      setAlert(status === 'approved' ? '✅ 출장 보고서가 승인되었습니다.' : '❌ 출장 보고서가 반려되었습니다.')
+      setAlert(status === 'approved'
+        ? '✅ 출장 보고서 승인 완료 (참석자 전원의 근태기록에 출장 등록됨)'
+        : '❌ 출장 보고서가 반려되었습니다.')
       setShowDetail(null)
       setTimeout(() => setAlert(''), 3000)
       load()
@@ -319,10 +402,35 @@ export default function ApprovalPage() {
     // 출장 철회 - 단순히 status를 pending으로
     if (kind === 'biztrip') {
       const { data: trip } = await supabase.from('business_trips')
-        .select('status').eq('id', id).single()
+        .select('*').eq('id', id).single()
       if (!trip) return
       const statusKr = trip.status === 'approved' ? '승인' : '반려'
-      if (!confirm(`이 출장 보고서를 [${statusKr}] 상태에서 [대기] 상태로 철회하시겠습니까?`)) return
+      const msg = `이 출장 보고서를 [${statusKr}] 상태에서 [대기] 상태로 철회하시겠습니까?` +
+        (trip.status === 'approved' ? '\n\n참석자들의 근태기록에서 출장 표시도 함께 삭제됩니다.' : '')
+      if (!confirm(msg)) return
+
+      // 승인 상태였으면 attendance 정리
+      if (trip.status === 'approved') {
+        const raw = trip.attendees || ''
+        const idsPart = raw.split('|')[0] || ''
+        const internalIds = idsPart.startsWith('staff:')
+          ? idsPart.replace('staff:', '').split(';').filter(Boolean) : []
+        const allUserIds = Array.from(new Set([trip.user_id, ...internalIds]))
+        for (const userId of allUserIds) {
+          const { data: existing } = await supabase.from('attendance')
+            .select('id, note').eq('user_id', userId).eq('work_date', trip.trip_date).maybeSingle()
+          if (existing) {
+            if (existing.note === '출장') {
+              await supabase.from('attendance').delete().eq('id', existing.id)
+            } else if (existing.note?.includes('출장')) {
+              await supabase.from('attendance').update({
+                note: existing.note.replace(/\s*·?\s*출장/, '').replace(/^·\s*/, '') || null
+              }).eq('id', existing.id)
+            }
+          }
+        }
+      }
+
       const { error } = await supabase.from('business_trips')
         .update({ status: 'pending', updated_at: new Date().toISOString() }).eq('id', id)
       if (error) {
@@ -490,6 +598,38 @@ export default function ApprovalPage() {
                   <span className="text-sm text-gray-800">{item.val}</span>
                 </div>
               ))}
+              {/* 출장 참석자 표시 - attendees 파싱 */}
+              {showDetail.kind === 'biztrip' && showDetail.attendees && (() => {
+                const raw: string = showDetail.attendees || ''
+                const parts = raw.split('|')
+                const idsPart = parts[0] || ''
+                const externalText = parts[1] || (parts.length === 1 && !idsPart.startsWith('staff:') ? idsPart : '')
+                const ids = idsPart.startsWith('staff:')
+                  ? idsPart.replace('staff:', '').split(';').filter(Boolean)
+                  : []
+                const internalNames = ids.map(id => empMap[id]?.name + (empMap[id]?.grade ? ` (${empMap[id].grade})` : ''))
+                  .filter(Boolean)
+                if (internalNames.length === 0 && !externalText) return null
+                return (
+                  <div className="pb-3 border-b border-gray-50">
+                    <div className="text-xs font-medium text-gray-400 mb-2">참석자</div>
+                    {internalNames.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mb-1">
+                        {internalNames.map((n, i) => (
+                          <span key={i} className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full">
+                            👤 {n}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {externalText && (
+                      <div className="text-xs text-gray-600 mt-1">
+                        <span className="text-[10px] text-gray-400">외부:</span> {externalText}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
               <div>
                 <div className="text-xs font-medium text-gray-400 mb-2">
                   {showDetail.kind === 'biztrip' ? '출장 내용' : '신청 사유'}

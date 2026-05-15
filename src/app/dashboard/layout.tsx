@@ -11,8 +11,7 @@ const NAV = [
     { href: '/dashboard/home', label: '홈', icon: '🏠' },
   ]},
   { group: '업무', items: [
-    { href: '/dashboard/checkin', label: '근태', icon: '⏰' },
-    { href: '/dashboard/attendance', label: '근태 기록', icon: '📋' },
+    { href: '/dashboard/attendance', label: '근태 기록', icon: '⏰' },
     { href: '/dashboard/calendar', label: '일정', icon: '📅' },
     { href: '/dashboard/tasks', label: '업무 (할 일)', icon: '✔️' },
   ]},

@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { isHoliday, sortByGrade, classifyWork, minutesToHours } from '@/lib/attendance'
+import CheckinSection from '../checkin/page'
 
 const DAYS = ['일','월','화','수','목','금','토']
 
@@ -12,6 +13,7 @@ export default function AttendancePage() {
   const [selUser, setSelUser] = useState('')
   const [selMonth, setSelMonth] = useState(new Date().getMonth()+1)
   const [selYear, setSelYear] = useState(new Date().getFullYear())
+  const [showCheckin, setShowCheckin] = useState(true) // 출퇴근 영역 토글
 
   const load = useCallback(async () => {
     const supabase = createClient()
@@ -115,8 +117,22 @@ export default function AttendancePage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
+      {/* 출퇴근 영역 (checkin 페이지 임베드) */}
+      <div className="mb-4">
+        <button onClick={() => setShowCheckin(!showCheckin)}
+          className="w-full mb-2 px-3 py-2 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg text-sm font-medium text-purple-700 flex items-center justify-between">
+          <span>⏰ 출퇴근 · 오늘의 근무</span>
+          <span className="text-xs">{showCheckin ? '▲ 접기' : '▼ 펼치기'}</span>
+        </button>
+        {showCheckin && (
+          <div className="border border-gray-100 rounded-lg overflow-hidden">
+            <CheckinSection />
+          </div>
+        )}
+      </div>
+
       <div className="flex justify-between items-center mb-5">
-        <h1 className="text-lg font-semibold text-gray-800">근태 기록</h1>
+        <h1 className="text-lg font-semibold text-gray-800">📋 월별 근태 기록</h1>
         <div className="flex gap-2">
           {profile?.role==='director' && (
             <select className="input w-auto text-sm" value={selUser} onChange={e=>setSelUser(e.target.value)}>
@@ -164,7 +180,17 @@ export default function AttendancePage() {
                   ${isSat ? 'bg-blue-50/40' : hol || isSun ? 'bg-red-50/40' : ''}`}>
                   <td className="py-1.5 pr-2">{dd.getMonth()+1}/{dd.getDate()}</td>
                   <td className={`py-1.5 pr-2 font-medium ${isSat ? 'text-blue-500' : isSun ? 'text-red-400' : ''}`}>{DAYS[d.dow]}</td>
-                  <td className="py-1.5 pr-2">{hol?<span className="badge-holiday">휴일</span>:isSat?<span className="text-blue-500 text-xs">토요일</span>:<span className="badge-work">평일</span>}</td>
+                  <td className="py-1.5 pr-2">
+                    {hol ? <span className="badge-holiday">휴일</span>
+                      : isSat ? <span className="text-blue-500 text-xs">토요일</span>
+                      : <span className="badge-work">평일</span>}
+                    {d.rec?.note?.includes('출장') && (
+                      <span className="ml-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">🚗 출장</span>
+                    )}
+                    {d.rec?.note && !d.rec.note.includes('출장') && !['야간자동컷오프','수정요청중'].includes(d.rec.note) && (
+                      <span className="ml-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-700">{d.rec.note}</span>
+                    )}
+                  </td>
                   <td className="py-1.5 pr-2 font-medium">{d.rec?.check_in?.slice(0,5)||'--'}</td>
                   <td className="py-1.5 pr-2 font-medium">
                     {d.rec?.check_out?.slice(0,5)
