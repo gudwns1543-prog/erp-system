@@ -87,6 +87,12 @@ export const tools = [
         location: { type: 'string', description: '장소 (선택)' },
         description: { type: 'string', description: '설명 (선택)' },
         color: { type: 'string', description: '색상 hex (생략시 #534AB7)' },
+        calendar_type: { type: 'string', enum: ['personal','company'], description: 'personal=개인 일정, company=전사 공유 일정. 사용자가 전사/공유/회사 일정이라고 말하면 company' },
+        attendee_names: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '참석자 이름 배열. 예: ["김경세", "박형준"]. 직급/호칭은 제거하고 본명으로 넣기',
+        },
       },
       required: ['title','start_at'],
     },
@@ -401,6 +407,8 @@ export async function executeTool(name: string, input: any, ctx: Ctx): Promise<a
       const title = input.title
       const start_at = parseDateTime(input.start_at)
       const end_at = input.end_at ? parseDateTime(input.end_at) : addHours(start_at, 1)
+      const calendarType = input.calendar_type === 'company' ? 'company' : 'personal'
+
       const { data, error } = await supabase.from('events').insert({
         title,
         start_at,
@@ -409,9 +417,46 @@ export async function executeTool(name: string, input: any, ctx: Ctx): Promise<a
         description: input.description || null,
         color: input.color || '#534AB7',
         creator_id: userId,
+        calendar_type: calendarType,
       }).select().single()
       if (error) return { 오류: error.message }
-      return { 성공: true, 일정ID: data.id, 메시지: `✅ "${title}" 일정 생성 완료 (${start_at} ~ ${end_at})` }
+
+      const attendeeNames: string[] = Array.isArray(input.attendee_names)
+        ? input.attendee_names.map((n:string)=>String(n).replace(/(님|대리|주임|과장|이사|대표|대표이사)/g, '').trim()).filter(Boolean)
+        : []
+
+      let savedAttendees: string[] = []
+      if (attendeeNames.length > 0) {
+        const ids: string[] = []
+        const names: string[] = []
+        for (const rawName of attendeeNames) {
+          const { data: matches } = await supabase.from('profiles')
+            .select('id, name')
+            .ilike('name', `%${rawName}%`)
+            .eq('status', 'active')
+            .limit(5)
+          if ((matches || []).length === 1) {
+            ids.push(matches[0].id)
+            names.push(matches[0].name)
+          }
+        }
+        const uniqueIds = Array.from(new Set(ids))
+        if (uniqueIds.length > 0) {
+          const { error: attError } = await supabase.from('event_attendees').insert(
+            uniqueIds.map(uid => ({ event_id: data.id, user_id: uid, status: 'pending' }))
+          )
+          if (attError) return { 오류: `일정은 생성됐지만 참석자 저장 중 오류: ${attError.message}`, 일정ID: data.id }
+          savedAttendees = Array.from(new Set(names))
+        }
+      }
+
+      return {
+        성공: true,
+        일정ID: data.id,
+        유형: calendarType === 'company' ? '전사 공유 일정' : '개인 일정',
+        참석자: savedAttendees,
+        메시지: `✅ "${title}" ${calendarType === 'company' ? '전사 공유 일정' : '개인 일정'} 생성 완료 (${start_at} ~ ${end_at})${savedAttendees.length ? ` / 참석자: ${savedAttendees.join(', ')}` : ''}`
+      }
     }
 
     // 8) 결재 승인/반려
@@ -685,10 +730,29 @@ async function insertApproval(supabase: any, userId: string, approver: any, type
 
 // "2026-05-19 14:00" → "2026-05-19T14:00:00+09:00" (KST 가정)
 function parseDateTime(s: string): string {
-  // 이미 ISO 형식이면 그대로
-  if (s.includes('T')) return s
-  // "2026-05-19 14:00" 또는 "2026-05-19 14:00:00"
-  const cleaned = s.replace(' ', 'T')
+  if (!s) return s
+  let value = String(s).trim()
+
+  // 혹시 도구 입력에 한국어 오전/오후가 그대로 들어와도 최대한 보정
+  value = value.replace(/년|월/g, '-').replace(/일/g, '').replace(/\s+/g, ' ').trim()
+  const meridiem = value.match(/(오전|오후)\s*(\d{1,2})(?:시|:)(?:\s*(\d{1,2})분?)?/)
+  if (meridiem) {
+    let h = parseInt(meridiem[2], 10)
+    const m = meridiem[3] ? parseInt(meridiem[3], 10) : 0
+    if (meridiem[1] === '오후' && h < 12) h += 12
+    if (meridiem[1] === '오전' && h === 12) h = 0
+    value = value.replace(meridiem[0], `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`)
+  }
+
+  // 이미 ISO 형식이면 시간대가 없을 때만 +09:00 보정
+  if (value.includes('T')) {
+    if (/(Z|[+-]\d{2}:?\d{2})$/.test(value)) return value
+    if (value.length === 16) return value + ':00+09:00'
+    if (value.length === 19) return value + '+09:00'
+    return value
+  }
+
+  const cleaned = value.replace(' ', 'T')
   if (cleaned.length === 16) return cleaned + ':00+09:00'
   if (cleaned.length === 19) return cleaned + '+09:00'
   return cleaned
@@ -697,5 +761,6 @@ function parseDateTime(s: string): string {
 function addHours(isoStr: string, hours: number): string {
   const d = new Date(isoStr)
   d.setHours(d.getHours() + hours)
-  return d.toISOString()
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
+  return `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}T${String(kst.getUTCHours()).padStart(2,'0')}:${String(kst.getUTCMinutes()).padStart(2,'0')}:00+09:00`
 }
