@@ -8,15 +8,19 @@ import { calcSalary, formatWon, sortByGrade, getLatestPayMonth, formatPayLabel }
 type ItemDef = { key: string; label: string; auto?: boolean; description?: string }
 
 const PAY_ITEMS: ItemDef[] = [
-  // 자동 항목 (근태 기반)
-  { key: 'base',         label: '기본급',        auto: true },
-  { key: 'overtime',     label: '연장근로수당',  auto: true, description: '평일 시간외 (×1.5)' },
-  { key: 'night',        label: '야간근로수당',  auto: true, description: '평일 야간 (×2.0)' },
-  { key: 'holiday',      label: '휴일근로수당',  auto: true, description: '휴일 정규/시간외/야간 합산' },
-  { key: 'meal',         label: '식대',          auto: true, description: '비과세 (월 계약값)' },
-  { key: 'transport_fixed', label: '교통비',     auto: true, description: '비과세 (월 계약값)' },
-  { key: 'comm_fixed',   label: '통신비',        auto: true, description: '비과세 (월 계약값)' },
-  { key: 'trip',         label: '🚗 출장수당',   auto: true, description: '승인된 출장 합계' },
+  // 자동 항목 (시급 × 근무시간)
+  { key: 'base',         label: '기본급',         auto: true, description: '계약연봉 기준 월급' },
+  { key: 'reg',          label: '정규근무수당',   auto: true, description: '시급 × 정규근무 시간' },
+  { key: 'overtime',     label: '평일연장수당',   auto: true, description: '시급 × 1.5 × 연장시간' },
+  { key: 'night',        label: '평일야간수당',   auto: true, description: '시급 × 2.0 × 야간시간' },
+  { key: 'holiday',      label: '휴일근무수당',   auto: true, description: '시급 × 1.5 × 휴일근무' },
+  { key: 'holiday_ext',  label: '휴일연장수당',   auto: true, description: '시급 × 2.0 × 휴일연장' },
+  { key: 'holiday_night',label: '휴일야간수당',   auto: true, description: '시급 × 2.5 × 휴일야간' },
+  // 비과세 자동
+  { key: 'meal',         label: '식대',           auto: true, description: '비과세 (월 계약값)' },
+  { key: 'transport_fixed', label: '교통비',      auto: true, description: '비과세 (월 계약값)' },
+  { key: 'comm_fixed',   label: '통신비',         auto: true, description: '비과세 (월 계약값)' },
+  { key: 'trip',         label: '🚗 출장수당',    auto: true, description: '승인된 출장 합계' },
   // 수기 입력 항목
   { key: 'bonus',        label: '상여금' },
   { key: 'performance',  label: '성과급' },
@@ -163,9 +167,12 @@ export default function PayrollPage() {
     const sal = salaryList.find(s=>s.user_id===staffList[selIdx]?.id)
     switch (key) {
       case 'base':            return autoCalc.base || 0
+      case 'reg':             return 0 // 기본급에 포함되어 별도 표시 없음
       case 'overtime':        return autoCalc.payExt || 0
       case 'night':           return autoCalc.payNight || 0
-      case 'holiday':         return (autoCalc.payHol || 0) + (autoCalc.payHolExt || 0) + (autoCalc.payHolNight || 0)
+      case 'holiday':         return autoCalc.payHol || 0
+      case 'holiday_ext':     return autoCalc.payHolExt || 0
+      case 'holiday_night':   return autoCalc.payHolNight || 0
       case 'meal':            return sal?.meal || 0
       case 'transport_fixed': return sal?.transport || 0
       case 'comm_fixed':      return sal?.comm || 0
@@ -187,7 +194,10 @@ export default function PayrollPage() {
   }
 
   // 최종 값 = 수기 입력이 있으면 그 값, 없으면 자동값 (자동 항목만), 수기 항목은 입력값 그대로
+  // 단, 근태 기반 자동 항목은 절대 override 불가 (시급×시간으로 엄격하게)
   function getPayValue(item: ItemDef): number {
+    const isFromAttendance = ['base','reg','overtime','night','holiday','holiday_ext','holiday_night'].includes(item.key)
+    if (isFromAttendance) return getAutoPayValue(item.key) // 강제로 자동값
     if (payOverrides[item.key] !== undefined) return payOverrides[item.key]
     if (item.auto) return getAutoPayValue(item.key)
     return 0
@@ -352,6 +362,70 @@ export default function PayrollPage() {
         )}
       </div>
 
+      {/* 근무시간 × 시급 = 금액 명확 표시 (N × M = L 양식) */}
+      {workData && selSalary && autoCalc && (
+        <div className="card mb-4 bg-gradient-to-r from-blue-50/30 to-white border-blue-100">
+          <div className="text-sm font-semibold text-blue-800 mb-3">⏱ 근무시간 × 시급 계산표</div>
+          <div className="text-[10px] text-gray-500 mb-2">
+            시급 기준: 계약연봉 {formatWon(selSalary.annual)} ÷ 12개월 ÷ 209시간 = <strong className="text-gray-800">{formatWon(rate)}/h</strong>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 text-gray-500">
+                <tr>
+                  <th className="text-left px-2 py-1.5">구분</th>
+                  <th className="text-right px-2 py-1.5">시간 (M)</th>
+                  <th className="text-center px-2 py-1.5">×</th>
+                  <th className="text-right px-2 py-1.5">시급 (N)</th>
+                  <th className="text-center px-2 py-1.5">=</th>
+                  <th className="text-right px-2 py-1.5">금액 (L)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  { label: '평일 정규근무', hours: workData.regH, rate: rate, pay: autoCalc.base || 0,
+                    note: '기본급에 포함 (월 209h 기준)' },
+                  { label: '평일 연장수당', hours: workData.extH, rate: Math.round(rate * 1.5), pay: autoCalc.payExt || 0,
+                    note: '시급 × 1.5' },
+                  { label: '평일 야간수당', hours: workData.nightH, rate: Math.round(rate * 2.0), pay: autoCalc.payNight || 0,
+                    note: '시급 × 2.0 (22~06시)' },
+                  { label: '휴일 근무수당', hours: workData.holH, rate: Math.round(rate * 1.5), pay: autoCalc.payHol || 0,
+                    note: '시급 × 1.5' },
+                  { label: '휴일 연장수당', hours: workData.holExtH, rate: Math.round(rate * 2.0), pay: autoCalc.payHolExt || 0,
+                    note: '시급 × 2.0' },
+                  { label: '휴일 야간수당', hours: workData.holNightH, rate: Math.round(rate * 2.5), pay: autoCalc.payHolNight || 0,
+                    note: '시급 × 2.5' },
+                ].map((row, i) => (
+                  <tr key={i} className={`border-b border-gray-50 ${row.hours > 0 ? '' : 'opacity-40'}`}>
+                    <td className="px-2 py-1.5">
+                      <div className="text-gray-700 font-medium">{row.label}</div>
+                      <div className="text-[9px] text-gray-400">{row.note}</div>
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-700">{row.hours.toFixed(1)}h</td>
+                    <td className="px-2 py-1.5 text-center text-gray-300">×</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-600">{formatWon(row.rate)}</td>
+                    <td className="px-2 py-1.5 text-center text-gray-300">=</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-blue-700">
+                      {row.pay > 0 ? formatWon(row.pay) : '-'}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="bg-blue-50 font-semibold">
+                  <td colSpan={5} className="px-2 py-2 text-right text-blue-800">근로 지급 소계</td>
+                  <td className="px-2 py-2 text-right tabular-nums text-blue-700">
+                    {formatWon((autoCalc.base||0) + (autoCalc.payExt||0) + (autoCalc.payNight||0) +
+                      (autoCalc.payHol||0) + (autoCalc.payHolExt||0) + (autoCalc.payHolNight||0))}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="text-[10px] text-gray-400 mt-2">
+            ⚠️ 근무시간(M)과 시급(N)은 근태기록 및 계약연봉 기반으로 자동 산정되며 수정할 수 없습니다.
+          </div>
+        </div>
+      )}
+
       {/* 명세서 양식 */}
       <div className="grid md:grid-cols-2 gap-4">
         {/* 지급 항목 */}
@@ -367,6 +441,8 @@ export default function PayrollPage() {
               const value = getPayValue(item)
               const display = getInputDisplayValue(item, 'pay')
               const isOverridden = payOverrides[item.key] !== undefined
+              // 근태 기반 자동 항목은 수정 불가 (시급 × 시간으로 정확히 산정)
+              const isFromAttendance = ['base','reg','overtime','night','holiday','holiday_ext','holiday_night'].includes(item.key)
               return (
                 <div key={item.key}
                   className={`px-3 py-2 border-b border-gray-50 last:border-0 flex items-center gap-2
@@ -374,24 +450,35 @@ export default function PayrollPage() {
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-medium text-gray-700 flex items-center gap-1.5">
                       {item.label}
-                      {item.auto && <span className="text-[9px] bg-blue-100 text-blue-600 px-1 py-0.5 rounded">자동</span>}
-                      {item.auto && isOverridden && <span className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded">수정됨</span>}
+                      {isFromAttendance && <span className="text-[9px] bg-blue-100 text-blue-600 px-1 py-0.5 rounded">근태 자동</span>}
+                      {item.auto && !isFromAttendance && <span className="text-[9px] bg-blue-100 text-blue-600 px-1 py-0.5 rounded">자동</span>}
+                      {item.auto && !isFromAttendance && isOverridden && <span className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded">수정됨</span>}
                     </div>
                     {item.description && (
                       <div className="text-[9px] text-gray-400 mt-0.5">{item.description}</div>
                     )}
                   </div>
                   <div className="flex items-center gap-1">
-                    <input type="number"
-                      className={`input text-xs py-1 w-28 text-right tabular-nums
-                        ${item.auto ? (isOverridden ? 'bg-amber-50' : 'bg-white') : ''}`}
-                      placeholder={item.auto ? String(getAutoPayValue(item.key)) : '0'}
-                      value={display}
-                      onChange={e => setPayValue(item.key, e.target.value === '' ? undefined : +e.target.value)} />
-                    {item.auto && isOverridden && (
-                      <button onClick={() => setPayValue(item.key, undefined)}
-                        title="자동값으로 복원"
-                        className="text-[10px] text-gray-400 hover:text-purple-600 px-1">↺</button>
+                    {isFromAttendance ? (
+                      // 근태 자동 항목 - 읽기 전용
+                      <div className="text-xs py-1 w-28 text-right tabular-nums font-semibold text-blue-700 bg-blue-50 rounded px-2">
+                        {getAutoPayValue(item.key) > 0 ? formatWon(getAutoPayValue(item.key)) : '-'}
+                      </div>
+                    ) : (
+                      // 수정 가능
+                      <>
+                        <input type="number"
+                          className={`input text-xs py-1 w-28 text-right tabular-nums
+                            ${item.auto ? (isOverridden ? 'bg-amber-50' : 'bg-white') : ''}`}
+                          placeholder={item.auto ? String(getAutoPayValue(item.key)) : '0'}
+                          value={display}
+                          onChange={e => setPayValue(item.key, e.target.value === '' ? undefined : +e.target.value)} />
+                        {item.auto && isOverridden && (
+                          <button onClick={() => setPayValue(item.key, undefined)}
+                            title="자동값으로 복원"
+                            className="text-[10px] text-gray-400 hover:text-purple-600 px-1">↺</button>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

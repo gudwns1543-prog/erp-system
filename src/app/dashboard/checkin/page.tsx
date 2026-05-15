@@ -125,26 +125,54 @@ export default function DashboardPage() {
   const hol = isHoliday(todayStr())
   const remainLeave = (profile?.annual_leave||0) - usedLeave
 
-  // 이번 주 날짜별 합산
+  // 이번 주 날짜별 합산 - attendance 페이지와 동일한 로직으로 통일
   const weekDays = Array.from({length:7},(_,i)=>{
     const now = new Date(); const dow = now.getDay()
     const mon = new Date(now); mon.setDate(now.getDate()-(dow===0?6:dow-1))
     const dt = new Date(mon); dt.setDate(mon.getDate()+i)
     const ds = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`
     const daySessions = weekData.filter(w=>w.work_date===ds)
-    // 같은 날 여러 세션 합산
-    const totals = daySessions.reduce((a:any,s:any)=>({
-      reg_hours: a.reg_hours+(s.reg_hours||0),
-      ext_hours: a.ext_hours+(s.ext_hours||0),
-      night_hours: a.night_hours+(s.night_hours||0),
-      hol_hours: a.hol_hours+(s.hol_hours||0),
-      hol_eve_hours: a.hol_eve_hours+(s.hol_eve_hours||0),
-      hol_night_hours: a.hol_night_hours+(s.hol_night_hours||0),
-      ignored_hours: a.ignored_hours+(s.ignored_hours||0),
-      check_in: a.check_in||s.check_in,
-      check_out: s.check_out||a.check_out,
-    }),{reg_hours:0,ext_hours:0,night_hours:0,hol_hours:0,hol_eve_hours:0,hol_night_hours:0,ignored_hours:0,check_in:null,check_out:null})
-    return { dt, ds, rec: daySessions.length>0?totals:null, sessionCount: daySessions.length }
+    if (daySessions.length === 0) {
+      return { dt, ds, rec: null, sessionCount: 0 }
+    }
+    // 첫출근 / 마지막퇴근 찾기 (여러 세션 합치기)
+    let firstCheckIn: string | null = null
+    let lastCheckOut: string | null = null
+    let hasOpenSession = false
+    for (const s of daySessions) {
+      if (!s.check_in) continue
+      if (!firstCheckIn || s.check_in < firstCheckIn) firstCheckIn = s.check_in
+      if (s.check_out) {
+        if (!lastCheckOut || s.check_out > lastCheckOut) lastCheckOut = s.check_out
+      } else {
+        hasOpenSession = true
+      }
+    }
+    // 첫출근~마지막퇴근으로 classifyWork 재계산 (attendance와 동일)
+    let totals = { reg_hours: 0, ext_hours: 0, night_hours: 0,
+                   hol_hours: 0, hol_eve_hours: 0, hol_night_hours: 0, ignored_hours: 0 }
+    if (firstCheckIn && lastCheckOut) {
+      const r = classifyWork(ds, firstCheckIn, lastCheckOut)
+      totals = {
+        reg_hours: minutesToHours(r.reg),
+        ext_hours: minutesToHours(r.ext),
+        night_hours: minutesToHours(r.night),
+        hol_hours: minutesToHours(r.hReg),
+        hol_eve_hours: minutesToHours(r.hEve),
+        hol_night_hours: minutesToHours(r.hNight),
+        ignored_hours: minutesToHours(r.ignored),
+      }
+    }
+    return {
+      dt, ds,
+      rec: {
+        ...totals,
+        check_in: firstCheckIn,
+        check_out: lastCheckOut,
+        _hasOpenSession: hasOpenSession,
+      },
+      sessionCount: daySessions.length
+    }
   })
 
   return (
@@ -227,13 +255,13 @@ export default function DashboardPage() {
                     <td className="py-1.5 pr-2">{rec?.check_in?.slice(0,5)||'--'}</td>
                     <td className="py-1.5 pr-2">{rec?.check_out?.slice(0,5)||'--'}</td>
                     <td className="py-1.5 pr-2 text-blue-500">{sessionCount>0?sessionCount+'회':'-'}</td>
-                    <td className="py-1.5 pr-2 text-purple-600 font-medium">{rec?.reg_hours>0?rec.reg_hours+'h':'-'}</td>
-                    <td className="py-1.5 pr-2 text-blue-600">{rec?.ext_hours>0?rec.ext_hours+'h':'-'}</td>
-                    <td className="py-1.5 pr-2 text-red-600">{rec?.night_hours>0?rec.night_hours+'h':'-'}</td>
-                    <td className="py-1.5 pr-2 text-teal-600">{rec?.hol_hours>0?rec.hol_hours+'h':'-'}</td>
-                    <td className="py-1.5 pr-2 text-amber-600">{rec?.hol_eve_hours>0?rec.hol_eve_hours+'h':'-'}</td>
-                    <td className="py-1.5 pr-2 text-rose-600">{rec?.hol_night_hours>0?rec.hol_night_hours+'h':'-'}</td>
-                    <td className="py-1.5 pr-2 text-gray-400">{rec?.ignored_hours>0?rec.ignored_hours+'h':'-'}</td>
+                    <td className="py-1.5 pr-2 text-purple-600 font-medium">{(rec as any)?.reg_hours>0?(rec as any).reg_hours+'h':'-'}</td>
+                    <td className="py-1.5 pr-2 text-blue-600">{(rec as any)?.ext_hours>0?(rec as any).ext_hours+'h':'-'}</td>
+                    <td className="py-1.5 pr-2 text-red-600">{(rec as any)?.night_hours>0?(rec as any).night_hours+'h':'-'}</td>
+                    <td className="py-1.5 pr-2 text-teal-600">{(rec as any)?.hol_hours>0?(rec as any).hol_hours+'h':'-'}</td>
+                    <td className="py-1.5 pr-2 text-amber-600">{(rec as any)?.hol_eve_hours>0?(rec as any).hol_eve_hours+'h':'-'}</td>
+                    <td className="py-1.5 pr-2 text-rose-600">{(rec as any)?.hol_night_hours>0?(rec as any).hol_night_hours+'h':'-'}</td>
+                    <td className="py-1.5 pr-2 text-gray-400">{(rec as any)?.ignored_hours>0?(rec as any).ignored_hours+'h':'-'}</td>
                   </tr>
                 )
               })}

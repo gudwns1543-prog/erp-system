@@ -184,7 +184,13 @@ export default function AttendancePage() {
                     {hol ? <span className="badge-holiday">휴일</span>
                       : isSat ? <span className="text-blue-500 text-xs">토요일</span>
                       : <span className="badge-work">평일</span>}
-                    {d.rec?.note?.includes('출장') && (
+                    {d.rec?.note?.includes('출장(장)') && (
+                      <span className="ml-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800">🚗 출장 4h↑</span>
+                    )}
+                    {d.rec?.note?.includes('출장(단)') && (
+                      <span className="ml-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700">🚗 출장 4h↓</span>
+                    )}
+                    {d.rec?.note?.includes('출장') && !d.rec.note.includes('출장(') && (
                       <span className="ml-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">🚗 출장</span>
                     )}
                     {d.rec?.note && !d.rec.note.includes('출장') && !['야간자동컷오프','수정요청중'].includes(d.rec.note) && (

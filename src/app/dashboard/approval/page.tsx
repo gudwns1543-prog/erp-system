@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
-import { isHoliday, classifyWork, minutesToHours } from '@/lib/attendance'
+import { isHoliday, classifyWork, minutesToHours, GRADE_ORDER } from '@/lib/attendance'
 
 // 두 날짜 사이의 모든 날짜 배열 반환
 function getDateRange(start: string, end: string): string[] {
@@ -112,6 +112,28 @@ export default function ApprovalPage() {
 
   useEffect(() => { load() }, [load])
 
+  // 결재 처리 권한: 본인이 결재자인 경우만 (안전장치)
+  // 단, 이사급 이상(grade <= 7)은 본인 결재가 아니어도 처리 가능 (대리 결재)
+  function canApprove(r: any): boolean {
+    if (!profile) return false
+    if (r.status !== 'pending') return false
+    // 본인이 결재자로 지정된 경우
+    if (r.approver_id === profile.id) return true
+    // 이사급 이상이면 대리 결재 가능
+    const myGrade = GRADE_ORDER[profile.grade || ''] || 99
+    if (myGrade <= 7) return true
+    return false
+  }
+  // 철회 권한: 결재자 본인 또는 이사급 이상
+  function canRevoke(r: any): boolean {
+    if (!profile) return false
+    if (r.status !== 'approved' && r.status !== 'rejected') return false
+    if (r.approver_id === profile.id) return true
+    const myGrade = GRADE_ORDER[profile.grade || ''] || 99
+    if (myGrade <= 7) return true
+    return false
+  }
+
   async function handle(id: string, status: 'approved'|'rejected', kind: 'approval' | 'biztrip' = 'approval') {
     const supabase = createClient()
 
@@ -134,6 +156,9 @@ export default function ApprovalPage() {
 
           // 시간 계산 (종일이면 정규 8시간, 아니면 duration_hours를 정규시간으로)
           const regH = trip.all_day ? 8 : Math.min(8, Number(trip.duration_hours || 0))
+          // 출장 종류 (4시간 기준)
+          const tripDuration = trip.all_day ? 8 : Number(trip.duration_hours || 0)
+          const tripNote = tripDuration >= 4 ? '출장(장)' : '출장(단)' // 장=4h이상, 단=4h미만
 
           for (const userId of allUserIds) {
             // 이미 그 날짜에 attendance 있으면 출장 표시만 추가, 없으면 새로 등록
@@ -142,7 +167,7 @@ export default function ApprovalPage() {
             if (existing) {
               // 기존 기록에 출장 표시만 추가 (note 갱신, 시간은 건드리지 않음)
               await supabase.from('attendance').update({
-                note: existing.note ? existing.note + ' · 출장' : '출장',
+                note: existing.note ? existing.note + ' · ' + tripNote : tripNote,
               }).eq('id', existing.id)
             } else {
               // 신규 등록 - 출장 시간을 정규 근무로 기록
@@ -157,7 +182,7 @@ export default function ApprovalPage() {
                 hol_hours: 0,
                 hol_eve_hours: 0,
                 hol_night_hours: 0,
-                note: '출장',
+                note: tripNote,
                 is_holiday: false,
               })
             }
@@ -178,11 +203,11 @@ export default function ApprovalPage() {
             const { data: existing } = await supabase.from('attendance')
               .select('id, note').eq('user_id', userId).eq('work_date', trip.trip_date).maybeSingle()
             if (existing) {
-              if (existing.note === '출장') {
+              if (['출장(장)','출장(단)','출장'].includes(existing.note)) {
                 await supabase.from('attendance').delete().eq('id', existing.id)
               } else if (existing.note?.includes('출장')) {
                 await supabase.from('attendance').update({
-                  note: existing.note.replace(/\s*·?\s*출장/, '').replace(/^·\s*/, '') || null
+                  note: existing.note.replace(/\s*·?\s*출장(?:\([장단]\))?/, '').replace(/^·\s*/, '') || null
                 }).eq('id', existing.id)
               }
             }
@@ -420,11 +445,11 @@ export default function ApprovalPage() {
           const { data: existing } = await supabase.from('attendance')
             .select('id, note').eq('user_id', userId).eq('work_date', trip.trip_date).maybeSingle()
           if (existing) {
-            if (existing.note === '출장') {
+            if (['출장(장)','출장(단)','출장'].includes(existing.note)) {
               await supabase.from('attendance').delete().eq('id', existing.id)
             } else if (existing.note?.includes('출장')) {
               await supabase.from('attendance').update({
-                note: existing.note.replace(/\s*·?\s*출장/, '').replace(/^·\s*/, '') || null
+                note: existing.note.replace(/\s*·?\s*출장(?:\([장단]\))?/, '').replace(/^·\s*/, '') || null
               }).eq('id', existing.id)
             }
           }
@@ -522,13 +547,13 @@ export default function ApprovalPage() {
                 <td className="py-2">
                   <div className="flex gap-1">
                     <button onClick={()=>setShowDetail(r)} className="btn-secondary text-xs px-2 py-1">문서 열기</button>
-                    {profile?.role==='director' && r.status==='pending' && (
+                    {canApprove(r) && (
                       <>
                         <button onClick={()=>handle(r.id,'approved', r.kind)} className="btn-secondary text-xs px-2 py-1 text-green-700 border-green-200 hover:bg-green-50">승인</button>
                         <button onClick={()=>handle(r.id,'rejected', r.kind)} className="btn-danger text-xs px-2 py-1">반려</button>
                       </>
                     )}
-                    {profile?.role==='director' && (r.status==='approved' || r.status==='rejected') && (
+                    {canRevoke(r) && (
                       <button onClick={()=>handleRevoke(r.id, r.kind)} className="btn-secondary text-xs px-2 py-1 text-orange-600 border-orange-200 hover:bg-orange-50">철회</button>
                     )}
                   </div>
@@ -641,15 +666,15 @@ export default function ApprovalPage() {
             </div>
             <div className="p-4 border-t border-gray-100 flex gap-2 justify-end">
               <button onClick={()=>setShowDetail(null)} className="btn-secondary text-sm">닫기</button>
-              {profile?.role==='director' && showDetail.status==='pending' && (
+              {canApprove(showDetail) && (
                 <>
                   <button onClick={()=>handle(showDetail.id,'rejected', showDetail.kind)} className="btn-danger text-sm">반려</button>
                   <button onClick={()=>handle(showDetail.id,'approved', showDetail.kind)}
                     className="btn-secondary text-sm text-green-700 border-green-200 hover:bg-green-50">승인</button>
                 </>
               )}
-              {profile?.role==='director' && showDetail.kind === 'approval' && (showDetail.status==='approved' || showDetail.status==='rejected') && (
-                <button onClick={()=>handleRevoke(showDetail.id)}
+              {canRevoke(showDetail) && (
+                <button onClick={()=>handleRevoke(showDetail.id, showDetail.kind)}
                   className="btn-secondary text-sm text-orange-600 border-orange-200 hover:bg-orange-50">
                   {showDetail.status==='approved' ? '승인 철회' : '반려 철회'}
                 </button>
