@@ -466,6 +466,44 @@ export default function HomePage() {
       })
     }
 
+    // 3.5) 검토 대기 업무 (관리자에게만)
+    if (p?.role === 'director') {
+      const { data: reviewTasks } = await supabase.from('tasks')
+        .select('id, title, submitted_for_review_at')
+        .eq('status', 'review')
+        .order('submitted_for_review_at', { ascending: true }).limit(5)
+      for (const t of (reviewTasks || [])) {
+        notifs.push({
+          id: 'review-'+t.id,
+          icon: '✋',
+          type: '검토 대기',
+          title: `"${t.title}"의 검토를 요청합니다`,
+          sub: '',
+          href: '/dashboard/tasks',
+          urgent: true,
+        })
+      }
+    }
+
+    // 3.6) 수정 요청 받은 업무 (본인 담당)
+    const { data: revisionTasks } = await supabase.from('tasks')
+      .select('id, title, assignees, review_note, reviewed_at')
+      .eq('status', 'revision')
+      .gt('reviewed_at', lastNotifRead)
+      .order('reviewed_at', { ascending: false }).limit(5)
+    for (const t of (revisionTasks || [])) {
+      if (!(t.assignees || []).includes(session.user.id)) continue
+      notifs.push({
+        id: 'revision-'+t.id,
+        icon: '⮐',
+        type: '수정 요청',
+        title: `"${t.title}" - 수정 요청이 도착했습니다`,
+        sub: t.review_note ? t.review_note.slice(0, 40) + (t.review_note.length > 40 ? '...' : '') : '',
+        href: '/dashboard/tasks',
+        urgent: true,
+      })
+    }
+
     // 4) 결재 처리 결과 (승인/반려, 본인 결재)
     const { data: processedApps } = await supabase.from('approvals')
       .select('id, type, status, start_date, end_date, updated_at, approver:approver_id(name)')

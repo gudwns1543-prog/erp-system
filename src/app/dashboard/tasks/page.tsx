@@ -10,15 +10,30 @@ type Task = {
   creator_id: string | null
   due_date: string | null
   due_time: string | null // HH:MM:SS
-  status: 'todo' | 'in_progress' | 'done' | 'blocked'
+  status: 'todo' | 'in_progress' | 'blocked' | 'review' | 'revision' | 'done'
   priority: 'high' | 'normal' | 'low'
   progress: number
-  assignee_progress: Record<string, number> | null // 담당자별 진척률
+  assignee_progress: Record<string, number> | null
   visibility: 'private' | 'shared'
+  review_note: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  submitted_for_review_at: string | null
   created_at: string
   updated_at: string
   creator?: { id: string, name: string } | null
 }
+
+// 상태별 색상 / 레이블 - 통일 사용
+const STATUS_INFO: Record<string, { label: string, bg: string, text: string, dot: string }> = {
+  todo:        { label: '할일',      bg: 'bg-gray-50',    text: 'text-gray-700',   dot: 'bg-gray-400' },
+  in_progress: { label: '진행중',    bg: 'bg-blue-50',    text: 'text-blue-700',   dot: 'bg-blue-500' },
+  blocked:     { label: '막힘',      bg: 'bg-red-50',     text: 'text-red-700',    dot: 'bg-red-500' },
+  review:      { label: '검토 대기', bg: 'bg-amber-50',   text: 'text-amber-700',  dot: 'bg-amber-500' },
+  revision:    { label: '수정 필요', bg: 'bg-orange-50',  text: 'text-orange-700', dot: 'bg-orange-500' },
+  done:        { label: '완료',      bg: 'bg-green-50',   text: 'text-green-700',  dot: 'bg-green-500' },
+}
+const STATUS_LIST: Array<Task['status']> = ['todo', 'in_progress', 'blocked', 'review', 'revision', 'done']
 
 // 담당자 진척률 평균 계산
 function avgProgress(task: Task): number {
@@ -32,11 +47,13 @@ function avgProgress(task: Task): number {
   return Math.round(sum / assignees.length)
 }
 
-const STATUS_META = {
-  todo: { label: '할일', color: 'bg-gray-100 text-gray-700 border-gray-300' },
-  in_progress: { label: '진행중', color: 'bg-blue-100 text-blue-700 border-blue-300' },
-  done: { label: '완료', color: 'bg-green-100 text-green-700 border-green-300' },
-  blocked: { label: '대기/막힘', color: 'bg-red-100 text-red-700 border-red-300' },
+const STATUS_META: Record<Task['status'], { label: string, color: string }> = {
+  todo:        { label: '할일',      color: 'bg-gray-100 text-gray-700 border-gray-300' },
+  in_progress: { label: '진행중',    color: 'bg-blue-100 text-blue-700 border-blue-300' },
+  blocked:     { label: '대기/막힘', color: 'bg-red-100 text-red-700 border-red-300' },
+  review:      { label: '검토 대기', color: 'bg-amber-100 text-amber-700 border-amber-300' },
+  revision:    { label: '수정 필요', color: 'bg-orange-100 text-orange-700 border-orange-300' },
+  done:        { label: '완료',      color: 'bg-green-100 text-green-700 border-green-300' },
 }
 const PRIORITY_META = {
   high: { label: '높음', emoji: '🔴' },
@@ -116,10 +133,12 @@ export default function TasksPage() {
     return b.created_at.localeCompare(a.created_at)
   })
 
-  const grouped = {
+  const grouped: Record<Task['status'], Task[]> = {
     todo: sorted.filter(t => t.status === 'todo'),
     in_progress: sorted.filter(t => t.status === 'in_progress'),
     blocked: sorted.filter(t => t.status === 'blocked'),
+    review: sorted.filter(t => t.status === 'review'),
+    revision: sorted.filter(t => t.status === 'revision'),
     done: sorted.filter(t => t.status === 'done'),
   }
 
@@ -128,6 +147,61 @@ export default function TasksPage() {
     if (!profile) return false
     if (profile.role === 'director') return true
     return task.creator_id === profile.id
+  }
+
+  // 검토 권한: 관리자(director)만
+  function canReviewTask(task: Task): boolean {
+    if (!profile) return false
+    return profile.role === 'director' && task.status === 'review'
+  }
+
+  // 담당자가 검토 요청 (수동, 100% 아니어도 가능)
+  async function submitForReview(taskId: string) {
+    if (!confirm('이 업무를 검토 대기로 전환할까요?\n관리자에게 검토를 요청합니다.')) return
+    const supabase = createClient()
+    const { error } = await supabase.from('tasks').update({
+      status: 'review',
+      submitted_for_review_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', taskId)
+    if (error) { window.alert('실패: ' + error.message); return }
+    load()
+  }
+
+  // 관리자가 승인
+  async function approveTask(taskId: string) {
+    if (!profile) return
+    if (!confirm('이 업무를 완료 처리할까요?')) return
+    const supabase = createClient()
+    const { error } = await supabase.from('tasks').update({
+      status: 'done',
+      review_note: null, // 승인 시 이전 반려 사유는 비움
+      reviewed_by: profile.id,
+      reviewed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', taskId)
+    if (error) { window.alert('실패: ' + error.message); return }
+    setEditing(null)
+    load()
+  }
+
+  // 관리자가 수정 요청 (반려)
+  async function rejectTask(taskId: string) {
+    if (!profile) return
+    const note = window.prompt('수정 요청 사유를 입력해주세요.\n(담당자에게 전달됩니다)', '')
+    if (note === null) return // 취소
+    if (!note.trim()) { window.alert('사유를 입력해주세요.'); return }
+    const supabase = createClient()
+    const { error } = await supabase.from('tasks').update({
+      status: 'revision',
+      review_note: note,
+      reviewed_by: profile.id,
+      reviewed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', taskId)
+    if (error) { window.alert('실패: ' + error.message); return }
+    setEditing(null)
+    load()
   }
 
   // 모달 열기 전 최신 데이터로 fetch (다른 사람이 변경한 내용 반영)
@@ -225,18 +299,22 @@ export default function TasksPage() {
 
       {/* 본문 */}
       {view === 'kanban' ? (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          {(['todo','in_progress','blocked','done'] as const).map(st => (
-            <div key={st} className="bg-gray-50 rounded-lg p-3 min-h-[400px]">
-              <div className="flex items-center justify-between mb-3">
-                <span className={`px-2 py-0.5 rounded text-xs font-bold border ${STATUS_META[st].color}`}>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+          {(['todo','in_progress','blocked','revision','review','done'] as const).map(st => (
+            <div key={st} className={`rounded-lg p-2 min-h-[400px] ${
+              st === 'review' ? 'bg-amber-50/60 border border-amber-200' :
+              st === 'revision' ? 'bg-orange-50/60 border border-orange-200' :
+              'bg-gray-50'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${STATUS_META[st].color}`}>
                   {STATUS_META[st].label}
                 </span>
-                <span className="text-xs text-gray-400">{grouped[st].length}</span>
+                <span className="text-[10px] text-gray-400">{grouped[st].length}</span>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 {grouped[st].length === 0 && (
-                  <div className="text-xs text-gray-400 text-center py-4">없음</div>
+                  <div className="text-[10px] text-gray-400 text-center py-3">없음</div>
                 )}
                 {grouped[st].map(t => (
                   <KanbanCard key={t.id} task={t} empMap={empMap}
@@ -341,9 +419,13 @@ export default function TasksPage() {
           employees={employees}
           currentUserId={profile?.id}
           canDelete={editing ? canDeleteTask(editing) : false}
+          canReview={editing ? canReviewTask(editing) : false}
           onClose={()=>{ setShowCreate(false); setEditing(null) }}
           onSaved={()=>{ setShowCreate(false); setEditing(null); load() }}
           onDelete={editing ? ()=>{ deleteTask(editing.id); setEditing(null) } : undefined}
+          onSubmitReview={editing ? ()=>submitForReview(editing.id) : undefined}
+          onApprove={editing ? ()=>approveTask(editing.id) : undefined}
+          onReject={editing ? ()=>rejectTask(editing.id) : undefined}
         />
       )}
     </div>
@@ -404,14 +486,18 @@ function KanbanCard({ task, empMap, onClick, dueDateStatus }: {
 }
 
 // ─── 새 업무 / 수정 모달 ──────
-function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved, onDelete }: {
+function TaskModal({ task, employees, currentUserId, canDelete, canReview, onClose, onSaved, onDelete, onSubmitReview, onApprove, onReject }: {
   task: Task | null
   employees: any[]
   currentUserId: string
   canDelete: boolean
+  canReview: boolean
   onClose: ()=>void
   onSaved: ()=>void
   onDelete?: ()=>void
+  onSubmitReview?: ()=>void
+  onApprove?: ()=>void
+  onReject?: ()=>void
 }) {
   const [form, setForm] = useState({
     title: task?.title || '',
@@ -472,8 +558,14 @@ function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved
   async function save() {
     if (!form.title.trim()) { alert('제목을 입력해주세요.'); return }
     const supabase = createClient()
-    // 평균 진척률 100% 도달하면 자동으로 status='done'으로 변경
-    const finalStatus = avgProg >= 100 ? 'done' : form.status
+    // 평균 진척률 100% 도달하면 자동으로 status='review' (검토 대기)
+    // 단, 이미 검토/수정/완료 상태면 그대로 유지
+    let finalStatus = form.status
+    if (avgProg >= 100 && !['review','revision','done'].includes(form.status)) {
+      finalStatus = 'review'
+    }
+    // submitted_for_review_at - review로 처음 전환될 때 기록
+    const submittedAt = (finalStatus === 'review' && task?.status !== 'review') ? new Date().toISOString() : (task?.submitted_for_review_at || null)
     // 진척률 보존 전략:
     // 1) 현재 담당자들의 진척률은 그대로 (assigneeProgress에서 가져옴)
     // 2) 과거 담당자였다가 빠진 사람의 진척률도 유지 (재추가 시 복원되도록)
@@ -505,6 +597,7 @@ function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved
         progress: avgProg, // 평균 진척률 자동 계산
         assignee_progress: mergedProgress, // 과거 담당자 진척률 보존
         visibility: form.visibility,
+        submitted_for_review_at: submittedAt,
         updated_at: new Date().toISOString(),
       }).eq('id', task.id).select()
       error = result.error
@@ -653,11 +746,22 @@ function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved
             <label className="block text-xs font-medium text-gray-500 mb-1">상태</label>
             <select className="input" value={form.status}
               onChange={e=>setForm(f=>({...f,status:e.target.value as any}))}>
-              <option value="todo">할일</option>
-              <option value="in_progress">진행중</option>
-              <option value="blocked">대기/막힘</option>
-              <option value="done">완료</option>
+              <option value="todo">⚪ 할일</option>
+              <option value="in_progress">🔵 진행중</option>
+              <option value="blocked">🔴 대기/막힘</option>
+              <option value="revision">🟠 수정 필요</option>
+              <option value="review">🟡 검토 대기</option>
+              <option value="done">🟢 완료</option>
             </select>
+            {form.status === 'review' && (
+              <div className="text-[10px] text-amber-600 mt-1">✋ 관리자의 검토 후 완료 처리됩니다.</div>
+            )}
+            {form.status === 'revision' && task?.review_note && (
+              <div className="mt-1.5 p-2 bg-orange-50 border border-orange-200 rounded text-[11px] text-orange-800">
+                <strong>📝 수정 요청 사유:</strong>
+                <div className="mt-0.5 whitespace-pre-wrap">{task.review_note}</div>
+              </div>
+            )}
           </div>
           {/* 진척률 트랙 (담당자별 각자 말) */}
           <div className="bg-purple-50/40 rounded-lg p-3 border border-purple-100">
@@ -744,8 +848,8 @@ function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved
             </div>
           )}
         </div>
-        <div className="p-4 border-t border-gray-100 flex justify-between gap-2">
-          <div>
+        <div className="p-4 border-t border-gray-100 flex justify-between gap-2 flex-wrap">
+          <div className="flex gap-2 items-center flex-wrap">
             {onDelete && canDelete && (
               <button onClick={onDelete} className="btn-secondary text-sm text-red-500 hover:bg-red-50">
                 🗑 삭제
@@ -754,8 +858,29 @@ function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved
             {task && !canDelete && (
               <span className="text-[11px] text-gray-400">삭제는 작성자 또는 관리자만 가능</span>
             )}
+            {/* 검토 요청 버튼 - 담당자가 수동으로 검토 대기로 보내기 */}
+            {task && task.status !== 'review' && task.status !== 'done' &&
+              (task.assignees || []).includes(currentUserId) && onSubmitReview && (
+              <button onClick={onSubmitReview}
+                className="btn-secondary text-sm text-amber-700 border-amber-200 hover:bg-amber-50">
+                ✋ 검토 요청
+              </button>
+            )}
           </div>
           <div className="flex gap-2">
+            {/* 검토 권한자(관리자)에게만 보임 */}
+            {canReview && onReject && onApprove && (
+              <>
+                <button onClick={onReject}
+                  className="btn-secondary text-sm text-orange-700 border-orange-300 hover:bg-orange-50">
+                  ⮐ 수정 요청
+                </button>
+                <button onClick={onApprove}
+                  className="btn-secondary text-sm text-green-700 border-green-300 hover:bg-green-50">
+                  ✅ 승인 (완료)
+                </button>
+              </>
+            )}
             <button onClick={onClose} className="btn-secondary text-sm">취소</button>
             <button onClick={save} className="btn-primary text-sm">{task ? '저장' : '등록'}</button>
           </div>
