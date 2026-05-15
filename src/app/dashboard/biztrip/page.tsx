@@ -180,8 +180,9 @@ export default function BizTripPage() {
                     </td>
                   )}
                   <td className="px-3 py-2.5 text-xs text-gray-600">
-                    {t.start_time ? `${t.start_time.slice(0,5)} ~ ${t.end_time?.slice(0,5) || '?'}` : '-'}
-                    {t.duration_hours && <div className="text-[10px] text-gray-400">{Number(t.duration_hours).toFixed(1)}h</div>}
+                    {t.all_day ? '📅 종일' :
+                      t.start_time ? `${t.start_time.slice(0,5)} ~ ${t.end_time?.slice(0,5) || '?'}` : '-'}
+                    {!t.all_day && t.duration_hours && <div className="text-[10px] text-gray-400">{Number(t.duration_hours).toFixed(1)}h</div>}
                   </td>
                   <td className="px-3 py-2.5 text-xs text-gray-700">{t.location}</td>
                   <td className="px-3 py-2.5 text-xs text-gray-600 max-w-[200px] truncate" title={t.purpose}>{t.purpose}</td>
@@ -232,6 +233,7 @@ export default function BizTripPage() {
           trip={editing}
           currentUser={profile}
           approvers={approvers}
+          staffList={staffList}
           onClose={() => { setShowCreate(false); setEditing(null) }}
           onSaved={() => { setShowCreate(false); setEditing(null); load() }}
         />
@@ -241,20 +243,35 @@ export default function BizTripPage() {
 }
 
 // ─── 출장 보고서 작성/수정 모달 ──────
-function BizTripModal({ trip, currentUser, approvers, onClose, onSaved }: any) {
+function BizTripModal({ trip, currentUser, approvers, staffList, onClose, onSaved }: any) {
+  // attendees는 'staff:<uuid>;...|<외부 텍스트>' 형식으로 저장
+  // 파싱: 내부 ID 목록 + 외부 텍스트
+  const parseAttendees = (raw: string | null) => {
+    if (!raw) return { ids: [] as string[], external: '' }
+    const parts = raw.split('|')
+    const idsPart = parts[0] || ''
+    const external = parts[1] || ''
+    const ids = idsPart.startsWith('staff:')
+      ? idsPart.replace('staff:', '').split(';').filter(Boolean)
+      : []
+    return { ids, external: external || (parts.length === 1 && !idsPart.startsWith('staff:') ? idsPart : '') }
+  }
+  const initParsed = parseAttendees(trip?.attendees || '')
   const [form, setForm] = useState({
     trip_date: trip?.trip_date || new Date().toISOString().slice(0, 10),
+    all_day: trip?.all_day ?? false,
     start_time: trip?.start_time?.slice(0, 5) || '09:00',
     end_time: trip?.end_time?.slice(0, 5) || '18:00',
     location: trip?.location || '',
-    attendees: trip?.attendees || '',
+    attendeeIds: initParsed.ids,
+    externalAttendees: initParsed.external,
     purpose: trip?.purpose || '',
     notes: trip?.notes || '',
     approver_id: trip?.approver_id || approvers[0]?.id || '',
     status: trip?.status || 'draft',
   })
 
-  const duration = hoursBetween(form.start_time, form.end_time)
+  const duration = form.all_day ? 8 : hoursBetween(form.start_time, form.end_time)
   const allowance = calcAllowance(duration)
   const isReadOnly = trip?.status === 'approved'
 
@@ -266,13 +283,18 @@ function BizTripModal({ trip, currentUser, approvers, onClose, onSaved }: any) {
     const supabase = createClient()
     const status = submitForApproval ? 'pending' : form.status
 
+    // 참석자 직렬화: "staff:uuid1;uuid2|외부 텍스트"
+    const attendeesStr = (form.attendeeIds.length > 0 ? `staff:${form.attendeeIds.join(';')}` : '')
+      + (form.externalAttendees ? `|${form.externalAttendees}` : '')
+
     const data: any = {
       trip_date: form.trip_date,
-      start_time: form.start_time,
-      end_time: form.end_time,
+      all_day: form.all_day,
+      start_time: form.all_day ? null : form.start_time,
+      end_time: form.all_day ? null : form.end_time,
       duration_hours: duration,
       location: form.location,
-      attendees: form.attendees,
+      attendees: attendeesStr,
       purpose: form.purpose,
       notes: form.notes,
       approver_id: form.approver_id || null,
@@ -316,34 +338,50 @@ function BizTripModal({ trip, currentUser, approvers, onClose, onSaved }: any) {
         </div>
 
         <div className="p-5 space-y-3">
-          {/* 출장일 + 시간 */}
-          <div className="grid grid-cols-3 gap-2">
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">출장일</label>
-              <input type="date" className="input" disabled={isReadOnly}
+          {/* 출장일 + 종일/시간 */}
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">출장일</label>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input type="date" className="input flex-1 min-w-[140px]" disabled={isReadOnly}
                 value={form.trip_date}
                 onChange={e => setForm(f => ({ ...f, trip_date: e.target.value }))} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">출발</label>
-              <input type="time" className="input" disabled={isReadOnly}
-                value={form.start_time}
-                onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">종료</label>
-              <input type="time" className="input" disabled={isReadOnly}
-                value={form.end_time}
-                onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} />
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={form.all_day} disabled={isReadOnly}
+                  onChange={e => setForm(f => ({ ...f, all_day: e.target.checked }))}
+                  className="w-4 h-4" />
+                <span className="text-xs text-gray-600">하루종일</span>
+              </label>
             </div>
           </div>
+          {!form.all_day && (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">출발</label>
+                <input type="time" className="input" disabled={isReadOnly}
+                  value={form.start_time}
+                  onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">종료</label>
+                <input type="time" className="input" disabled={isReadOnly}
+                  value={form.end_time}
+                  onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} />
+              </div>
+            </div>
+          )}
 
           {/* 출장 시간 + 수당 자동 표시 */}
           <div className="bg-purple-50 rounded-md p-2.5 flex items-center justify-between">
             <div className="text-xs text-gray-700">
-              <span className="text-purple-700 font-medium">⏱ {duration.toFixed(1)}시간</span>
-              {duration >= 4 && <span className="ml-2 text-[10px] text-purple-500">(4시간 이상)</span>}
-              {duration > 0 && duration < 4 && <span className="ml-2 text-[10px] text-amber-500">(4시간 미만)</span>}
+              {form.all_day ? (
+                <span className="text-purple-700 font-medium">📅 하루종일 출장</span>
+              ) : (
+                <>
+                  <span className="text-purple-700 font-medium">⏱ {duration.toFixed(1)}시간</span>
+                  {duration >= 4 && <span className="ml-2 text-[10px] text-purple-500">(4시간 이상)</span>}
+                  {duration > 0 && duration < 4 && <span className="ml-2 text-[10px] text-amber-500">(4시간 미만)</span>}
+                </>
+              )}
             </div>
             <div className="text-sm font-bold text-purple-700 tabular-nums">
               출장수당 {allowance.toLocaleString('ko-KR')}원
@@ -359,11 +397,49 @@ function BizTripModal({ trip, currentUser, approvers, onClose, onSaved }: any) {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">참석자</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1">참석자 (내부 직원)</label>
+            <div className="border border-gray-200 rounded-md p-2 max-h-32 overflow-y-auto bg-white">
+              {(staffList || []).length === 0 ? (
+                <div className="text-xs text-gray-400 text-center py-1">직원 목록 로딩 중...</div>
+              ) : (
+                <div className="grid grid-cols-2 gap-1">
+                  {staffList.filter((s:any) => s.id !== currentUser?.id).map((s:any) => {
+                    const checked = form.attendeeIds.includes(s.id)
+                    return (
+                      <label key={s.id} className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer text-xs ${
+                        checked ? 'bg-purple-50' : 'hover:bg-gray-50'
+                      } ${isReadOnly ? 'pointer-events-none opacity-60' : ''}`}>
+                        <input type="checkbox" disabled={isReadOnly}
+                          checked={checked}
+                          onChange={e => {
+                            setForm(f => ({
+                              ...f,
+                              attendeeIds: e.target.checked
+                                ? [...f.attendeeIds, s.id]
+                                : f.attendeeIds.filter((id: string) => id !== s.id)
+                            }))
+                          }}
+                          className="w-3 h-3" />
+                        <span className="text-gray-700">{s.name} <span className="text-gray-400">({s.grade})</span></span>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="text-[10px] text-gray-400 mt-1">
+              {form.attendeeIds.length > 0
+                ? `✓ 선택된 내부 직원 ${form.attendeeIds.length}명`
+                : '내부 직원 미선택'}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">외부 참석자 (선택)</label>
             <input className="input" disabled={isReadOnly}
-              placeholder="예: 박팔주 이사, 환경공단 김ㅇㅇ 팀장"
-              value={form.attendees}
-              onChange={e => setForm(f => ({ ...f, attendees: e.target.value }))} />
+              placeholder="예: 환경공단 김ㅇㅇ 팀장, 이ㅇㅇ 차장"
+              value={form.externalAttendees}
+              onChange={e => setForm(f => ({ ...f, externalAttendees: e.target.value }))} />
           </div>
 
           <div>

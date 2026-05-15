@@ -10,6 +10,8 @@ type Task = {
   creator_id: string | null
   due_date: string | null
   due_time: string | null // HH:MM:SS
+  start_date: string | null // 시작일 (작성일과 별개)
+  all_day: boolean | null // 종일 마감 여부
   status: 'todo' | 'in_progress' | 'blocked' | 'review' | 'revision' | 'done'
   priority: 'high' | 'normal' | 'low'
   progress: number
@@ -26,7 +28,7 @@ type Task = {
 
 // 상태별 색상 / 레이블 - 통일 사용
 const STATUS_INFO: Record<string, { label: string, bg: string, text: string, dot: string }> = {
-  todo:        { label: '할일',      bg: 'bg-gray-50',    text: 'text-gray-700',   dot: 'bg-gray-400' },
+  todo:        { label: '할 일',      bg: 'bg-gray-50',    text: 'text-gray-700',   dot: 'bg-gray-400' },
   in_progress: { label: '진행중',    bg: 'bg-blue-50',    text: 'text-blue-700',   dot: 'bg-blue-500' },
   blocked:     { label: '막힘',      bg: 'bg-red-50',     text: 'text-red-700',    dot: 'bg-red-500' },
   review:      { label: '검토 대기', bg: 'bg-amber-50',   text: 'text-amber-700',  dot: 'bg-amber-500' },
@@ -48,7 +50,7 @@ function avgProgress(task: Task): number {
 }
 
 const STATUS_META: Record<Task['status'], { label: string, color: string }> = {
-  todo:        { label: '할일',      color: 'bg-gray-100 text-gray-700 border-gray-300' },
+  todo:        { label: '할 일',      color: 'bg-gray-100 text-gray-700 border-gray-300' },
   in_progress: { label: '진행중',    color: 'bg-blue-100 text-blue-700 border-blue-300' },
   blocked:     { label: '대기/막힘', color: 'bg-red-100 text-red-700 border-red-300' },
   review:      { label: '검토 대기', color: 'bg-amber-100 text-amber-700 border-amber-300' },
@@ -276,7 +278,7 @@ export default function TasksPage() {
             <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}
               className="text-sm border border-gray-200 rounded-lg px-2 py-1.5 bg-white">
               <option value="all">모든 상태</option>
-              <option value="todo">할일</option>
+              <option value="todo">할 일</option>
               <option value="in_progress">진행중</option>
               <option value="blocked">대기/막힘</option>
               <option value="done">완료</option>
@@ -503,13 +505,15 @@ function TaskModal({ task, employees, currentUserId, canDelete, canReview, onClo
     title: task?.title || '',
     description: task?.description || '',
     assignees: (task?.assignees || [currentUserId]).filter(Boolean),
+    start_date: task?.start_date || '', // 시작일
     due_date: task?.due_date || '',
     due_time: (task as any)?.due_time?.slice(0,5) || '', // HH:MM
+    all_day: task?.all_day ?? false,
     status: task?.status || 'todo',
     priority: task?.priority || 'normal',
-    visibility: task?.visibility || 'shared', // 기본 = 공유
+    visibility: task?.visibility || 'shared',
   })
-  // 담당자별 진척률 (각자 말)
+  // 담당자별 진척률
   const [assigneeProgress, setAssigneeProgress] = useState<Record<string, number>>(
     task?.assignee_progress || {}
   )
@@ -558,11 +562,15 @@ function TaskModal({ task, employees, currentUserId, canDelete, canReview, onClo
   async function save() {
     if (!form.title.trim()) { alert('제목을 입력해주세요.'); return }
     const supabase = createClient()
-    // 평균 진척률 100% 도달하면 자동으로 status='review' (검토 대기)
-    // 단, 이미 검토/수정/완료 상태면 그대로 유지
+    // 자동 상태 전환 규칙:
+    // - 100% 도달 → 자동 review (검토 대기), 이미 review/revision/done이면 유지
+    // - 0% 초과 + 100% 미만 + status가 todo → 자동 in_progress
+    // - 100% 인데 다시 100% 미만으로 돌리면 in_progress로 복귀 (이미 done/review/revision은 사용자 의지로)
     let finalStatus = form.status
     if (avgProg >= 100 && !['review','revision','done'].includes(form.status)) {
       finalStatus = 'review'
+    } else if (avgProg > 0 && avgProg < 100 && form.status === 'todo') {
+      finalStatus = 'in_progress'
     }
     // submitted_for_review_at - review로 처음 전환될 때 기록
     const submittedAt = (finalStatus === 'review' && task?.status !== 'review') ? new Date().toISOString() : (task?.submitted_for_review_at || null)
@@ -590,12 +598,14 @@ function TaskModal({ task, employees, currentUserId, canDelete, canReview, onClo
         title: form.title,
         description: form.description || null,
         assignees: form.assignees,
+        start_date: form.start_date || null,
         due_date: form.due_date || null,
-        due_time: form.due_time || null,
+        due_time: form.all_day ? null : (form.due_time || null),
+        all_day: form.all_day,
         status: finalStatus,
         priority: form.priority,
-        progress: avgProg, // 평균 진척률 자동 계산
-        assignee_progress: mergedProgress, // 과거 담당자 진척률 보존
+        progress: avgProg,
+        assignee_progress: mergedProgress,
         visibility: form.visibility,
         submitted_for_review_at: submittedAt,
         updated_at: new Date().toISOString(),
@@ -611,8 +621,10 @@ function TaskModal({ task, employees, currentUserId, canDelete, canReview, onClo
         description: form.description || null,
         assignees: form.assignees,
         creator_id: currentUserId,
+        start_date: form.start_date || null,
         due_date: form.due_date || null,
-        due_time: form.due_time || null,
+        due_time: form.all_day ? null : (form.due_time || null),
+        all_day: form.all_day,
         status: finalStatus,
         priority: form.priority,
         progress: avgProg,
@@ -715,21 +727,12 @@ function TaskModal({ task, employees, currentUserId, canDelete, canReview, onClo
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">마감일</label>
-              <div className="flex gap-1">
-                <input type="date" className="input flex-1"
-                  value={form.due_date} onChange={e=>setForm(f=>({...f,due_date:e.target.value}))} />
-                <input type="time" className="input w-24"
-                  value={form.due_time}
-                  placeholder="--:--"
-                  disabled={!form.due_date}
-                  title={form.due_date ? '마감 시간 (선택)' : '먼저 날짜를 지정하세요'}
-                  onChange={e=>setForm(f=>({...f,due_time:e.target.value}))} />
-              </div>
-              {form.due_date && (
-                <div className="text-[10px] text-gray-400 mt-0.5">
-                  {form.due_time ? `📅 ${form.due_date} ${form.due_time}까지` : `📅 ${form.due_date} (시간 미지정)`}
-                </div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">시작일 (선택)</label>
+              <input type="date" className="input"
+                value={form.start_date}
+                onChange={e=>setForm(f=>({...f,start_date:e.target.value}))} />
+              {form.start_date && form.due_date && form.start_date > form.due_date && (
+                <div className="text-[10px] text-red-500 mt-0.5">⚠️ 시작일이 마감일보다 늦습니다</div>
               )}
             </div>
             <div>
@@ -743,10 +746,37 @@ function TaskModal({ task, employees, currentUserId, canDelete, canReview, onClo
             </div>
           </div>
           <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">마감일</label>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input type="date" className="input flex-1 min-w-[140px]"
+                value={form.due_date} onChange={e=>setForm(f=>({...f,due_date:e.target.value}))} />
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={form.all_day}
+                  onChange={e=>setForm(f=>({...f,all_day:e.target.checked,due_time:e.target.checked?'':f.due_time}))}
+                  className="w-4 h-4" />
+                <span className="text-xs text-gray-600">하루종일</span>
+              </label>
+              {!form.all_day && (
+                <input type="time" className="input w-24"
+                  value={form.due_time}
+                  placeholder="--:--"
+                  disabled={!form.due_date}
+                  title={form.due_date ? '마감 시간 (선택)' : '먼저 날짜를 지정하세요'}
+                  onChange={e=>setForm(f=>({...f,due_time:e.target.value}))} />
+              )}
+            </div>
+            {form.due_date && (
+              <div className="text-[10px] text-gray-400 mt-0.5">
+                {form.all_day ? `📅 ${form.due_date} (하루종일)` :
+                  form.due_time ? `📅 ${form.due_date} ${form.due_time}까지` : `📅 ${form.due_date} (시간 미지정)`}
+              </div>
+            )}
+          </div>
+          <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">상태</label>
             <select className="input" value={form.status}
               onChange={e=>setForm(f=>({...f,status:e.target.value as any}))}>
-              <option value="todo">⚪ 할일</option>
+              <option value="todo">⚪ 할 일</option>
               <option value="in_progress">🔵 진행중</option>
               <option value="blocked">🔴 대기/막힘</option>
               <option value="revision">🟠 수정 필요</option>
@@ -768,7 +798,7 @@ function TaskModal({ task, employees, currentUserId, canDelete, canReview, onClo
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-1.5">
                 <span className="text-sm">🏁</span>
-                <span className="text-xs font-semibold text-gray-700">담당자별 진척률 (각자 말)</span>
+                <span className="text-xs font-semibold text-gray-700">담당자별 진척률</span>
               </div>
               <span className="text-xs text-purple-700 font-bold">전체 평균 {avgProg}%</span>
             </div>

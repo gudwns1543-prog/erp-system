@@ -434,7 +434,7 @@ export default function HomePage() {
         id: 'task-'+t.id,
         icon: '✔️',
         type: '업무 변경',
-        title: `"${t.title}" - ${t.status==='todo'?'할일':t.status==='in_progress'?'진행중':'대기'}`,
+        title: `"${t.title}" - ${t.status==='todo'?'할 일':t.status==='in_progress'?'진행중':'대기'}`,
         sub: t.due_date ? `마감 ${t.due_date}` : '',
         href: '/dashboard/tasks',
         urgent: false,
@@ -740,7 +740,7 @@ export default function HomePage() {
         const isMine = t.creator_id === session.user.id || (t.assignees || []).includes(session.user.id)
         if (!isMine) continue
         const myProgress = (t.assignee_progress as any)?.[session.user.id] ?? 0
-        const statusKr = t.status === 'todo' ? '할일' : t.status === 'in_progress' ? '진행중' : '막힘'
+        const statusKr = t.status === 'todo' ? '할 일' : t.status === 'in_progress' ? '진행중' : '막힘'
         const priorityMark = t.priority === 'high' ? '🔴 높음' : t.priority === 'normal' ? '🟡 보통' : '🔵 낮음'
         let dueLabel = ''
         if (t.due_date) {
@@ -1054,7 +1054,7 @@ export default function HomePage() {
               </div>
               <div className="flex items-center gap-2 flex-1 justify-end">
                 <div className="flex items-center gap-1 px-2 py-0.5 bg-gray-50 rounded">
-                  <span className="text-[10px] text-gray-500">할일</span>
+                  <span className="text-[10px] text-gray-500">할 일</span>
                   <span className="text-sm font-bold text-gray-700">{taskCounts.todo}</span>
                 </div>
                 <div className="flex items-center gap-1 px-2 py-0.5 bg-blue-50 rounded">
