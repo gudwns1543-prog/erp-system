@@ -22,6 +22,9 @@ export default function PayrollPage() {
   const [tripAllowance, setTripAllowance] = useState(0)
   const [tripDays, setTripDays] = useState(0)
   const [deductItems, setDeductItems] = useState<any[]>([])
+  const [manualInputs, setManualInputs] = useState<Record<string, number>>({}) // 수기 입력 항목
+  const [tripCount, setTripCount] = useState(0) // 그 월 출장 횟수
+  const [tripTotalFromTrips, setTripTotalFromTrips] = useState(0) // business_trips에서 자동 합계
 
   const years = Array.from({length:5},(_,i)=>new Date().getFullYear()-i)
 
@@ -63,9 +66,26 @@ export default function PayrollPage() {
       } else {
         setWorkData(null)
       }
-      // 출장일수
-      const trips = (recs||[]).filter((r:any)=>r.note==='출장').length
-      setTripDays(trips)
+      // 출장 - business_trips에서 가져오기 (승인된 건만, 회사 부담)
+      const { data: trips } = await supabase.from('business_trips')
+        .select('id, allowance, duration_hours, all_day')
+        .eq('user_id', uid)
+        .eq('status', 'approved') // 승인된 출장만 급여에 산입
+        .gte('trip_date', start).lte('trip_date', end)
+      const tripsCount = trips?.length || 0
+      const tripsTotal = (trips || []).reduce((sum: number, t: any) => sum + (t.allowance || 0), 0)
+      setTripCount(tripsCount)
+      setTripTotalFromTrips(tripsTotal)
+      // 호환을 위해 tripDays도 계속 (옛 attendance note='출장' 방식과 합산하지 않음, 출장보고가 정식)
+      setTripDays(0)
+
+      // 수기 입력 데이터 (salary_manual_inputs)
+      const { data: manualRow } = await supabase.from('salary_manual_inputs')
+        .select('items')
+        .eq('user_id', uid).eq('work_year', selYear).eq('work_month', month)
+        .maybeSingle()
+      setManualInputs((manualRow?.items as any) || {})
+
       setBonus(0); setCelebration(0); setExtraItems([])
       setEditingAnnual(false)
     }
@@ -80,16 +100,40 @@ export default function PayrollPage() {
       annual:sal.annual, dependents:sal.dependents,
       meal:sal.meal, transport:sal.transport, comm:sal.comm, ...w
     })
-    const tripPay = tripDays * tripAllowance
+    // 출장수당 - business_trips에서 자동 합계 우선, 옛 attendance 방식은 fallback
+    const tripPay = tripTotalFromTrips > 0 ? tripTotalFromTrips : (tripDays * tripAllowance)
     const customDeducts = deductItems.filter((d:any)=>d.enabled && !['pension','health','ltc','employ','incomeTax','localTax'].includes(d.id))
     const customDeductTotal = customDeducts.reduce((sum:number,d:any)=>{
       if (d.rateType==='percent') return sum + Math.round(base.grossTaxable * d.rate / 100)
       return sum + (d.rate||0)
     }, 0)
+    // 기존 일회성 (호환)
     const specialTotal = bonus + celebration + extraItems.reduce((a,x)=>a+(x.amount||0),0)
-    setResult({...base, specialTotal, tripPay, customDeductTotal, finalPay: base.netPay + specialTotal + tripPay - customDeductTotal})
+    // 수기 입력 8개 지급 합계
+    const manualPayKeys = ['bonus_manual','comm_manual','edu','meal_manual','performance','reward','transport_manual','extra_pay']
+    const manualPayTotal = manualPayKeys.reduce((sum, k) => sum + (manualInputs[k] || 0), 0)
+    // 수기 공제: ltc/employment는 자동값 대체용, 나머지는 추가 공제
+    const ltcOverride = manualInputs.ltc || 0
+    const empOverride = manualInputs.employment || 0
+    const yearEndDeduct = (manualInputs.year_income_tax || 0) + (manualInputs.year_local_tax || 0) + (manualInputs.other_deduct || 0)
+    // 자동값과 수기값의 차이 (양/음 모두 가능)
+    const ltcDelta = ltcOverride > 0 ? (ltcOverride - base.ltc) : 0
+    const empDelta = empOverride > 0 ? (empOverride - base.employ) : 0
+    // 최종 총공제액
+    const totalDeductFinal = base.totalDeduct + ltcDelta + empDelta + yearEndDeduct
+    // 최종 실수령액
+    const netPayFinal = base.grossTotal - totalDeductFinal
+    setResult({
+      ...base,
+      totalDeduct: totalDeductFinal,
+      netPay: netPayFinal,
+      specialTotal, tripPay, customDeductTotal,
+      manualPayTotal,
+      manualDeductTotal: ltcDelta + empDelta + yearEndDeduct,
+      finalPay: netPayFinal + specialTotal + tripPay + manualPayTotal - customDeductTotal,
+    })
     setNewAnnual(sal.annual)
-  }, [workData, salaryList, selIdx, staffList, bonus, celebration, extraItems])
+  }, [workData, salaryList, selIdx, staffList, bonus, celebration, extraItems, tripTotalFromTrips, tripDays, tripAllowance, deductItems, manualInputs])
 
   async function saveAnnual() {
     if (!staffList[selIdx]) return
@@ -99,6 +143,31 @@ export default function PayrollPage() {
     setEditingAnnual(false)
     setAlert('계약연봉이 수정되었습니다.')
     load(); setTimeout(()=>setAlert(''),3000)
+  }
+
+  // 수기 입력 항목 저장 (salary_manual_inputs)
+  async function saveManualInputs() {
+    if (!staffList[selIdx]) return
+    const supabase = createClient()
+    // 값이 있는 항목만 저장
+    const cleanedItems: Record<string, number> = {}
+    for (const [k, v] of Object.entries(manualInputs)) {
+      if (v && v !== 0) cleanedItems[k] = v
+    }
+    const { error } = await supabase.from('salary_manual_inputs').upsert({
+      user_id: staffList[selIdx].id,
+      work_year: selYear,
+      work_month: month,
+      items: cleanedItems,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,work_year,work_month' })
+    if (error) { setAlert('저장 실패: ' + error.message); setTimeout(()=>setAlert(''),3000); return }
+    setAlert('💾 수기 입력 항목이 저장되었습니다.')
+    setTimeout(()=>setAlert(''),2500)
+  }
+
+  function setManualValue(key: string, value: number) {
+    setManualInputs(prev => ({ ...prev, [key]: value || 0 }))
   }
 
   const selStaff = staffList[selIdx]
@@ -123,6 +192,15 @@ export default function PayrollPage() {
           📅 <strong>{formatPayLabel(selYear, month)}</strong>
         </div>
       </div>
+
+      {/* 사용 안내 */}
+      <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 space-y-1">
+        <div className="font-semibold">💡 급여 계산 흐름</div>
+        <div>1. <strong>자동 계산</strong>: 기본급, 시간외/야간/휴일수당, 식대/교통비/통신비, 출장수당 (출장보고 승인 건)</div>
+        <div>2. <strong>수기 입력</strong>: 상여금, 성과급, 교육비, 급량비 등은 아래 <span className="bg-amber-100 px-1 rounded font-semibold">📝 명세서 수기 입력</span> 영역에 직접 입력 후 <strong>💾 저장</strong></div>
+        <div>3. <strong>최종 명세서</strong>: 자동 + 수기 합산 결과가 직원의 급여명세 조회에 반영</div>
+      </div>
+
       {alert && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{alert}</div>}
 
       <div className="flex items-center gap-2 mb-5 flex-wrap">
@@ -201,21 +279,24 @@ export default function PayrollPage() {
                     </div>
                   )
                 })}
-                {/* 출장일수 - 항상 표시 */}
+                {/* 출장수당 - business_trips에서 자동 합계 */}
                 <div className="flex justify-between items-center py-1.5 border-b border-gray-50 last:border-0">
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-600 font-medium">출장</span>
-                      <span className="text-xs font-semibold text-amber-600">일비</span>
+                      <span className="text-xs text-gray-600 font-medium">🚗 출장수당</span>
+                      <span className="text-[10px] text-purple-500">자동</span>
                     </div>
-                    <div className="text-xs text-gray-400">
-                      {tripAllowance > 0 ? `${tripAllowance.toLocaleString()}원/일` : '회사설정에서 일비 미설정'}
+                    <div className="text-[11px] text-gray-400">
+                      {tripCount > 0
+                        ? `승인된 출장 ${tripCount}건 (4h↑ 25,000원/4h미만 15,000원)`
+                        : `해당 월 승인된 출장보고서 없음`}
                     </div>
                   </div>
                   <div className="text-right">
-                    <span className={`text-sm font-bold ${tripDays>0?'text-amber-600':'text-gray-300'}`}>{tripDays}일</span>
-                    {tripDays > 0 && tripAllowance > 0 && (
-                      <div className="text-xs text-amber-500">{(tripDays*tripAllowance).toLocaleString()}원</div>
+                    {tripTotalFromTrips > 0 ? (
+                      <span className="text-sm font-bold text-amber-600 tabular-nums">{tripTotalFromTrips.toLocaleString()}원</span>
+                    ) : (
+                      <span className="text-sm text-gray-300">0원</span>
                     )}
                   </div>
                 </div>
@@ -229,13 +310,8 @@ export default function PayrollPage() {
 
             {/* 수기 입력 */}
             <div className="card">
-              <div className="text-sm font-semibold text-gray-700 mb-3">✏️ 수기 입력 항목</div>
+              <div className="text-sm font-semibold text-gray-700 mb-3">✏️ 일회성 추가/감액</div>
               <div className="space-y-2.5">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">상여금 (원)</label>
-                  <input type="number" className="input text-sm" value={bonus||0}
-                    onChange={e=>setBonus(+e.target.value)} placeholder="0" />
-                </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">경조사비 (원)</label>
                   <input type="number" className="input text-sm" value={celebration||0}
@@ -259,12 +335,85 @@ export default function PayrollPage() {
                 ))}
                 <button onClick={()=>setExtraItems(prev=>[...prev,{label:'',amount:0}])}
                   className="w-full py-2 border border-dashed border-gray-200 rounded-lg text-xs text-gray-400 hover:border-purple-300 hover:text-purple-600 transition-colors">
-                  + 항목 추가 (기타수당, 특별수당 등)
+                  + 항목 추가 (기타 일회성 지급)
                 </button>
               </div>
               {specialTotal > 0 && (
                 <div className="mt-3 p-2 bg-amber-50 rounded-lg text-xs text-amber-700">
-                  수기 합계: {formatWon(specialTotal)}
+                  일회성 합계: {formatWon(specialTotal)}
+                </div>
+              )}
+            </div>
+
+            {/* 명세서 수기 입력 (월별 저장) - 세무사 명세서 양식 기반 */}
+            <div className="card border-2 border-amber-300 bg-amber-50/30">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="text-sm font-bold text-amber-800 flex items-center gap-1">
+                    <span className="text-base">📝</span>
+                    명세서 수기 입력 (세무사 조정값)
+                  </div>
+                  <div className="text-[11px] text-amber-700 mt-0.5">
+                    세무사가 보내준 최종 명세서의 항목을 여기에 입력하고 <strong>💾 저장</strong>하세요. 이 값이 직원에게 보이는 명세서에 반영됩니다.
+                  </div>
+                </div>
+                <button onClick={saveManualInputs}
+                  className="btn-primary text-sm px-3 py-1.5 bg-amber-600 hover:bg-amber-700">💾 저장</button>
+              </div>
+
+              <div className="space-y-3">
+                {/* 지급 항목 8개 */}
+                <div>
+                  <div className="text-xs font-semibold text-green-700 mb-1.5">+ 지급 항목</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      {key:'bonus_manual',label:'상여금'},
+                      {key:'comm_manual',label:'통신비'},
+                      {key:'edu',label:'교육비지원금'},
+                      {key:'meal_manual',label:'급량비'},
+                      {key:'performance',label:'성과급'},
+                      {key:'reward',label:'업무시상금'},
+                      {key:'transport_manual',label:'교통비'},
+                      {key:'extra_pay',label:'추가수당'},
+                    ].map(item => (
+                      <div key={item.key}>
+                        <label className="block text-[10px] text-gray-500 mb-0.5">{item.label}</label>
+                        <input type="number" className="input text-xs py-1"
+                          placeholder="0"
+                          value={manualInputs[item.key] || 0}
+                          onChange={e => setManualValue(item.key, +e.target.value)} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 공제 항목 5개 */}
+                <div>
+                  <div className="text-xs font-semibold text-red-700 mb-1.5">− 공제 항목 (세무사 조정값)</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      {key:'ltc',label:'장기요양보험'},
+                      {key:'employment',label:'고용보험'},
+                      {key:'year_income_tax',label:'연말정산소득세'},
+                      {key:'year_local_tax',label:'연말정산지방소득세'},
+                      {key:'other_deduct',label:'기타공제'},
+                    ].map(item => (
+                      <div key={item.key}>
+                        <label className="block text-[10px] text-gray-500 mb-0.5">{item.label}</label>
+                        <input type="number" className="input text-xs py-1"
+                          placeholder="0"
+                          value={manualInputs[item.key] || 0}
+                          onChange={e => setManualValue(item.key, +e.target.value)} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {(result?.manualPayTotal > 0 || result?.manualDeductTotal > 0) && (
+                <div className="mt-3 p-2 bg-blue-50 rounded-lg text-xs text-blue-700 space-y-0.5">
+                  {result?.manualPayTotal > 0 && <div>+ 수기 지급 합계: <strong>{formatWon(result.manualPayTotal)}</strong></div>}
+                  {result?.manualDeductTotal > 0 && <div>− 수기 공제 합계: <strong className="text-red-700">{formatWon(result.manualDeductTotal)}</strong></div>}
                 </div>
               )}
             </div>
@@ -276,8 +425,8 @@ export default function PayrollPage() {
               <>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    {l:'총 지급액', v:formatWon(result.grossTotal+specialTotal+(result.tripPay||0)), c:'text-purple-600'},
-                    {l:'총 공제액', v:'-'+formatWon(result.totalDeduct+(result.customDeductTotal||0)), c:'text-red-600'},
+                    {l:'총 지급액', v:formatWon(result.grossTotal+specialTotal+(result.tripPay||0)+(result.manualPayTotal||0)), c:'text-purple-600'},
+                    {l:'총 공제액', v:'-'+formatWon(result.totalDeduct+(result.customDeductTotal||0)+(result.manualDeductTotal||0)), c:'text-red-600'},
                   ].map(x=>(
                     <div key={x.l} className="card text-center py-3">
                       <div className="text-xs text-gray-400 mb-1">{x.l}</div>
@@ -298,7 +447,17 @@ export default function PayrollPage() {
                     selSalary?.meal>0      && ['식대 (비과세)', selSalary.meal],
                     selSalary?.transport>0 && ['교통비 (비과세)', selSalary.transport],
                     selSalary?.comm>0      && ['통신비 (비과세)', selSalary.comm],
-                    bonus>0        && ['상여금', bonus],
+                    (result.tripPay||0)>0 && ['🚗 출장수당', result.tripPay],
+                    // 수기 입력 8개 항목
+                    (manualInputs.bonus_manual||0)>0 && ['상여금', manualInputs.bonus_manual],
+                    (manualInputs.comm_manual||0)>0 && ['통신비 (수기)', manualInputs.comm_manual],
+                    (manualInputs.edu||0)>0 && ['교육비지원금', manualInputs.edu],
+                    (manualInputs.meal_manual||0)>0 && ['급량비', manualInputs.meal_manual],
+                    (manualInputs.performance||0)>0 && ['성과급', manualInputs.performance],
+                    (manualInputs.reward||0)>0 && ['업무시상금', manualInputs.reward],
+                    (manualInputs.transport_manual||0)>0 && ['교통비 (수기)', manualInputs.transport_manual],
+                    (manualInputs.extra_pay||0)>0 && ['추가수당', manualInputs.extra_pay],
+                    // 일회성
                     celebration>0  && ['경조사비', celebration],
                     ...extraItems.filter(x=>x.amount>0).map(x=>[x.label||'기타수당', x.amount] as [string,number]),
                   ] as any[]).filter(Boolean).map((item:any,i:number)=>(
@@ -309,29 +468,37 @@ export default function PayrollPage() {
                   ))}
                   <div className="flex justify-between pt-2 text-sm font-semibold">
                     <span>합계</span>
-                    <span className="text-purple-600">{formatWon(result.grossTotal+specialTotal+(result.tripPay||0))}</span>
-                    {(result.tripPay||0)>0 && <span className="text-xs text-amber-600 ml-1">(출장일비 {formatWon(result.tripPay)} 포함)</span>}
+                    <span className="text-purple-600">{formatWon(result.grossTotal+specialTotal+(result.tripPay||0)+(result.manualPayTotal||0))}</span>
                   </div>
                 </div>
 
                 <div className="card">
                   <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">공제 항목</div>
-                  {[
+                  {([
                     ['국민연금 (4.5%)', result.pension],
                     ['건강보험 (3.545%)', result.health],
-                    ['장기요양보험', result.ltc],
-                    ['고용보험 (0.9%)', result.employ],
+                    // 장기요양보험은 자동 + 수기 입력값이 있으면 수기로 (세무사 조정)
+                    (manualInputs.ltc||0) > 0
+                      ? ['장기요양보험 (수기)', manualInputs.ltc]
+                      : ['장기요양보험', result.ltc],
+                    (manualInputs.employment||0) > 0
+                      ? ['고용보험 (수기)', manualInputs.employment]
+                      : ['고용보험 (0.9%)', result.employ],
                     [`소득세 (${selSalary?.dependents}인)`, result.incomeTax],
                     ['지방소득세', result.localTax],
-                  ].map(([l,v],i)=>(
+                    // 수기 공제 항목 (연말정산 등)
+                    (manualInputs.year_income_tax||0) > 0 && ['연말정산소득세', manualInputs.year_income_tax],
+                    (manualInputs.year_local_tax||0) > 0 && ['연말정산지방소득세', manualInputs.year_local_tax],
+                    (manualInputs.other_deduct||0) > 0 && ['기타공제', manualInputs.other_deduct],
+                  ] as any[]).filter(Boolean).map((item:any,i:number)=>(
                     <div key={i} className="flex justify-between py-1.5 border-b border-gray-50 text-xs">
-                      <span className="text-gray-500">{l}</span>
-                      <span className="text-red-600 font-medium">-{formatWon(v as number)}</span>
+                      <span className="text-gray-500">{item[0]}</span>
+                      <span className="text-red-600 font-medium">-{formatWon(item[1] as number)}</span>
                     </div>
                   ))}
                   <div className="flex justify-between pt-2 text-sm font-semibold">
                     <span>합계</span>
-                    <span className="text-red-600">-{formatWon(result.totalDeduct)}</span>
+                    <span className="text-red-600">-{formatWon(result.totalDeduct+(result.manualDeductTotal||0))}</span>
                   </div>
                 </div>
 

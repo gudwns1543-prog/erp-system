@@ -263,7 +263,7 @@ function BizTripModal({ trip, currentUser, approvers, staffList, onClose, onSave
     start_time: trip?.start_time?.slice(0, 5) || '09:00',
     end_time: trip?.end_time?.slice(0, 5) || '18:00',
     location: trip?.location || '',
-    attendeeIds: initParsed.ids,
+    attendeeIds: trip ? initParsed.ids : (currentUser?.id ? [currentUser.id] : []),
     externalAttendees: initParsed.external,
     purpose: trip?.purpose || '',
     notes: trip?.notes || '',
@@ -403,8 +403,9 @@ function BizTripModal({ trip, currentUser, approvers, staffList, onClose, onSave
                 <div className="text-xs text-gray-400 text-center py-1">직원 목록 로딩 중...</div>
               ) : (
                 <div className="grid grid-cols-2 gap-1">
-                  {staffList.filter((s:any) => s.id !== currentUser?.id).map((s:any) => {
+                  {staffList.map((s:any) => {
                     const checked = form.attendeeIds.includes(s.id)
+                    const isMe = s.id === currentUser?.id
                     return (
                       <label key={s.id} className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer text-xs ${
                         checked ? 'bg-purple-50' : 'hover:bg-gray-50'
@@ -420,7 +421,10 @@ function BizTripModal({ trip, currentUser, approvers, staffList, onClose, onSave
                             }))
                           }}
                           className="w-3 h-3" />
-                        <span className="text-gray-700">{s.name} <span className="text-gray-400">({s.grade})</span></span>
+                        <span className="text-gray-700">
+                          {s.name}{isMe && <span className="text-purple-600 font-medium"> (나)</span>}
+                          <span className="text-gray-400"> ({s.grade})</span>
+                        </span>
                       </label>
                     )
                   })}
