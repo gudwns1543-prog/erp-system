@@ -39,22 +39,63 @@ export default function ApprovalPage() {
     if (!session) return
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
-    // 보낸 결재
-    const { data: s } = await supabase.from('approvals')
+
+    // 헬퍼 - 출장 보고서를 결재 형식으로 매핑
+    const mapBizTrip = (t: any) => ({
+      ...t,
+      kind: 'biztrip', // 결재 종류 구분
+      requester_id: t.user_id,
+      requester: t.user,
+      type: '🚗 출장',
+      start_date: t.trip_date,
+      end_date: t.trip_date,
+      start_time: t.start_time,
+      end_time: t.end_time,
+      // 보고 내용을 reason 필드에 매핑 (UI 호환)
+      reason: `[장소] ${t.location}\n[내용] ${t.purpose}${t.notes ? '\n[비고] ' + t.notes : ''}`,
+      // 본인 작성 보고서가 draft 상태로 남아있어도 'sent'에는 포함
+    })
+
+    // 보낸 결재 = 일반 결재 + 본인 작성 출장 (draft/pending/approved/rejected 모두)
+    const { data: sentAppr } = await supabase.from('approvals')
       .select('*, requester:requester_id(name,dept,color,tc), approver:approver_id(name)')
       .eq('requester_id', session.user.id).order('created_at',{ascending:false})
-    setSent(s||[])
+    const { data: sentTrips } = await supabase.from('business_trips')
+      .select('*, user:user_id(id,name,dept,color,tc), approver:approver_id(name)')
+      .eq('user_id', session.user.id).neq('status', 'draft') // draft는 결재함에 노출 안 함
+      .order('created_at',{ascending:false})
+    const sentMerged = [
+      ...(sentAppr || []).map((a: any) => ({ ...a, kind: 'approval' })),
+      ...(sentTrips || []).map(mapBizTrip),
+    ].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+    setSent(sentMerged)
+
     if (p?.role === 'director') {
-      // 받은 결재 (대기)
-      const { data: ib } = await supabase.from('approvals')
+      // 받은 결재 (대기) = 일반 결재 + 본인이 결재자인 출장
+      const { data: inboxAppr } = await supabase.from('approvals')
         .select('*, requester:requester_id(name,dept,color,tc), approver:approver_id(name)')
         .eq('approver_id', session.user.id).eq('status','pending').order('created_at',{ascending:false})
-      setInbox(ib||[])
-      // 전체 결재
-      const { data: a } = await supabase.from('approvals')
+      const { data: inboxTrips } = await supabase.from('business_trips')
+        .select('*, user:user_id(id,name,dept,color,tc), approver:approver_id(name)')
+        .eq('approver_id', session.user.id).eq('status','pending').order('created_at',{ascending:false})
+      const inboxMerged = [
+        ...(inboxAppr || []).map((a: any) => ({ ...a, kind: 'approval' })),
+        ...(inboxTrips || []).map(mapBizTrip),
+      ].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+      setInbox(inboxMerged)
+
+      // 전체 결재 = 일반 결재 + 모든 출장 (draft 제외)
+      const { data: allAppr } = await supabase.from('approvals')
         .select('*, requester:requester_id(name,dept,color,tc), approver:approver_id(name)')
         .order('created_at',{ascending:false})
-      setAll(a||[])
+      const { data: allTrips } = await supabase.from('business_trips')
+        .select('*, user:user_id(id,name,dept,color,tc), approver:approver_id(name)')
+        .neq('status', 'draft').order('created_at',{ascending:false})
+      const allMerged = [
+        ...(allAppr || []).map((a: any) => ({ ...a, kind: 'approval' })),
+        ...(allTrips || []).map(mapBizTrip),
+      ].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+      setAll(allMerged)
       setTab('inbox')
     } else {
       setTab('sent')
@@ -63,8 +104,25 @@ export default function ApprovalPage() {
 
   useEffect(() => { load() }, [load])
 
-  async function handle(id: string, status: 'approved'|'rejected') {
+  async function handle(id: string, status: 'approved'|'rejected', kind: 'approval' | 'biztrip' = 'approval') {
     const supabase = createClient()
+
+    // 출장 결재 처리
+    if (kind === 'biztrip') {
+      const { error } = await supabase.from('business_trips')
+        .update({ status, updated_at: new Date().toISOString() }).eq('id', id)
+      if (error) {
+        setAlert('처리 실패: ' + error.message)
+        setTimeout(() => setAlert(''), 3000)
+        return
+      }
+      setAlert(status === 'approved' ? '✅ 출장 보고서가 승인되었습니다.' : '❌ 출장 보고서가 반려되었습니다.')
+      setShowDetail(null)
+      setTimeout(() => setAlert(''), 3000)
+      load()
+      return
+    }
+
     await supabase.from('approvals').update({status, updated_at: new Date().toISOString()}).eq('id', id)
 
     // 반려 시 - 퇴근시간수정 요청이면 attendance note만 '수정요청중' → '야간자동컷오프'로 복원
@@ -314,7 +372,19 @@ export default function ApprovalPage() {
             {data.map(r=>(
               <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50">
                 {showRequester && <td className="py-2 pr-4 font-medium text-sm">{(r.requester as any)?.name}</td>}
-                <td className="py-2 pr-4 text-xs">{r.type}</td>
+                <td className="py-2 pr-4 text-xs">
+                  <span className={`inline-block px-1.5 py-0.5 rounded font-medium ${
+                    r.kind === 'biztrip' ? 'bg-amber-100 text-amber-700' :
+                    r.type === '연차' || r.type?.startsWith('반차') || r.type === '반반차' ? 'bg-purple-100 text-purple-700' :
+                    r.type === '병가' ? 'bg-pink-100 text-pink-700' :
+                    r.type === '공가' ? 'bg-indigo-100 text-indigo-700' :
+                    r.type === '외근' ? 'bg-cyan-100 text-cyan-700' :
+                    r.type === '특별휴가' ? 'bg-rose-100 text-rose-700' :
+                    r.type === '퇴근시간수정' ? 'bg-gray-100 text-gray-700' :
+                    r.type === '철회요청' ? 'bg-orange-100 text-orange-700' :
+                    'bg-gray-100 text-gray-700'
+                  }`}>{r.type}</span>
+                </td>
                 <td className="py-2 pr-4 text-xs whitespace-nowrap">{r.start_date}{r.end_date!==r.start_date?' ~ '+r.end_date:''}</td>
                 <td className="py-2 pr-4 text-xs text-gray-500 max-w-[160px] truncate">{r.reason||'-'}</td>
                 <td className="py-2 pr-4 text-xs">{(r.approver as any)?.name}</td>
@@ -324,11 +394,11 @@ export default function ApprovalPage() {
                     <button onClick={()=>setShowDetail(r)} className="btn-secondary text-xs px-2 py-1">문서 열기</button>
                     {profile?.role==='director' && r.status==='pending' && (
                       <>
-                        <button onClick={()=>handle(r.id,'approved')} className="btn-secondary text-xs px-2 py-1 text-green-700 border-green-200 hover:bg-green-50">승인</button>
-                        <button onClick={()=>handle(r.id,'rejected')} className="btn-danger text-xs px-2 py-1">반려</button>
+                        <button onClick={()=>handle(r.id,'approved', r.kind)} className="btn-secondary text-xs px-2 py-1 text-green-700 border-green-200 hover:bg-green-50">승인</button>
+                        <button onClick={()=>handle(r.id,'rejected', r.kind)} className="btn-danger text-xs px-2 py-1">반려</button>
                       </>
                     )}
-                    {profile?.role==='director' && (r.status==='approved' || r.status==='rejected') && (
+                    {profile?.role==='director' && r.kind === 'approval' && (r.status==='approved' || r.status==='rejected') && (
                       <button onClick={()=>handleRevoke(r.id)} className="btn-secondary text-xs px-2 py-1 text-orange-600 border-orange-200 hover:bg-orange-50">철회</button>
                     )}
                   </div>
@@ -380,8 +450,17 @@ export default function ApprovalPage() {
               {[
                 {label:'신청자', val:(showDetail.requester as any)?.name || profile?.name},
                 {label:'부서', val:(showDetail.requester as any)?.dept || profile?.dept},
-                {label:'유형', val:showDetail.type},
-                {label:'기간', val:`${showDetail.start_date}${showDetail.end_date!==showDetail.start_date?' ~ '+showDetail.end_date:''}`},
+                {label:'유형', val: showDetail.kind === 'biztrip' ? '🚗 출장 보고' : showDetail.type},
+                {label: showDetail.kind === 'biztrip' ? '출장일' : '기간',
+                  val:`${showDetail.start_date}${showDetail.end_date!==showDetail.start_date?' ~ '+showDetail.end_date:''}`},
+                ...(showDetail.kind === 'biztrip' ? [
+                  {label:'시간', val: showDetail.all_day ? '하루종일'
+                    : showDetail.start_time && showDetail.end_time
+                      ? `${showDetail.start_time.slice(0,5)} ~ ${showDetail.end_time.slice(0,5)} (${Number(showDetail.duration_hours || 0).toFixed(1)}시간)`
+                      : '-'
+                  },
+                  {label:'출장수당', val: showDetail.allowance ? `${showDetail.allowance.toLocaleString('ko-KR')}원` : '0원'},
+                ] : []),
                 {label:'결재자', val:(showDetail.approver as any)?.name},
               ].map(item=>(
                 <div key={item.label} className="flex gap-4 pb-3 border-b border-gray-50">
@@ -390,7 +469,9 @@ export default function ApprovalPage() {
                 </div>
               ))}
               <div>
-                <div className="text-xs font-medium text-gray-400 mb-2">신청 사유</div>
+                <div className="text-xs font-medium text-gray-400 mb-2">
+                  {showDetail.kind === 'biztrip' ? '출장 내용' : '신청 사유'}
+                </div>
                 <div className="p-3 bg-gray-50 rounded-lg text-sm text-gray-800 whitespace-pre-wrap min-h-[80px] leading-relaxed">
                   {showDetail.reason || '(사유 없음)'}
                 </div>
@@ -400,12 +481,12 @@ export default function ApprovalPage() {
               <button onClick={()=>setShowDetail(null)} className="btn-secondary text-sm">닫기</button>
               {profile?.role==='director' && showDetail.status==='pending' && (
                 <>
-                  <button onClick={()=>handle(showDetail.id,'rejected')} className="btn-danger text-sm">반려</button>
-                  <button onClick={()=>handle(showDetail.id,'approved')}
+                  <button onClick={()=>handle(showDetail.id,'rejected', showDetail.kind)} className="btn-danger text-sm">반려</button>
+                  <button onClick={()=>handle(showDetail.id,'approved', showDetail.kind)}
                     className="btn-secondary text-sm text-green-700 border-green-200 hover:bg-green-50">승인</button>
                 </>
               )}
-              {profile?.role==='director' && (showDetail.status==='approved' || showDetail.status==='rejected') && (
+              {profile?.role==='director' && showDetail.kind === 'approval' && (showDetail.status==='approved' || showDetail.status==='rejected') && (
                 <button onClick={()=>handleRevoke(showDetail.id)}
                   className="btn-secondary text-sm text-orange-600 border-orange-200 hover:bg-orange-50">
                   {showDetail.status==='approved' ? '승인 철회' : '반려 철회'}

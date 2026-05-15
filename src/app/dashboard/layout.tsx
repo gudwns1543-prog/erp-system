@@ -76,7 +76,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         const { count } = await supabase
           .from('approvals').select('*', { count: 'exact', head: true })
           .eq('approver_id', session.user.id).eq('status', 'pending')
-        setPendingCount(count || 0)
+        // 출장 결재 대기도 포함
+        const { count: tripCount } = await supabase
+          .from('business_trips').select('*', { count: 'exact', head: true })
+          .eq('approver_id', session.user.id).eq('status', 'pending')
+        setPendingCount((count || 0) + (tripCount || 0))
         // 가입 승인 대기 (별도 변수)
         const { count: lc } = await supabase
           .from('signup_requests').select('*', { count: 'exact', head: true }).eq('status','pending')
