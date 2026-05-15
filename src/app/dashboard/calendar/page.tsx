@@ -487,7 +487,6 @@ export default function CalendarPage() {
                             fontSize: '11px',
                             lineHeight: '14px',
                             color: t.status === 'done' ? '#92400E' : '#7C2D12',
-                            transform: `rotate(${(t.id.charCodeAt(0) % 5) - 2}deg)`, // 살짝 비스듬히 (스티커 느낌)
                             boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
                           }}>
                           <span className="font-medium">📌 {t.title.length > 8 ? t.title.slice(0,8)+'…' : t.title}</span>
