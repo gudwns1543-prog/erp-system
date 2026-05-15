@@ -10,9 +10,11 @@ const NAV = [
   { group: '홈', items: [
     { href: '/dashboard/home', label: '홈', icon: '🏠' },
   ]},
-  { group: '근태', items: [
-    { href: '/dashboard/checkin', label: '출퇴근', icon: '⏰' },
+  { group: '업무', items: [
+    { href: '/dashboard/checkin', label: '근태', icon: '⏰' },
     { href: '/dashboard/attendance', label: '근태 기록', icon: '📋' },
+    { href: '/dashboard/calendar', label: '일정', icon: '📅' },
+    { href: '/dashboard/tasks', label: '업무 (할 일)', icon: '✔️' },
   ]},
   { group: '급여', items: [
     { href: '/dashboard/payslip', label: '급여명세 조회', icon: '📄' },
@@ -20,14 +22,11 @@ const NAV = [
     { href: '/dashboard/payroll', label: '급여 일괄계산', icon: '📊', adminOnly: true },
   ]},
   { group: '결재', items: [
-    { href: '/dashboard/leave', label: '결재 신청', icon: '📝' },
-    { href: '/dashboard/biztrip', label: '출장 보고', icon: '🚗' },
     { href: '/dashboard/annual', label: '연차 관리', icon: '📅' },
+    { href: '/dashboard/biztrip', label: '출장 보고', icon: '🚗' },
     { href: '/dashboard/approval', label: '결재함', icon: '✅' },
   ]},
   { group: '소통', items: [
-    { href: '/dashboard/calendar', label: '일정', icon: '📅' },
-    { href: '/dashboard/tasks', label: '업무', icon: '✔️' },
     { href: '/dashboard/notice', label: '공지사항', icon: '📢' },
     { href: '/dashboard/chat', label: '메시지', icon: '💬' },
   ]},
@@ -35,9 +34,9 @@ const NAV = [
     { href: '/dashboard/myinfo', label: '내 정보', icon: '👤' },
     { href: '/dashboard/org', label: '조직도', icon: '🏢' },
     { href: '/dashboard/hrm', label: '인사정보 관리', icon: '⚙️', adminOnly: true },
-    { href: '/dashboard/signup', label: '가입 승인', icon: '🔑', adminOnly: true },
   ]},
   { group: '설정', items: [
+    { href: '/dashboard/signup', label: '가입 승인', icon: '🔑', adminOnly: true },
     { href: '/dashboard/settings', label: '회사 설정', icon: '🔧', adminOnly: true },
   ]},
 ]

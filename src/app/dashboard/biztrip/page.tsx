@@ -3,14 +3,6 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { sortByGrade } from '@/lib/attendance'
 
-// 출장수당 자동 계산
-// 4시간 이상: 25,000원, 4시간 미만: 15,000원
-function calcAllowance(hours: number): number {
-  if (hours <= 0) return 0
-  if (hours >= 4) return 25000
-  return 15000
-}
-
 function hoursBetween(startTime: string, endTime: string): number {
   if (!startTime || !endTime) return 0
   const [sh, sm] = startTime.split(':').map(Number)
@@ -37,6 +29,7 @@ export default function BizTripPage() {
   const [trips, setTrips] = useState<any[]>([])
   const [staffList, setStaffList] = useState<any[]>([])
   const [approvers, setApprovers] = useState<any[]>([])
+  const [tripPolicy, setTripPolicy] = useState({ short: 15000, long: 25000 })
   const [tab, setTab] = useState<'mine' | 'pending' | 'all'>('mine')
   const [editing, setEditing] = useState<any | null>(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -60,6 +53,19 @@ export default function BizTripPage() {
       ['대표이사', '대표', '이사', '부사장', '전무이사', '전무', '상무이사', '상무'].includes(e.grade)
     )
     setApprovers(sortByGrade(apprs))
+
+    // 회사 출장 정책 로딩
+    const { data: cs } = await supabase.from('company_settings')
+      .select('key, value')
+      .in('key', ['trip_short_amount', 'trip_long_amount'])
+    if (cs && cs.length > 0) {
+      const policy = { short: 15000, long: 25000 }
+      for (const row of cs) {
+        if (row.key === 'trip_short_amount') policy.short = Number(row.value) || 15000
+        if (row.key === 'trip_long_amount') policy.long = Number(row.value) || 25000
+      }
+      setTripPolicy(policy)
+    }
 
     // 출장 목록 (tab 별)
     let query = supabase.from('business_trips').select(`
@@ -234,6 +240,7 @@ export default function BizTripPage() {
           currentUser={profile}
           approvers={approvers}
           staffList={staffList}
+          tripPolicy={tripPolicy}
           onClose={() => { setShowCreate(false); setEditing(null) }}
           onSaved={() => { setShowCreate(false); setEditing(null); load() }}
         />
@@ -243,7 +250,13 @@ export default function BizTripPage() {
 }
 
 // ─── 출장 보고서 작성/수정 모달 ──────
-function BizTripModal({ trip, currentUser, approvers, staffList, onClose, onSaved }: any) {
+function BizTripModal({ trip, currentUser, approvers, staffList, tripPolicy, onClose, onSaved }: any) {
+  // 출장수당 = 정책 기반 계산
+  function calcAllowance(hours: number): number {
+    if (hours <= 0) return 0
+    if (hours >= 4) return tripPolicy?.long ?? 25000
+    return tripPolicy?.short ?? 15000
+  }
   // attendees는 'staff:<uuid>;...|<외부 텍스트>' 형식으로 저장
   // 파싱: 내부 ID 목록 + 외부 텍스트
   const parseAttendees = (raw: string | null) => {
@@ -397,39 +410,66 @@ function BizTripModal({ trip, currentUser, approvers, staffList, onClose, onSave
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">참석자 (내부 직원)</label>
-            <div className="border border-gray-200 rounded-md p-2 max-h-32 overflow-y-auto bg-white">
-              {(staffList || []).length === 0 ? (
-                <div className="text-xs text-gray-400 text-center py-1">직원 목록 로딩 중...</div>
-              ) : (
-                <div className="grid grid-cols-2 gap-1">
-                  {staffList.map((s:any) => {
-                    const checked = form.attendeeIds.includes(s.id)
-                    const isMe = s.id === currentUser?.id
-                    return (
-                      <label key={s.id} className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer text-xs ${
-                        checked ? 'bg-purple-50' : 'hover:bg-gray-50'
-                      } ${isReadOnly ? 'pointer-events-none opacity-60' : ''}`}>
-                        <input type="checkbox" disabled={isReadOnly}
-                          checked={checked}
-                          onChange={e => {
-                            setForm(f => ({
-                              ...f,
-                              attendeeIds: e.target.checked
-                                ? [...f.attendeeIds, s.id]
-                                : f.attendeeIds.filter((id: string) => id !== s.id)
-                            }))
-                          }}
-                          className="w-3 h-3" />
-                        <span className="text-gray-700">
-                          {s.name}{isMe && <span className="text-purple-600 font-medium"> (나)</span>}
-                          <span className="text-gray-400"> ({s.grade})</span>
-                        </span>
-                      </label>
-                    )
-                  })}
-                </div>
-              )}
+            <label className="block text-xs font-medium text-gray-500 mb-1">
+              참석자 (내부 직원)
+              <span className="text-[9px] text-gray-400 font-normal ml-1">
+                · 현재 {staffList?.length || 0}명 로딩됨 / 본인: {currentUser?.name || '?'}
+              </span>
+            </label>
+            <div className="border border-gray-200 rounded-md p-2 max-h-40 overflow-y-auto bg-white">
+              {(() => {
+                // 본인이 staffList에 없을 경우를 대비해 강제로 맨 앞에 포함
+                const list = [...(staffList || [])]
+                if (currentUser && !list.find((s: any) => s.id === currentUser.id)) {
+                  list.unshift({
+                    id: currentUser.id,
+                    name: currentUser.name,
+                    grade: currentUser.grade,
+                    dept: currentUser.dept,
+                  })
+                } else if (currentUser) {
+                  // 본인을 맨 앞으로 이동
+                  const meIdx = list.findIndex((s: any) => s.id === currentUser.id)
+                  if (meIdx > 0) {
+                    const me = list.splice(meIdx, 1)[0]
+                    list.unshift(me)
+                  }
+                }
+                if (list.length === 0) {
+                  return <div className="text-xs text-gray-400 text-center py-1">직원 목록 로딩 중...</div>
+                }
+                return (
+                  <div className="grid grid-cols-2 gap-1">
+                    {list.map((s: any) => {
+                      const checked = form.attendeeIds.includes(s.id)
+                      const isMe = s.id === currentUser?.id
+                      return (
+                        <label key={s.id} className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer text-xs ${
+                          checked ? 'bg-purple-50' : 'hover:bg-gray-50'
+                        } ${isReadOnly ? 'pointer-events-none opacity-60' : ''} ${
+                          isMe ? 'border border-purple-200 bg-purple-50/50' : ''
+                        }`}>
+                          <input type="checkbox" disabled={isReadOnly}
+                            checked={checked}
+                            onChange={e => {
+                              setForm(f => ({
+                                ...f,
+                                attendeeIds: e.target.checked
+                                  ? [...f.attendeeIds, s.id]
+                                  : f.attendeeIds.filter((id: string) => id !== s.id)
+                              }))
+                            }}
+                            className="w-3 h-3" />
+                          <span className="text-gray-700">
+                            {s.name}{isMe && <span className="text-purple-600 font-medium"> (나)</span>}
+                            {s.grade && <span className="text-gray-400"> ({s.grade})</span>}
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
             </div>
             <div className="text-[10px] text-gray-400 mt-1">
               {form.attendeeIds.length > 0

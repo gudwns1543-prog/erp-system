@@ -106,7 +106,20 @@ export default function AnnualPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <h1 className="text-lg font-semibold text-gray-800 mb-5">연차 관리</h1>
+      <div className="flex justify-between items-center mb-5 flex-wrap gap-2">
+        <h1 className="text-lg font-semibold text-gray-800">연차 관리 · 결재 신청</h1>
+        <a href="/dashboard/leave"
+          className="btn-primary text-sm px-4 py-2 inline-flex items-center gap-1">
+          📝 새 결재 신청
+        </a>
+      </div>
+
+      {/* 신청 가능 안내 */}
+      <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
+        <strong>💡 결재 신청</strong> 버튼을 눌러 다음 항목을 신청할 수 있습니다:
+        <span className="ml-1">연차 · 반차(오전/오후) · 반반차 · 병가 · 공가 · 외근 · 특별휴가 · 퇴근시간수정</span>
+      </div>
+
       {alert && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{alert}</div>}
 
       {profile?.role === 'director' && (

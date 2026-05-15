@@ -2,17 +2,6 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 
-interface DeductItem { id: string; name: string; rate: number; rateType: 'percent'|'fixed'; enabled: boolean }
-
-const DEFAULT_DEDUCTS: DeductItem[] = [
-  { id:'pension',   name:'국민연금',     rate:4.5,    rateType:'percent', enabled:true },
-  { id:'health',    name:'건강보험',     rate:3.545,  rateType:'percent', enabled:true },
-  { id:'ltc',       name:'장기요양보험', rate:12.95,  rateType:'percent', enabled:true },
-  { id:'employ',    name:'고용보험',     rate:0.9,    rateType:'percent', enabled:true },
-  { id:'incomeTax', name:'소득세',       rate:0,      rateType:'fixed',   enabled:true },
-  { id:'localTax',  name:'지방소득세',   rate:10,     rateType:'percent', enabled:true },
-]
-
 export default function SettingsPage() {
   const [profile, setProfile] = useState<any>(null)
   const [saving, setSaving] = useState(false)
@@ -27,14 +16,9 @@ export default function SettingsPage() {
   const [lunchEnd, setLunchEnd] = useState('13:00')
   const [annualLeave, setAnnualLeave] = useState(15)
 
-  // 출장일비
-  const [tripAllowance, setTripAllowance] = useState(0)
-
-  // 공제항목
-  const [deducts, setDeducts] = useState<DeductItem[]>(DEFAULT_DEDUCTS)
-  const [newDeductName, setNewDeductName] = useState('')
-  const [newDeductRate, setNewDeductRate] = useState(0)
-  const [newDeductType, setNewDeductType] = useState<'percent'|'fixed'>('percent')
+  // 출장일비 정책 - 4시간 기준
+  const [tripShort, setTripShort] = useState(15000)
+  const [tripLong, setTripLong] = useState(25000)
 
   useEffect(() => { loadSettings() }, [])
 
@@ -56,10 +40,8 @@ export default function SettingsPage() {
           case 'lunch_start':      setLunchStart(row.value); break
           case 'lunch_end':        setLunchEnd(row.value); break
           case 'annual_leave_days': setAnnualLeave(Number(row.value)); break
-          case 'trip_allowance':   setTripAllowance(Number(row.value)); break
-          case 'deduct_items':
-            try { setDeducts(JSON.parse(row.value)) } catch {}
-            break
+          case 'trip_short_amount': setTripShort(Number(row.value)); break
+          case 'trip_long_amount':  setTripLong(Number(row.value)); break
         }
       })
     }
@@ -76,8 +58,8 @@ export default function SettingsPage() {
       { key:'lunch_start',       value:lunchStart },
       { key:'lunch_end',         value:lunchEnd },
       { key:'annual_leave_days', value:String(annualLeave) },
-      { key:'trip_allowance',    value:String(tripAllowance) },
-      { key:'deduct_items',      value:JSON.stringify(deducts) },
+      { key:'trip_short_amount', value:String(tripShort) },
+      { key:'trip_long_amount',  value:String(tripLong) },
     ]
     for (const s of settings) {
       await supabase.from('company_settings').upsert(
@@ -87,28 +69,6 @@ export default function SettingsPage() {
     }
     setSaving(false); setSaved(true)
     setTimeout(() => setSaved(false), 3000)
-  }
-
-  function updateDeduct(id: string, field: keyof DeductItem, value: any) {
-    setDeducts(prev => prev.map(d => d.id === id ? {...d, [field]: value} : d))
-  }
-
-  function addDeduct() {
-    if (!newDeductName.trim()) return
-    setDeducts(prev => [...prev, {
-      id: 'custom_' + Date.now(),
-      name: newDeductName, rate: newDeductRate,
-      rateType: newDeductType, enabled: true
-    }])
-    setNewDeductName(''); setNewDeductRate(0)
-  }
-
-  function removeDeduct(id: string) {
-    if (DEFAULT_DEDUCTS.find(d=>d.id===id)) {
-      setDeducts(prev=>prev.map(d=>d.id===id?{...d,enabled:false}:d))
-    } else {
-      setDeducts(prev=>prev.filter(d=>d.id!==id))
-    }
   }
 
   if (!profile) return <div className="p-6 flex items-center justify-center"><div className="text-gray-400 text-sm">로딩 중...</div></div>
@@ -153,73 +113,31 @@ export default function SettingsPage() {
             </div>
           </div>
           {/* 출장일비 */}
-          <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-            <div>
-              <div className="text-sm font-medium text-gray-700">출장 일비</div>
-              <div className="text-xs text-gray-400 mt-0.5">출장 시 하루에 추가 지급하는 금액</div>
-            </div>
-            <div className="flex items-center gap-2">
-              <input type="number" min={0} step={1000} value={tripAllowance}
-                onChange={e=>setTripAllowance(Number(e.target.value))}
-                className="input w-32 text-right text-sm font-semibold" />
-              <span className="text-sm text-gray-500">원/일</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 공제항목 설정 */}
-      <div className="card mb-4">
-        <div className="flex items-center gap-2 mb-4">
-          <span className="text-lg">📉</span>
-          <h2 className="text-sm font-semibold text-gray-700">공제항목 설정</h2>
-          <span className="text-xs text-gray-400">요율 수정 및 항목 추가/삭제 가능</span>
-        </div>
-        <div className="space-y-2 mb-4">
-          {deducts.map(d => (
-            <div key={d.id} className={`flex items-center gap-3 p-2.5 rounded-lg border ${d.enabled?'border-gray-100 bg-gray-50':'border-gray-100 bg-gray-50 opacity-40'}`}>
-              <input type="checkbox" checked={d.enabled}
-                onChange={e=>updateDeduct(d.id,'enabled',e.target.checked)}
-                className="accent-purple-600 flex-shrink-0" />
-              <span className="text-sm text-gray-700 w-28 flex-shrink-0">{d.name}</span>
-              <div className="flex items-center gap-1.5 flex-1">
-                <input type="number" step="0.001" min={0} value={d.rate}
-                  onChange={e=>updateDeduct(d.id,'rate',Number(e.target.value))}
-                  disabled={!d.enabled || d.id==='incomeTax'}
-                  className="input w-24 text-right text-sm py-1" />
-                <select value={d.rateType}
-                  onChange={e=>updateDeduct(d.id,'rateType',e.target.value)}
-                  disabled={!d.enabled || d.id==='incomeTax'}
-                  className="input w-20 text-xs py-1">
-                  <option value="percent">%</option>
-                  <option value="fixed">원(고정)</option>
-                </select>
+          <div className="pt-3 border-t border-gray-100">
+            <div className="text-sm font-medium text-gray-700 mb-2">🚗 출장 일비 정책</div>
+            <div className="text-xs text-gray-400 mb-3">출장 시간에 따라 지급되는 일비. 출장 보고서 작성 시 자동 적용됩니다.</div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
+                <div className="text-xs font-medium text-amber-700 mb-1">4시간 미만 출장</div>
+                <div className="flex items-center gap-2">
+                  <input type="number" min={0} step={1000} value={tripShort}
+                    onChange={e=>setTripShort(Number(e.target.value))}
+                    className="input text-right text-sm font-semibold tabular-nums flex-1" />
+                  <span className="text-sm text-amber-700">원</span>
+                </div>
+                <div className="text-[10px] text-amber-600 mt-1 tabular-nums">{tripShort.toLocaleString('ko-KR')}원</div>
               </div>
-              {!DEFAULT_DEDUCTS.find(dd=>dd.id===d.id) && (
-                <button onClick={()=>removeDeduct(d.id)}
-                  className="text-xs text-red-400 hover:text-red-600 flex-shrink-0 px-1">✕ 삭제</button>
-              )}
-              {d.id==='incomeTax' && <span className="text-xs text-gray-400 flex-shrink-0">간이세액표 자동</span>}
+              <div className="bg-amber-50 rounded-lg p-3 border border-amber-100">
+                <div className="text-xs font-medium text-amber-700 mb-1">4시간 이상 출장</div>
+                <div className="flex items-center gap-2">
+                  <input type="number" min={0} step={1000} value={tripLong}
+                    onChange={e=>setTripLong(Number(e.target.value))}
+                    className="input text-right text-sm font-semibold tabular-nums flex-1" />
+                  <span className="text-sm text-amber-700">원</span>
+                </div>
+                <div className="text-[10px] text-amber-600 mt-1 tabular-nums">{tripLong.toLocaleString('ko-KR')}원</div>
+              </div>
             </div>
-          ))}
-        </div>
-
-        {/* 공제항목 추가 */}
-        <div className="border border-dashed border-gray-200 rounded-lg p-3">
-          <div className="text-xs font-medium text-gray-500 mb-2">+ 공제항목 추가</div>
-          <div className="flex gap-2">
-            <input type="text" placeholder="항목명 (예: 조합비)" value={newDeductName}
-              onChange={e=>setNewDeductName(e.target.value)}
-              className="input flex-1 text-sm py-1.5" />
-            <input type="number" step="0.1" min={0} value={newDeductRate}
-              onChange={e=>setNewDeductRate(Number(e.target.value))}
-              className="input w-24 text-right text-sm py-1.5" />
-            <select value={newDeductType} onChange={e=>setNewDeductType(e.target.value as any)}
-              className="input w-20 text-xs py-1.5">
-              <option value="percent">%</option>
-              <option value="fixed">원(고정)</option>
-            </select>
-            <button onClick={addDeduct} className="btn-secondary text-xs px-3 py-1.5 whitespace-nowrap">추가</button>
           </div>
         </div>
       </div>

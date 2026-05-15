@@ -313,8 +313,30 @@ export default function ApprovalPage() {
 
   // 결재 철회 (승인/반려 → pending으로 되돌리기)
   // 양방향 가능: 결재자가 처리한 것을 다시 대기로 + 신청자가 본인 신청 취소도 가능
-  async function handleRevoke(id: string) {
+  async function handleRevoke(id: string, kind: 'approval' | 'biztrip' = 'approval') {
     const supabase = createClient()
+
+    // 출장 철회 - 단순히 status를 pending으로
+    if (kind === 'biztrip') {
+      const { data: trip } = await supabase.from('business_trips')
+        .select('status').eq('id', id).single()
+      if (!trip) return
+      const statusKr = trip.status === 'approved' ? '승인' : '반려'
+      if (!confirm(`이 출장 보고서를 [${statusKr}] 상태에서 [대기] 상태로 철회하시겠습니까?`)) return
+      const { error } = await supabase.from('business_trips')
+        .update({ status: 'pending', updated_at: new Date().toISOString() }).eq('id', id)
+      if (error) {
+        setAlert('철회 실패: ' + error.message)
+        setTimeout(() => setAlert(''), 3000)
+        return
+      }
+      setAlert('🔄 출장 보고서가 대기 상태로 복원되었습니다.')
+      setShowDetail(null)
+      setTimeout(() => setAlert(''), 3000)
+      load()
+      return
+    }
+
     // 해당 결재 정보 먼저 조회 (현재 상태 확인용)
     const { data: approval } = await supabase.from('approvals')
       .select('*, requester:requester_id(name)').eq('id', id).single()
@@ -398,8 +420,8 @@ export default function ApprovalPage() {
                         <button onClick={()=>handle(r.id,'rejected', r.kind)} className="btn-danger text-xs px-2 py-1">반려</button>
                       </>
                     )}
-                    {profile?.role==='director' && r.kind === 'approval' && (r.status==='approved' || r.status==='rejected') && (
-                      <button onClick={()=>handleRevoke(r.id)} className="btn-secondary text-xs px-2 py-1 text-orange-600 border-orange-200 hover:bg-orange-50">철회</button>
+                    {profile?.role==='director' && (r.status==='approved' || r.status==='rejected') && (
+                      <button onClick={()=>handleRevoke(r.id, r.kind)} className="btn-secondary text-xs px-2 py-1 text-orange-600 border-orange-200 hover:bg-orange-50">철회</button>
                     )}
                   </div>
                 </td>
