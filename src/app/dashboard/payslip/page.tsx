@@ -17,7 +17,7 @@ export default function PaySlipPage() {
   const [payslipFiles, setPayslipFiles] = useState<any[]>([])
   const [uploading, setUploading] = useState(false)
   const [alert, setAlert] = useState('')
-  const [activeTab, setActiveTab] = useState<'erp'|'office'|'compare'>('erp')
+  const [activeTab, setActiveTab] = useState<'erp'|'office'>('erp')
   const [tripDays, setTripDays] = useState(0)
   const [tripAllowance, setTripAllowance] = useState(0)
   const [deductItems, setDeductItems] = useState<any[]>([])
@@ -135,9 +135,8 @@ export default function PaySlipPage() {
         .update({ extracted_data: data.extracted, extracted_at: new Date().toISOString() })
         .eq('id', file.id)
       setOfficeData(data.extracted)
-      setAlert('✅ AI 추출 완료. 비교 탭으로 이동합니다.')
+      setAlert('✅ AI 추출 완료. 명세서 값이 저장되었습니다.')
       setTimeout(()=>setAlert(''),2500)
-      setActiveTab('compare')
       load()
     } catch (e:any) {
       window.alert('오류: ' + e.message)
@@ -211,17 +210,12 @@ export default function PaySlipPage() {
         <button onClick={()=>setActiveTab('erp')}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors
             ${activeTab==='erp'?'border-purple-600 text-purple-700':'border-transparent text-gray-500 hover:text-gray-700'}`}>
-          📊 ERP 내 자체 계산
+          📊 ERP 계산
         </button>
         <button onClick={()=>setActiveTab('office')}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors
             ${activeTab==='office'?'border-green-600 text-green-700':'border-transparent text-gray-500 hover:text-gray-700'}`}>
           📎 세무사무실 계산
-        </button>
-        <button onClick={()=>setActiveTab('compare')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors
-            ${activeTab==='compare'?'border-amber-600 text-amber-700':'border-transparent text-gray-500 hover:text-gray-700'}`}>
-          ⚖️ 비교
         </button>
       </div>
 
@@ -412,29 +406,11 @@ export default function PaySlipPage() {
           )}
         </div>
       )}
-
-      {/* 비교 탭 - 세로표로 ERP vs 사무실 */}
-      {activeTab==='compare' && (
-        <CompareTab
-          result={result}
-          salary={salary}
-          tripPay={tripPay}
-          payslipFiles={payslipFiles}
-          officeData={officeData}
-          setOfficeData={setOfficeData}
-          officeFileId={officeFileId}
-          loadOfficeFromFile={loadOfficeFromFile}
-          saveOfficeData={saveOfficeData}
-          selYear={selYear}
-          selMonth={selMonth}
-          targetName={targetName}
-        />
-      )}
     </div>
   )
 }
 
-// ─── 비교 탭 컴포넌트 ──────
+// ─── 비교 탭 컴포넌트 (현재 사용 안 함 - 추후 필요 시) ──────
 function CompareTab({
   result, salary, tripPay, payslipFiles, officeData, setOfficeData,
   officeFileId, loadOfficeFromFile, saveOfficeData,
