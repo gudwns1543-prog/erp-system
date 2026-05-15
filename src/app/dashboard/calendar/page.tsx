@@ -59,11 +59,67 @@ function makeApprovalEvents(approvals: any[], myUserId: string) {
   })
 }
 
-function toKSTDate(utcStr: string): string {
-  const d = new Date(utcStr)
+function hasTimezone(value: string) {
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)
+}
+
+// 캘린더 날짜 계산 전용
+// Supabase 컬럼이 timestamp without time zone이면 "2026-05-27T15:00:00"처럼 시간대가 없는 문자열로 내려옵니다.
+// 이 값에 무조건 +9시간을 더하면 오후 일정이 다음 날짜까지 걸친 것처럼 표시됩니다.
+// 따라서 시간대 정보가 없는 값은 저장된 날짜를 그대로 쓰고, Z/+09:00처럼 시간대가 있는 값만 KST로 변환합니다.
+function toCalendarDateStr(value: string): string {
+  if (!value) return ''
+  const s = String(value)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+  if (!hasTimezone(s)) return s.slice(0, 10)
+  const d = new Date(s)
   const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
   return kst.toISOString().slice(0, 10)
 }
+
+function toCalendarTimeStr(value: string): string {
+  if (!value) return ''
+  const s = String(value)
+  if (!hasTimezone(s)) return s.slice(11, 16)
+  const d = new Date(s)
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
+  return kst.toISOString().slice(11, 16)
+}
+
+function toCalendarDateTimeLabel(value: string): string {
+  if (!value) return ''
+  return `${toCalendarDateStr(value)} ${toCalendarTimeStr(value)}`
+}
+
+function makeEventSignature(e: any) {
+  return [
+    e.title || '',
+    toCalendarDateStr(e.start_at || ''),
+    toCalendarTimeStr(e.start_at || ''),
+    toCalendarDateStr(e.end_at || ''),
+    toCalendarTimeStr(e.end_at || ''),
+    e.creator_id || '',
+    e.calendar_type || '',
+  ].join('|')
+}
+
+function dedupeEvents(list: any[]) {
+  const seenById = new Set<string>()
+  const seenByContent = new Set<string>()
+  const result: any[] = []
+  for (const e of list || []) {
+    if (e?.id && seenById.has(String(e.id))) continue
+    const signature = makeEventSignature(e)
+    if (seenByContent.has(signature)) continue
+    if (e?.id) seenById.add(String(e.id))
+    seenByContent.add(signature)
+    result.push(e)
+  }
+  return result
+}
+
+// 기존 코드 호환용 별칭
+const toKSTDate = toCalendarDateStr
 
 export default function CalendarPage() {
   const [profile, setProfile] = useState<any>(null)
@@ -130,7 +186,7 @@ export default function CalendarPage() {
       if (!a.isMe && b.isMe) return 1
       return 0
     })
-    setEvents([...sortedApprovalEvs, ...filteredEvs])
+    setEvents(dedupeEvents([...sortedApprovalEvs, ...filteredEvs]))
 
     const { data: atts } = await supabase.from('event_attendees')
       .select('*, user:user_id(id,name,grade,color,tc,avatar_url)')
@@ -160,7 +216,11 @@ export default function CalendarPage() {
   const today = toLocalDateStr(new Date())
 
   function getEventsForDate(dateStr: string) {
-    const filtered = events.filter(e => toKSTDate(e.start_at) <= dateStr && dateStr <= toKSTDate(e.end_at))
+    const filtered = dedupeEvents(events).filter(e => {
+      const startDate = toCalendarDateStr(e.start_at)
+      const endDate = toCalendarDateStr(e.end_at || e.start_at)
+      return startDate <= dateStr && dateStr <= endDate
+    })
     // 본인 결재 우선 정렬
     return filtered.sort((a:any, b:any) => {
       if (a.isMe && !b.isMe) return -1
@@ -202,6 +262,13 @@ export default function CalendarPage() {
     const endAt = form.all_day ? `${form.end_date||form.start_date}T23:59:59`
       : form.time_tbd ? `${form.end_date||form.start_date}T23:59:59`
       : `${form.end_date||form.start_date}T${form.end_time}:00`
+    const startDateForCheck = toCalendarDateStr(startAt)
+    const endDateForCheck = toCalendarDateStr(endAt)
+    if (endDateForCheck < startDateForCheck || (endDateForCheck === startDateForCheck && !form.all_day && !form.time_tbd && form.end_time < form.start_time)) {
+      window.alert('종료일/종료시간이 시작일/시작시간보다 빠를 수 없습니다.')
+      return
+    }
+
     if (editMode && editingEventId) {
       await supabase.from('events').update({
         title:form.title, description:form.description, start_at:startAt, end_at:endAt,
@@ -286,11 +353,11 @@ export default function CalendarPage() {
     const atts = attendees.filter((a:any)=>a.event_id===ev.id).map((a:any)=>a.user_id)
     // 시간 미정 판별: 00:00~23:59이고 종일 아닌 경우
     const isTimeTbd = !ev.all_day &&
-      ev.start_at.slice(11,16) === '00:00' && ev.end_at.slice(11,16) === '23:59'
+      toCalendarTimeStr(ev.start_at) === '00:00' && toCalendarTimeStr(ev.end_at) === '23:59'
     setForm({
       title:ev.title, description:ev.description||'',
-      start_date:toKSTDate(ev.start_at), start_time:ev.start_at.slice(11,16),
-      end_date:toKSTDate(ev.end_at), end_time:ev.end_at.slice(11,16),
+      start_date:toCalendarDateStr(ev.start_at), start_time:toCalendarTimeStr(ev.start_at),
+      end_date:toCalendarDateStr(ev.end_at), end_time:toCalendarTimeStr(ev.end_at),
       all_day:ev.all_day||false, time_tbd:isTimeTbd,
       location:ev.location||'', color:ev.color||'#534AB7', attendeeIds:atts,
       calendar_type: ev.calendar_type || 'personal',
@@ -334,7 +401,7 @@ export default function CalendarPage() {
               <div>
                 <div className="text-sm font-medium text-gray-800">{(inv.event as any)?.title}</div>
                 <div className="text-xs text-gray-400 mt-0.5">
-                  {(inv.event as any)?.start_at?.slice(0,16).replace('T',' ')} ~ {(inv.event as any)?.end_at?.slice(11,16)}
+                  {toCalendarDateTimeLabel((inv.event as any)?.start_at || '')} ~ {toCalendarTimeStr((inv.event as any)?.end_at || '')}
                 </div>
                 <div className="text-xs text-gray-400">주최: {(inv.event as any)?.creator?.name}</div>
               </div>
@@ -682,9 +749,9 @@ export default function CalendarPage() {
                 <div className="text-xs text-gray-400 mt-1">
                   {showDetail.all_day
                     ? `${toKSTDate(showDetail.start_at)} ~ ${toKSTDate(showDetail.end_at)} (종일)`
-                    : showDetail.start_at.slice(11,16) === '00:00' && showDetail.end_at.slice(11,16) === '23:59'
+                    : toCalendarTimeStr(showDetail.start_at) === '00:00' && toCalendarTimeStr(showDetail.end_at) === '23:59'
                       ? `${toKSTDate(showDetail.start_at)} ~ ${toKSTDate(showDetail.end_at)} ⏰ 시간 미정`
-                      : `${showDetail.start_at.slice(0,16).replace('T',' ')} ~ ${showDetail.end_at.slice(11,16)}`}
+                      : `${toCalendarDateTimeLabel(showDetail.start_at)} ~ ${toCalendarTimeStr(showDetail.end_at)}`}
                 </div>
                 {showDetail.calendar_type === 'company' && (
                   <span className="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full mt-1">
