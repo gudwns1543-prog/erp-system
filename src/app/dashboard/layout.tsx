@@ -21,6 +21,7 @@ const NAV = [
   ]},
   { group: '결재', items: [
     { href: '/dashboard/leave', label: '결재 신청', icon: '📝' },
+    { href: '/dashboard/biztrip', label: '출장 보고', icon: '🚗' },
     { href: '/dashboard/annual', label: '연차 관리', icon: '📅' },
     { href: '/dashboard/approval', label: '결재함', icon: '✅' },
   ]},

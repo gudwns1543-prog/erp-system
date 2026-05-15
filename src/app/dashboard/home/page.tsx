@@ -357,26 +357,45 @@ export default function HomePage() {
 
     // 업무 카운트 (내가 담당자거나 등록자)
     const { data: myTasks } = await supabase.from('tasks')
-      .select('id, title, status, priority, due_date, due_time, assignees, creator_id, visibility')
+      .select('id, title, status, priority, due_date, due_time, assignees, creator_id, visibility, progress, assignee_progress')
     const today = todayStr()
     const counts = { todo: 0, in_progress: 0, blocked: 0, overdue: 0 }
     const calTasks: any[] = []
+    // 자동 완료 처리할 task ID 목록 (평균 100% 인데 status가 done이 아닌 경우)
+    const autoCompleteIds: string[] = []
     for (const t of (myTasks || [])) {
       const isMine = t.creator_id === session.user.id || (t.assignees || []).includes(session.user.id)
+      // 평균 진척률 계산 (DB에 저장된 progress가 우선)
+      const avgProg = t.progress || 0
+      const isCompleted = t.status === 'done' || avgProg >= 100
+      // 평균 100% 인데 status가 done이 아니면 자동 완료 대상
+      if (avgProg >= 100 && t.status !== 'done' && isMine) {
+        autoCompleteIds.push(t.id)
+      }
       // 캘린더 스티커용 - 본인 관련 + 공유 업무, 미완료 + 마감일 있음
-      if (t.due_date && t.status !== 'done' && (isMine || t.visibility === 'shared')) {
+      if (t.due_date && !isCompleted && (isMine || t.visibility === 'shared')) {
         calTasks.push(t)
       }
       if (!isMine) continue
-      if (t.status === 'done') continue
+      if (isCompleted) continue
       if (t.status === 'todo') counts.todo++
       else if (t.status === 'in_progress') counts.in_progress++
       else if (t.status === 'blocked') counts.blocked++
-      // 마감 지난 미완료 업무
+      // 마감 지난 미완료 업무 (진척률 100% 미만)
       if (t.due_date && t.due_date < today) counts.overdue++
     }
     setTaskCounts(counts)
     setCalendarTasks(calTasks)
+
+    // 평균 100% 도달 업무를 백그라운드에서 자동 완료 처리
+    if (autoCompleteIds.length > 0) {
+      for (const tid of autoCompleteIds) {
+        await supabase.from('tasks').update({
+          status: 'done',
+          updated_at: new Date().toISOString()
+        }).eq('id', tid)
+      }
+    }
 
     // ─── 통합 알림 수집 ───
     const notifs: any[] = []

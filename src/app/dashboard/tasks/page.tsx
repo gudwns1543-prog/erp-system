@@ -472,10 +472,25 @@ function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved
   async function save() {
     if (!form.title.trim()) { alert('제목을 입력해주세요.'); return }
     const supabase = createClient()
-    // 담당자 아닌 사람의 진척률은 정리
-    const cleanedProgress: Record<string, number> = {}
+    // 평균 진척률 100% 도달하면 자동으로 status='done'으로 변경
+    const finalStatus = avgProg >= 100 ? 'done' : form.status
+    // 진척률 보존 전략:
+    // 1) 현재 담당자들의 진척률은 그대로 (assigneeProgress에서 가져옴)
+    // 2) 과거 담당자였다가 빠진 사람의 진척률도 유지 (재추가 시 복원되도록)
+    //    - 단 status='inactive'(퇴사)인 사람은 정리
+    const previousProgress: Record<string, number> = (task?.assignee_progress as any) || {}
+    // 활성 직원 ID 목록 (퇴사자 정리용)
+    const activeEmployeeIds = new Set(employees.map(e => e.id))
+    const mergedProgress: Record<string, number> = {}
+    // 기존 진척률 중 활성 직원만 유지
+    for (const [uid, prog] of Object.entries(previousProgress)) {
+      if (activeEmployeeIds.has(uid)) {
+        mergedProgress[uid] = prog as number
+      }
+    }
+    // 현재 담당자의 진척률은 form 값으로 덮어쓰기 (최신 우선)
     for (const aid of form.assignees) {
-      cleanedProgress[aid] = assigneeProgress[aid] || 0
+      mergedProgress[aid] = assigneeProgress[aid] ?? mergedProgress[aid] ?? 0
     }
     let error: any = null
     if (task) {
@@ -485,10 +500,10 @@ function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved
         assignees: form.assignees,
         due_date: form.due_date || null,
         due_time: form.due_time || null,
-        status: form.status,
+        status: finalStatus,
         priority: form.priority,
         progress: avgProg, // 평균 진척률 자동 계산
-        assignee_progress: cleanedProgress,
+        assignee_progress: mergedProgress, // 과거 담당자 진척률 보존
         visibility: form.visibility,
         updated_at: new Date().toISOString(),
       }).eq('id', task.id).select()
@@ -505,10 +520,10 @@ function TaskModal({ task, employees, currentUserId, canDelete, onClose, onSaved
         creator_id: currentUserId,
         due_date: form.due_date || null,
         due_time: form.due_time || null,
-        status: form.status,
+        status: finalStatus,
         priority: form.priority,
         progress: avgProg,
-        assignee_progress: cleanedProgress,
+        assignee_progress: mergedProgress,
         visibility: form.visibility,
       }).select()
       error = result.error

@@ -85,7 +85,8 @@ export default function CalendarPage() {
     title:'', description:'', start_date:'', start_time:'09:00',
     end_date:'', end_time:'18:00', all_day:false, time_tbd:false,
     location:'', color:'#534AB7', attendeeIds:[] as string[],
-    calendar_type: 'personal' as 'personal'|'company'
+    calendar_type: 'personal' as 'personal'|'company',
+    is_business_trip: false,
   })
 
   const load = useCallback(async () => {
@@ -205,7 +206,7 @@ export default function CalendarPage() {
       await supabase.from('events').update({
         title:form.title, description:form.description, start_at:startAt, end_at:endAt,
         all_day:form.all_day, location:form.location, color:form.color,
-        calendar_type:form.calendar_type,
+        calendar_type:form.calendar_type, is_business_trip: form.is_business_trip,
       }).eq('id', editingEventId)
       await supabase.from('event_attendees').delete().eq('event_id', editingEventId).neq('user_id', profile.id)
       if (form.calendar_type === 'personal' && form.attendeeIds.length) {
@@ -218,12 +219,38 @@ export default function CalendarPage() {
       const { data: ev } = await supabase.from('events').insert({
         title:form.title, description:form.description, start_at:startAt, end_at:endAt,
         all_day:form.all_day, location:form.location, color:form.color, creator_id:profile.id,
-        calendar_type:form.calendar_type,
+        calendar_type:form.calendar_type, is_business_trip: form.is_business_trip,
       }).select().single()
       if (ev && form.calendar_type === 'personal' && form.attendeeIds.length) {
         await supabase.from('event_attendees').insert(
           form.attendeeIds.map(uid=>({event_id:ev.id, user_id:uid, status:'pending'}))
         )
+      }
+      // 출장 일정이면 business_trips 자동 생성 (draft)
+      if (ev && form.is_business_trip) {
+        const startTime = form.all_day || form.time_tbd ? null : form.start_time + ':00'
+        const endTime = form.all_day || form.time_tbd ? null : form.end_time + ':00'
+        const duration = startTime && endTime
+          ? Math.max(0, (parseInt(form.end_time.split(':')[0]) * 60 + parseInt(form.end_time.split(':')[1])
+              - parseInt(form.start_time.split(':')[0]) * 60 - parseInt(form.start_time.split(':')[1])) / 60)
+          : 0
+        const allowance = duration <= 0 ? 0 : duration >= 4 ? 25000 : 15000
+        await supabase.from('business_trips').insert({
+          user_id: profile.id,
+          trip_date: form.start_date,
+          start_time: startTime,
+          end_time: endTime,
+          duration_hours: duration,
+          location: form.location || form.title,
+          purpose: form.description || form.title + ' (일정에서 자동 생성)',
+          status: 'draft',
+          allowance,
+          source_event_id: ev.id,
+        })
+        // 사용자에게 알림 (단순 alert)
+        setTimeout(() => {
+          window.alert('🚗 출장 보고서 초안이 생성되었습니다!\n출장 보고 메뉴에서 내용을 보완해서 결재 요청해주세요.')
+        }, 300)
       }
     }
     setShowForm(false); setEditMode(false); setEditingEventId(null); setShowDetail(null); resetForm(); load()
@@ -246,7 +273,7 @@ export default function CalendarPage() {
     setForm({title:'',description:'',start_date:selDate||'',start_time:'09:00',
       end_date:selDate||'',end_time:'18:00',all_day:false,time_tbd:false,location:'',color:'#534AB7',
       attendeeIds: profile?.id ? [profile.id] : [],
-      calendar_type: 'personal'})  // 기본으로 본인 체크
+      calendar_type: 'personal', is_business_trip: false})  // 기본으로 본인 체크
   }
 
   function openCreate(dateStr: string) {
@@ -266,7 +293,8 @@ export default function CalendarPage() {
       end_date:toKSTDate(ev.end_at), end_time:ev.end_at.slice(11,16),
       all_day:ev.all_day||false, time_tbd:isTimeTbd,
       location:ev.location||'', color:ev.color||'#534AB7', attendeeIds:atts,
-      calendar_type: ev.calendar_type || 'personal'
+      calendar_type: ev.calendar_type || 'personal',
+      is_business_trip: ev.is_business_trip || false,
     })
     setEditingEventId(ev.id)
     setEditMode(true); setShowDetail(null); setShowForm(true)
@@ -559,6 +587,20 @@ export default function CalendarPage() {
                 <label className="block text-xs font-medium text-gray-500 mb-1">장소</label>
                 <input className="input" placeholder="장소 (선택)" value={form.location}
                   onChange={e=>setForm(f=>({...f,location:e.target.value}))} />
+              </div>
+              {/* 출장 일정 체크박스 */}
+              <div className="flex items-center gap-2 p-2.5 bg-amber-50/50 border border-amber-100 rounded-lg">
+                <input id="biztrip-check" type="checkbox" checked={form.is_business_trip}
+                  onChange={e=>setForm(f=>({...f, is_business_trip: e.target.checked}))}
+                  className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500" />
+                <label htmlFor="biztrip-check" className="text-xs text-amber-800 cursor-pointer flex-1">
+                  🚗 <strong>출장 일정</strong> - 체크하면 저장 시 자동으로 출장 보고서 초안이 생성됩니다.
+                  {form.is_business_trip && (
+                    <span className="block text-[10px] text-amber-600 mt-0.5">
+                      💡 4시간 이상 → 25,000원 / 4시간 미만 → 15,000원 출장수당 자동 산정
+                    </span>
+                  )}
+                </label>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">내용</label>

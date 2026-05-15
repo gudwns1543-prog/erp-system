@@ -1,0 +1,410 @@
+'use client'
+import { useEffect, useState, useCallback } from 'react'
+import { createClient } from '@/lib/supabase'
+import { sortByGrade } from '@/lib/attendance'
+
+// 출장수당 자동 계산
+// 4시간 이상: 25,000원, 4시간 미만: 15,000원
+function calcAllowance(hours: number): number {
+  if (hours <= 0) return 0
+  if (hours >= 4) return 25000
+  return 15000
+}
+
+function hoursBetween(startTime: string, endTime: string): number {
+  if (!startTime || !endTime) return 0
+  const [sh, sm] = startTime.split(':').map(Number)
+  const [eh, em] = endTime.split(':').map(Number)
+  return Math.max(0, (eh * 60 + em - sh * 60 - sm) / 60)
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  draft: '작성중',
+  pending: '결재 대기',
+  approved: '승인',
+  rejected: '반려',
+}
+
+const STATUS_COLOR: Record<string, string> = {
+  draft: 'bg-gray-100 text-gray-700',
+  pending: 'bg-amber-100 text-amber-700',
+  approved: 'bg-green-100 text-green-700',
+  rejected: 'bg-red-100 text-red-700',
+}
+
+export default function BizTripPage() {
+  const [profile, setProfile] = useState<any>(null)
+  const [trips, setTrips] = useState<any[]>([])
+  const [staffList, setStaffList] = useState<any[]>([])
+  const [approvers, setApprovers] = useState<any[]>([])
+  const [tab, setTab] = useState<'mine' | 'pending' | 'all'>('mine')
+  const [editing, setEditing] = useState<any | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [alert, setAlert] = useState('')
+
+  const load = useCallback(async () => {
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return
+
+    const { data: p } = await supabase.from('profiles')
+      .select('id,name,role,dept,grade').eq('id', session.user.id).single()
+    setProfile(p)
+
+    // 직원 목록
+    const { data: emps } = await supabase.from('profiles')
+      .select('id,name,grade,dept,color,tc,role').eq('status', 'active').order('name')
+    setStaffList(sortByGrade(emps || []))
+    // 결재자 후보 (이사급 이상)
+    const apprs = (emps || []).filter((e: any) =>
+      ['대표이사', '대표', '이사', '부사장', '전무이사', '전무', '상무이사', '상무'].includes(e.grade)
+    )
+    setApprovers(sortByGrade(apprs))
+
+    // 출장 목록 (tab 별)
+    let query = supabase.from('business_trips').select(`
+      *,
+      user:user_id(id,name,grade,dept,color,tc),
+      approver:approver_id(id,name)
+    `).order('trip_date', { ascending: false })
+
+    setTrips([])
+    const { data, error } = await query
+    if (error) { console.error(error); return }
+    setTrips(data || [])
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  function getFilteredTrips() {
+    if (!profile) return []
+    if (tab === 'mine') {
+      return trips.filter(t => t.user_id === profile.id)
+    } else if (tab === 'pending') {
+      // 본인이 결재자로 지정된 pending
+      return trips.filter(t => t.approver_id === profile.id && t.status === 'pending')
+    } else {
+      return trips // 관리자만
+    }
+  }
+
+  async function deleteTrip(id: string) {
+    if (!confirm('이 출장 보고서를 삭제하시겠습니까?')) return
+    const supabase = createClient()
+    const { error } = await supabase.from('business_trips').delete().eq('id', id)
+    if (error) { window.alert('삭제 실패: ' + error.message); return }
+    setAlert('삭제되었습니다.')
+    setTimeout(() => setAlert(''), 2000)
+    load()
+  }
+
+  async function handleApprove(id: string, status: 'approved' | 'rejected') {
+    const supabase = createClient()
+    const { error } = await supabase.from('business_trips')
+      .update({ status, updated_at: new Date().toISOString() }).eq('id', id)
+    if (error) { window.alert('처리 실패: ' + error.message); return }
+    setAlert(status === 'approved' ? '승인되었습니다.' : '반려되었습니다.')
+    setTimeout(() => setAlert(''), 2000)
+    load()
+  }
+
+  const filtered = getFilteredTrips()
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto">
+      <div className="flex justify-between items-center mb-5">
+        <h1 className="text-lg font-semibold text-gray-800">🚗 출장 보고</h1>
+        <button onClick={() => { setEditing(null); setShowCreate(true) }}
+          className="btn-primary text-sm">+ 새 출장 보고</button>
+      </div>
+
+      {alert && (
+        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">{alert}</div>
+      )}
+
+      {/* 탭 */}
+      <div className="flex gap-1 border-b border-gray-200 mb-4">
+        <button onClick={() => setTab('mine')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            tab === 'mine' ? 'border-purple-600 text-purple-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}>📋 내 출장 ({trips.filter(t => t.user_id === profile?.id).length})</button>
+        {profile?.role === 'director' && (
+          <>
+            <button onClick={() => setTab('pending')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                tab === 'pending' ? 'border-amber-600 text-amber-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}>⏳ 결재 대기 ({trips.filter(t => t.approver_id === profile?.id && t.status === 'pending').length})</button>
+            <button onClick={() => setTab('all')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                tab === 'all' ? 'border-green-600 text-green-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}>📂 전체 출장</button>
+          </>
+        )}
+      </div>
+
+      {/* 출장 목록 */}
+      {filtered.length === 0 ? (
+        <div className="card py-12 text-center">
+          <div className="text-3xl mb-2">🗒</div>
+          <div className="text-gray-400 text-sm">
+            {tab === 'mine' ? '아직 출장 보고서가 없습니다.' :
+             tab === 'pending' ? '결재 대기 중인 출장이 없습니다.' :
+             '등록된 출장이 없습니다.'}
+          </div>
+        </div>
+      ) : (
+        <div className="card overflow-hidden p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr className="border-b border-gray-200">
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">출장일</th>
+                {tab !== 'mine' && <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">출장자</th>}
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">시간</th>
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">장소</th>
+                <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500">내용</th>
+                <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-500">수당</th>
+                <th className="text-center px-3 py-2.5 text-xs font-semibold text-gray-500">상태</th>
+                <th className="text-center px-3 py-2.5 text-xs font-semibold text-gray-500 w-32">처리</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(t => (
+                <tr key={t.id} className="border-b border-gray-50 hover:bg-purple-50/30">
+                  <td className="px-3 py-2.5 text-xs text-gray-700">{t.trip_date}</td>
+                  {tab !== 'mine' && (
+                    <td className="px-3 py-2.5">
+                      <span className="text-xs px-2 py-0.5 rounded font-medium"
+                        style={{ backgroundColor: t.user?.color || '#E6F1FB', color: t.user?.tc || '#185FA5' }}>
+                        {t.user?.name}
+                      </span>
+                    </td>
+                  )}
+                  <td className="px-3 py-2.5 text-xs text-gray-600">
+                    {t.start_time ? `${t.start_time.slice(0,5)} ~ ${t.end_time?.slice(0,5) || '?'}` : '-'}
+                    {t.duration_hours && <div className="text-[10px] text-gray-400">{Number(t.duration_hours).toFixed(1)}h</div>}
+                  </td>
+                  <td className="px-3 py-2.5 text-xs text-gray-700">{t.location}</td>
+                  <td className="px-3 py-2.5 text-xs text-gray-600 max-w-[200px] truncate" title={t.purpose}>{t.purpose}</td>
+                  <td className="px-3 py-2.5 text-xs text-right text-gray-700 font-medium tabular-nums">
+                    {t.allowance ? t.allowance.toLocaleString('ko-KR') + '원' : '-'}
+                  </td>
+                  <td className="px-3 py-2.5 text-center">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${STATUS_COLOR[t.status]}`}>
+                      {STATUS_LABEL[t.status]}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5 text-center">
+                    <div className="flex gap-1 justify-center">
+                      {/* 결재 대기 + 본인이 결재자 */}
+                      {t.status === 'pending' && t.approver_id === profile?.id && (
+                        <>
+                          <button onClick={() => handleApprove(t.id, 'approved')}
+                            className="btn-secondary text-xs px-2 py-1 text-green-700 border-green-200 hover:bg-green-50">승인</button>
+                          <button onClick={() => handleApprove(t.id, 'rejected')}
+                            className="btn-danger text-xs px-2 py-1">반려</button>
+                        </>
+                      )}
+                      {/* 본인 출장 - 수정/삭제 */}
+                      {t.user_id === profile?.id && t.status !== 'approved' && (
+                        <>
+                          <button onClick={() => setEditing(t)}
+                            className="text-gray-400 hover:text-purple-600 text-xs px-1">✏️</button>
+                          <button onClick={() => deleteTrip(t.id)}
+                            className="text-gray-300 hover:text-red-500 text-xs px-1">🗑</button>
+                        </>
+                      )}
+                      {t.status === 'approved' && (
+                        <button onClick={() => setEditing(t)}
+                          className="text-gray-400 hover:text-purple-600 text-xs px-1" title="보기">👁</button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* 작성/수정 모달 */}
+      {(showCreate || editing) && (
+        <BizTripModal
+          trip={editing}
+          currentUser={profile}
+          approvers={approvers}
+          onClose={() => { setShowCreate(false); setEditing(null) }}
+          onSaved={() => { setShowCreate(false); setEditing(null); load() }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── 출장 보고서 작성/수정 모달 ──────
+function BizTripModal({ trip, currentUser, approvers, onClose, onSaved }: any) {
+  const [form, setForm] = useState({
+    trip_date: trip?.trip_date || new Date().toISOString().slice(0, 10),
+    start_time: trip?.start_time?.slice(0, 5) || '09:00',
+    end_time: trip?.end_time?.slice(0, 5) || '18:00',
+    location: trip?.location || '',
+    attendees: trip?.attendees || '',
+    purpose: trip?.purpose || '',
+    notes: trip?.notes || '',
+    approver_id: trip?.approver_id || approvers[0]?.id || '',
+    status: trip?.status || 'draft',
+  })
+
+  const duration = hoursBetween(form.start_time, form.end_time)
+  const allowance = calcAllowance(duration)
+  const isReadOnly = trip?.status === 'approved'
+
+  async function save(submitForApproval: boolean = false) {
+    if (!form.location.trim()) { window.alert('장소를 입력해주세요.'); return }
+    if (!form.purpose.trim()) { window.alert('출장 내용을 입력해주세요.'); return }
+    if (submitForApproval && !form.approver_id) { window.alert('결재자를 선택해주세요.'); return }
+
+    const supabase = createClient()
+    const status = submitForApproval ? 'pending' : form.status
+
+    const data: any = {
+      trip_date: form.trip_date,
+      start_time: form.start_time,
+      end_time: form.end_time,
+      duration_hours: duration,
+      location: form.location,
+      attendees: form.attendees,
+      purpose: form.purpose,
+      notes: form.notes,
+      approver_id: form.approver_id || null,
+      status,
+      allowance,
+      updated_at: new Date().toISOString(),
+    }
+
+    let error: any = null
+    if (trip) {
+      const result = await supabase.from('business_trips').update(data).eq('id', trip.id).select()
+      error = result.error
+    } else {
+      data.user_id = currentUser.id
+      const result = await supabase.from('business_trips').insert(data).select()
+      error = result.error
+    }
+
+    if (error) {
+      window.alert('저장 실패: ' + error.message)
+      return
+    }
+    onSaved()
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-gray-100 flex items-start justify-between">
+          <div>
+            <div className="text-sm font-semibold text-gray-800">
+              {trip ? (isReadOnly ? '🔒 출장 보고서 (승인됨)' : '✏️ 출장 보고서 수정') : '🚗 새 출장 보고서'}
+            </div>
+            {trip?.source_event_id && (
+              <div className="text-[10px] text-purple-600 mt-1">📅 일정에서 자동 생성됨</div>
+            )}
+          </div>
+          <button onClick={onClose}
+            className="text-gray-300 hover:text-gray-600 text-2xl leading-none">✕</button>
+        </div>
+
+        <div className="p-5 space-y-3">
+          {/* 출장일 + 시간 */}
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">출장일</label>
+              <input type="date" className="input" disabled={isReadOnly}
+                value={form.trip_date}
+                onChange={e => setForm(f => ({ ...f, trip_date: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">출발</label>
+              <input type="time" className="input" disabled={isReadOnly}
+                value={form.start_time}
+                onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">종료</label>
+              <input type="time" className="input" disabled={isReadOnly}
+                value={form.end_time}
+                onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} />
+            </div>
+          </div>
+
+          {/* 출장 시간 + 수당 자동 표시 */}
+          <div className="bg-purple-50 rounded-md p-2.5 flex items-center justify-between">
+            <div className="text-xs text-gray-700">
+              <span className="text-purple-700 font-medium">⏱ {duration.toFixed(1)}시간</span>
+              {duration >= 4 && <span className="ml-2 text-[10px] text-purple-500">(4시간 이상)</span>}
+              {duration > 0 && duration < 4 && <span className="ml-2 text-[10px] text-amber-500">(4시간 미만)</span>}
+            </div>
+            <div className="text-sm font-bold text-purple-700 tabular-nums">
+              출장수당 {allowance.toLocaleString('ko-KR')}원
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">장소 *</label>
+            <input className="input" disabled={isReadOnly}
+              placeholder="예: 한국환경공단 본사 (인천)"
+              value={form.location}
+              onChange={e => setForm(f => ({ ...f, location: e.target.value }))} />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">참석자</label>
+            <input className="input" disabled={isReadOnly}
+              placeholder="예: 박팔주 이사, 환경공단 김ㅇㅇ 팀장"
+              value={form.attendees}
+              onChange={e => setForm(f => ({ ...f, attendees: e.target.value }))} />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">출장 내용 *</label>
+            <textarea className="input min-h-[80px]" disabled={isReadOnly}
+              placeholder="회의 내용, 진행 사항 등 자세히 작성"
+              value={form.purpose}
+              onChange={e => setForm(f => ({ ...f, purpose: e.target.value }))} />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">결재자</label>
+            <select className="input" disabled={isReadOnly}
+              value={form.approver_id}
+              onChange={e => setForm(f => ({ ...f, approver_id: e.target.value }))}>
+              <option value="">선택...</option>
+              {approvers.map((a: any) => (
+                <option key={a.id} value={a.id}>{a.name} ({a.grade})</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">비고</label>
+            <textarea className="input min-h-[60px]" disabled={isReadOnly}
+              placeholder="기타 메모"
+              value={form.notes}
+              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+          </div>
+        </div>
+
+        <div className="p-4 border-t border-gray-100 flex justify-end gap-2">
+          <button onClick={onClose} className="btn-secondary text-sm">취소</button>
+          {!isReadOnly && (
+            <>
+              <button onClick={() => save(false)} className="btn-secondary text-sm">💾 임시저장</button>
+              <button onClick={() => save(true)} className="btn-primary text-sm">📤 결재 요청</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
