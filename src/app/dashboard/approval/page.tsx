@@ -114,9 +114,15 @@ export default function ApprovalPage() {
 
   // 결재 처리 권한: 본인이 결재자인 경우만 (안전장치)
   // 단, 이사급 이상(grade <= 7)은 본인 결재가 아니어도 처리 가능 (대리 결재)
+  // ❌ 본인이 신청자인 결재는 절대 처리 불가 (셀프 결재 차단)
   function canApprove(r: any): boolean {
     if (!profile) return false
     if (r.status !== 'pending') return false
+    // 셀프 결재 차단: 본인이 신청자/작성자면 절대 처리 불가
+    const isMyRequest = r.kind === 'biztrip'
+      ? r.user_id === profile.id  // 출장은 user_id가 작성자
+      : r.requester_id === profile.id
+    if (isMyRequest) return false
     // 본인이 결재자로 지정된 경우
     if (r.approver_id === profile.id) return true
     // 이사급 이상이면 대리 결재 가능
@@ -124,10 +130,15 @@ export default function ApprovalPage() {
     if (myGrade <= 7) return true
     return false
   }
-  // 철회 권한: 결재자 본인 또는 이사급 이상
+  // 철회 권한: 결재자 본인 또는 이사급 이상 (본인 신청건은 철회 불가)
   function canRevoke(r: any): boolean {
     if (!profile) return false
     if (r.status !== 'approved' && r.status !== 'rejected') return false
+    // 셀프 철회 차단
+    const isMyRequest = r.kind === 'biztrip'
+      ? r.user_id === profile.id
+      : r.requester_id === profile.id
+    if (isMyRequest) return false
     if (r.approver_id === profile.id) return true
     const myGrade = GRADE_ORDER[profile.grade || ''] || 99
     if (myGrade <= 7) return true

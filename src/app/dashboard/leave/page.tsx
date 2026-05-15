@@ -120,7 +120,12 @@ export default function LeavePage() {
     if (!session) return
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
-    const { data: dirs } = await supabase.from('profiles').select('id,name').eq('role','director')
+    // 결재자 후보: 이사급 이상(grade_order <= 7) + 본인 제외 (셀프 결재 방지)
+    const APPROVER_GRADES = ['회장','대표이사','대표','사장','부사장','전무이사','전무','상무이사','상무','이사','감사']
+    const { data: dirs } = await supabase.from('profiles').select('id,name,grade')
+      .eq('status', 'active')
+      .in('grade', APPROVER_GRADES)
+      .neq('id', session.user.id) // 본인 제외 (셀프 결재 차단)
     // 박팔주를 기본 결재자로 우선 배치 (있으면 맨 앞으로)
     const sortedDirs = (dirs||[]).slice().sort((a:any, b:any) => {
       if (a.name === '박팔주') return -1
@@ -219,6 +224,13 @@ export default function LeavePage() {
   }, [form.approverId])
 
   useEffect(() => { load() }, [load])
+
+  // 페이지 진입 시 반려결재 읽음 시점 기록
+  useEffect(() => {
+    if (typeof window !== 'undefined' && profile?.id) {
+      localStorage.setItem(`rejected_read_${profile.id}`, new Date().toISOString())
+    }
+  }, [profile?.id])
 
   // 신청 연차 시간 계산 (승인됨/대기중 제외)
   function calcRequestHours(type: string, start: string, end: string): number {
