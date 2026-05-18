@@ -24,6 +24,7 @@ const NAV = [
     { href: '/dashboard/annual', label: '연차 관리', icon: '📅' },
     { href: '/dashboard/biztrip', label: '출장 보고', icon: '🚗' },
     { href: '/dashboard/approval', label: '결재함', icon: '✅' },
+    { href: '/dashboard/mobile-requests', label: '모바일 출근 승인', icon: '📱', adminOnly: true },
   ]},
   { group: '소통', items: [
     { href: '/dashboard/notice', label: '공지사항', icon: '📢' },

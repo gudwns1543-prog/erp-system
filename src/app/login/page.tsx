@@ -21,7 +21,10 @@ export default function LoginPage() {
       setError('이메일 또는 비밀번호가 올바르지 않습니다.')
       setLoading(false)
     } else {
-      router.replace('/dashboard')
+      {
+        const mobile = /Mobile|Android|iPhone|iPad|iPod|Windows Phone/i.test(navigator.userAgent)
+        router.replace(mobile ? '/mobile' : '/dashboard')
+      }
     }
   }
 

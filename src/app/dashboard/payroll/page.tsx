@@ -266,6 +266,7 @@ export default function PayrollPage() {
   const selStaff = staffList[selIdx]
   const selSalary = salaryList.find(s=>s.user_id===selStaff?.id)
   const rate = selSalary ? Math.round(selSalary.annual/12/209) : 0
+  const regularWorkPay = workData && selSalary ? Math.round((workData.regH || 0) * rate) : 0
 
   // 입력값 표시용 (DB 저장값과 자동값 둘 다 고려)
   function getInputDisplayValue(item: ItemDef, type: 'pay' | 'deduct'): string {
@@ -383,8 +384,8 @@ export default function PayrollPage() {
               </thead>
               <tbody>
                 {[
-                  { label: '평일 정규근무', hours: workData.regH, rate: rate, pay: autoCalc.base || 0,
-                    note: '기본급에 포함 (월 209h 기준)' },
+                  { label: '평일 정규근무', hours: workData.regH, rate: rate, pay: regularWorkPay,
+                    note: '실제 근태시간 × 시급 (기본급과 별도 참고)' },
                   { label: '평일 연장수당', hours: workData.extH, rate: Math.round(rate * 1.5), pay: autoCalc.payExt || 0,
                     note: '시급 × 1.5' },
                   { label: '평일 야간수당', hours: workData.nightH, rate: Math.round(rate * 2.0), pay: autoCalc.payNight || 0,
@@ -411,9 +412,9 @@ export default function PayrollPage() {
                   </tr>
                 ))}
                 <tr className="bg-blue-50 font-semibold">
-                  <td colSpan={5} className="px-2 py-2 text-right text-blue-800">근로 지급 소계</td>
+                  <td colSpan={5} className="px-2 py-2 text-right text-blue-800">근태 기준 산출액 소계</td>
                   <td className="px-2 py-2 text-right tabular-nums text-blue-700">
-                    {formatWon((autoCalc.base||0) + (autoCalc.payExt||0) + (autoCalc.payNight||0) +
+                    {formatWon(regularWorkPay + (autoCalc.payExt||0) + (autoCalc.payNight||0) +
                       (autoCalc.payHol||0) + (autoCalc.payHolExt||0) + (autoCalc.payHolNight||0))}
                   </td>
                 </tr>
@@ -421,7 +422,7 @@ export default function PayrollPage() {
             </table>
           </div>
           <div className="text-[10px] text-gray-400 mt-2">
-            ⚠️ 근무시간(M)과 시급(N)은 근태기록 및 계약연봉 기반으로 자동 산정되며 수정할 수 없습니다.
+            ⚠️ 이 표는 근태시간 기준 산출액을 보여주는 참고표입니다. 실제 지급 항목의 기본급은 계약연봉 ÷ 12 기준이며, 정규근무수당과 중복 지급되지 않습니다.
           </div>
         </div>
       )}

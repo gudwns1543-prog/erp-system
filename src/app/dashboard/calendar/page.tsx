@@ -95,6 +95,19 @@ function makeKSTDateTime(date: string, time: string) {
   return `${date}T${time}:00+09:00`
 }
 
+
+function getDefaultEndFromStart(date: string, time: string) {
+  if (!date || !time) return { end_date: date || '', end_time: '10:00' }
+  const d = new Date(`${date}T${time}:00+09:00`)
+  if (Number.isNaN(d.getTime())) return { end_date: date, end_time: time }
+  d.setHours(d.getHours() + 1)
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
+  return {
+    end_date: `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}`,
+    end_time: `${String(kst.getUTCHours()).padStart(2,'0')}:${String(kst.getUTCMinutes()).padStart(2,'0')}`,
+  }
+}
+
 function shiftKSTMinutes(value: string, minutes: number) {
   if (!value) return ''
   const iso = hasTimezone(value) ? value : `${value}+09:00`
@@ -139,7 +152,7 @@ export default function CalendarPage() {
   const [tab, setTab] = useState<'calendar'|'invites'>('calendar')
   const [form, setForm] = useState({
     title:'', description:'', start_date:'', start_time:'09:00',
-    end_date:'', end_time:'18:00', all_day:false, time_tbd:false,
+    end_date:'', end_time:'10:00', all_day:false, time_tbd:false,
     location:'', color:'#534AB7', attendeeIds:[] as string[],
     calendar_type: 'personal' as 'personal'|'company',
     is_business_trip: false,
@@ -333,14 +346,14 @@ export default function CalendarPage() {
 
   function resetForm() {
     setForm({title:'',description:'',start_date:selDate||'',start_time:'09:00',
-      end_date:selDate||'',end_time:'18:00',all_day:false,time_tbd:false,location:'',color:'#534AB7',
+      end_date:selDate||'',end_time:'10:00',all_day:false,time_tbd:false,location:'',color:'#534AB7',
       attendeeIds: profile?.id ? [profile.id] : [],
       calendar_type: 'personal', is_business_trip: false})  // 기본으로 본인 체크
   }
 
   function openCreate(dateStr: string) {
     setSelDate(dateStr)
-    setForm(f=>({...f, start_date:dateStr, end_date:dateStr}))
+    setForm(f=>({ ...f, start_date: dateStr, ...getDefaultEndFromStart(dateStr, f.start_time || '09:00') }))
     setEditMode(false); setShowForm(true)
   }
 
@@ -622,13 +635,13 @@ export default function CalendarPage() {
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">시작일</label>
                   <input type="date" className="input" value={form.start_date}
-                    onChange={e=>setForm(f=>({...f,start_date:e.target.value}))} />
+                    onChange={e=>setForm(f=>({ ...f, start_date: e.target.value, ...getDefaultEndFromStart(e.target.value, f.start_time || '09:00') }))} />
                 </div>
                 {!form.all_day && !form.time_tbd && (
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">시작 시간</label>
                     <input type="time" className="input" value={form.start_time}
-                      onChange={e=>setForm(f=>({...f,start_time:e.target.value}))} />
+                      onChange={e=>setForm(f=>({ ...f, start_time: e.target.value, ...getDefaultEndFromStart(f.start_date, e.target.value) }))} />
                   </div>
                 )}
                 <div>

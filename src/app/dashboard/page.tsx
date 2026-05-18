@@ -5,7 +5,10 @@ import { useRouter } from 'next/navigation'
 export default function DashboardIndex() {
   const router = useRouter()
   useEffect(() => {
-    router.replace('/dashboard/home')
+    {
+      const mobile = /Mobile|Android|iPhone|iPad|iPod|Windows Phone/i.test(navigator.userAgent)
+      router.replace(mobile ? '/mobile' : '/dashboard/home')
+    }
   }, [router])
   return (
     <div className="min-h-screen flex items-center justify-center">

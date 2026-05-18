@@ -640,6 +640,22 @@ export default function HomePage() {
         a + (l.type.includes('반차') ? 0.5 : 1), 0)
       const remainLeave = (p?.annual_leave || 0) - usedLeave
 
+      // 향후 연차/반차 신청 현황 - AI가 잔여연차만 보고 임의로 신청했다고 오해하지 않도록 명시
+      const futureLeaveEndDate = new Date(todayDate)
+      futureLeaveEndDate.setDate(todayDate.getDate() + 90)
+      const futureLeaveEnd = futureLeaveEndDate.toISOString().slice(0, 10)
+      const { data: futureLeaves } = await supabase.from('approvals')
+        .select('type,status,start_date,end_date')
+        .eq('requester_id', session.user.id)
+        .in('status', ['pending','approved'])
+        .in('type', ['연차','반차(오전)','반차(오후)','반반차','특별휴가','병가'])
+        .gte('start_date', today)
+        .lte('start_date', futureLeaveEnd)
+        .order('start_date', { ascending: true })
+      const futureLeaveList = (futureLeaves || []).map((l: any) =>
+        `${l.start_date}${l.end_date && l.end_date !== l.start_date ? '~' + l.end_date : ''} ${l.type} ${l.status === 'approved' ? '승인' : '신청중'}`
+      )
+
       // 급여일 계산 - DB company_settings에서 읽기
       const { data: payDaySetting } = await supabase.from('company_settings')
         .select('value').eq('key', 'pay_day').maybeSingle()
@@ -682,7 +698,10 @@ export default function HomePage() {
       const pendingCol = p?.role === 'director' ? 'approver_id' : 'requester_id'
       const { data: pendingApprovals } = await supabase.from('approvals')
         .select('type,start_date,requester:requester_id(name)')
-        .eq(pendingCol, session.user.id).eq('status','pending').limit(5)
+        .eq(pendingCol, session.user.id).eq('status','pending')
+        .gte('start_date', today)
+        .order('start_date', { ascending: true })
+        .limit(5)
       const approvalList = (pendingApprovals||[]).map((a: any) =>
         p?.role === 'director'
           ? ((a.requester as any)?.name + '님 ' + a.type + ' (' + a.start_date + ')')
@@ -729,7 +748,7 @@ export default function HomePage() {
       const { count: noticeCount } = await supabase.from('notices')
         .select('*',{count:'exact',head:true}).gt('created_at', lastRead)
 
-      // 본인 관련 업무 상세 (통찰용)
+      // 본인 관련 업무 상세 (브리핑용)
       const { data: myDetailTasks } = await supabase.from('tasks')
         .select('id, title, status, priority, due_date, due_time, progress, assignee_progress, assignees, creator_id, creator:creator_id(name), updated_at')
         .neq('status', 'done')
@@ -785,6 +804,7 @@ export default function HomePage() {
         오늘출퇴근: attendStatus,
         이번달근태: thisMonth + '월 ' + workDays + '일 출근 / 정규 ' + monthReg + 'h / 초과 ' + monthExt + 'h',
         잔여연차: remainLeave + 'H (사용 ' + usedLeave + 'H / 기본 ' + (p?.annual_leave||0) + 'H)',
+        향후연차신청: futureLeaveList.length ? futureLeaveList : ['향후 90일 내 신청중/승인된 연차·휴가 없음'],
         급여일안내: paydayMsg,
         향후30일일정: eventList.length ? eventList : ['등록된 일정 없음'],
         결재현황: approvalList.length ? approvalList : ['대기중인 결재 없음'],
@@ -936,7 +956,7 @@ export default function HomePage() {
             )}
           </div>
 
-          {/* 통합 알림 센터 + AI 통찰 */}
+          {/* 통합 알림 센터 + AI 브리핑 */}
           <div className="card border-amber-200 bg-amber-50/40 p-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <button onClick={()=>{
@@ -958,7 +978,7 @@ export default function HomePage() {
                 )}
                 <span className="text-xs text-gray-400 ml-auto">{notificationsOpen ? '▲' : '▼'}</span>
               </button>
-              {/* AI 통찰 받기 버튼 + 모두 닫기 */}
+              {/* AI 브리핑 받기 버튼 + 모두 닫기 */}
               <div className="flex items-center gap-1.5">
                 {notifications.length > 0 && (
                   <button onClick={dismissAll}
@@ -970,18 +990,18 @@ export default function HomePage() {
                 <button onClick={loadBriefing} disabled={briefingLoading}
                   className="flex items-center gap-1 px-2.5 py-1 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 text-white text-xs font-medium rounded-lg transition-colors">
                   <span>✨</span>
-                  {briefingLoading ? 'AI 분석 중...' : briefing ? '🔄 통찰 새로고침' : 'AI 통찰 받기'}
+                  {briefingLoading ? 'AI 브리핑 중...' : briefing ? '🔄 브리핑 새로고침' : 'AI 브리핑 받기'}
                 </button>
               </div>
             </div>
             {notificationsOpen && (
               <div className="mt-2 pt-2 border-t border-amber-200 space-y-2">
-                {/* AI 통찰 영역 (브리핑 결과) */}
+                {/* AI 브리핑 영역 (브리핑 결과) */}
                 {(briefing || briefingLoading) && (
                   <div className="bg-gradient-to-r from-purple-50 to-white border border-purple-100 rounded-md p-2.5">
                     <div className="flex items-center gap-1.5 mb-1.5">
                       <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center text-[10px]">✨</div>
-                      <span className="text-xs font-semibold text-purple-800">AI 통찰</span>
+                      <span className="text-xs font-semibold text-purple-800">AI 브리핑</span>
                     </div>
                     {briefingLoading ? (
                       <div className="flex items-center gap-2 py-1">
