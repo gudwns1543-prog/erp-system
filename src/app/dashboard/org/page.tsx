@@ -31,19 +31,23 @@ function sortMembers(a: any, b: any) {
   return String(a.name || '').localeCompare(String(b.name || ''), 'ko')
 }
 
+function shortLine(className = '') {
+  return <div className={`bg-gray-300 ${className}`} aria-hidden="true" />
+}
+
 export default function OrgPage() {
   const [staff, setStaff] = useState<any[]>([])
   const [selected, setSelected] = useState<any>(null)
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.from('profiles').select('*').eq('status','active').then(({ data }) => {
+    supabase.from('profiles').select('*').eq('status', 'active').then(({ data }) => {
       setStaff(sortByOrgAuthority(data || []))
     })
   }, [])
 
   const deptColorMap = useMemo(() => {
-    const map: Record<string,string> = {}
+    const map: Record<string, string> = {}
     const allDepts = staff.map(u => u.dept || '기타').filter((d, i, arr) => arr.indexOf(d) === i)
     allDepts.forEach((d, i) => { map[d] = DEPT_COLORS[i % DEPT_COLORS.length] })
     return map
@@ -72,32 +76,36 @@ export default function OrgPage() {
     })
   }, [staff])
 
-  const Card = ({u}: {u:any}) => {
+  const Card = ({ u }: { u: any }) => {
     const color = getColor(u)
     return (
-      <button onClick={()=>setSelected(u)}
-        className="w-36 rounded-xl overflow-hidden shadow-sm cursor-pointer hover:shadow-lg hover:-translate-y-1 transition-all duration-200 bg-white text-left flex-shrink-0"
-        style={{border:`2px solid ${color}35`}}>
-        <div className="h-36 flex items-center justify-center overflow-hidden" style={{background:`${color}12`}}>
+      <button
+        onClick={() => setSelected(u)}
+        className="w-40 rounded-2xl overflow-hidden shadow-sm cursor-pointer hover:shadow-lg hover:-translate-y-1 transition-all duration-200 bg-white text-left flex-shrink-0"
+        style={{ border: `2px solid ${color}35` }}
+      >
+        <div className="h-44 flex items-center justify-center overflow-hidden" style={{ background: `${color}10` }}>
           {u.avatar_url
             ? <img src={u.avatar_url} alt={u.name} className="w-full h-full object-cover object-top" />
-            : <div className="w-full h-full flex items-center justify-center text-3xl font-bold" style={{background:color,color:'#fff'}}>{u.name?.[0]}</div>
-          }
+            : <div className="w-full h-full flex items-center justify-center text-4xl font-bold" style={{ background: color, color: '#fff' }}>{u.name?.[0]}</div>}
         </div>
-        <div className="p-2 text-center" style={{background:color}}>
-          <div className="font-bold text-white truncate text-sm">{u.name}</div>
-          <div className="text-white/85 text-xs truncate">{u.grade}</div>
-        </div>
-        <div className="px-2 py-1.5 text-center bg-white">
-          <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold bg-gray-100 text-gray-600">
-            {u.dept || '기타'}
-          </span>
+        <div className="p-3 text-center" style={{ background: color }}>
+          <div className="font-bold text-white truncate text-base">{u.name}</div>
+          <div className="text-white/90 text-sm truncate mt-0.5">{u.grade}</div>
         </div>
       </button>
     )
   }
 
-  const VerticalLine = ({height='h-7'}:{height?:string}) => <div className={`w-px ${height} bg-gray-300`} aria-hidden="true" />
+  const GroupBox = ({ title, count, children, className = '' }: any) => (
+    <section className={`bg-gray-50 border border-[#cfcdf6] rounded-2xl overflow-hidden ${className}`}>
+      <div className="px-4 py-3 border-b border-gray-100 bg-white flex items-center justify-between">
+        <div className="text-sm font-bold text-gray-800">{title}</div>
+        {typeof count === 'number' ? <span className="text-xs text-gray-400">{count}명</span> : <span />}
+      </div>
+      <div className="p-5">{children}</div>
+    </section>
+  )
 
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
@@ -107,41 +115,37 @@ export default function OrgPage() {
       </div>
 
       <div className="bg-white border border-gray-100 rounded-3xl shadow-sm p-4 sm:p-6 overflow-x-auto">
-        <div className="min-w-[760px] flex flex-col items-center">
-          {ceo && <Card u={ceo} />}
-
-          {(executive || hyungjoon) && (
-            <>
-              <VerticalLine />
-              <div className="w-[420px] max-w-[70%] h-px bg-gray-300" aria-hidden="true" />
-              <div className="grid grid-cols-2 gap-28 items-start">
-                <div className="flex flex-col items-center">
-                  <VerticalLine height="h-7" />
-                  {executive && <Card u={executive} />}
-                </div>
-                <div className="flex flex-col items-center">
-                  <VerticalLine height="h-7" />
-                  {hyungjoon && <Card u={hyungjoon} />}
-                </div>
+        <div className="min-w-[920px] flex flex-col items-center">
+          <GroupBox title="경영지원팀" className="w-[620px]">
+            <div className="flex flex-col items-center">
+              <div className="flex justify-center gap-16 w-full">
+                {ceo && <Card u={ceo} />}
+                {executive && <Card u={executive} />}
               </div>
-            </>
-          )}
+              {hyungjoon && (
+                <>
+                  <div className="flex flex-col items-center my-3">
+                    {shortLine('w-px h-6')}
+                  </div>
+                  <Card u={hyungjoon} />
+                </>
+              )}
+            </div>
+          </GroupBox>
 
           {teamGroups.length > 0 && (
             <>
-              <VerticalLine height="h-8" />
-              <div className="w-[520px] h-px bg-gray-300" aria-hidden="true" />
-              <div className="flex justify-center gap-8 w-full">
+              <div className="flex flex-col items-center my-4">
+                {shortLine('w-px h-6')}
+                {shortLine('w-[340px] h-px')}
+              </div>
+              <div className="grid grid-cols-2 gap-8 w-full max-w-[820px] items-start">
                 {teamGroups.map(([dept, members]) => (
-                  <section key={dept} className="bg-gray-50 border border-gray-100 rounded-2xl min-w-[300px] max-w-[360px] overflow-hidden">
-                    <div className="px-4 py-3 border-b border-gray-100 bg-white flex items-center justify-between">
-                      <div className="text-sm font-bold text-gray-700">{dept}</div>
-                      <span className="text-xs text-gray-400">{members.length}명</span>
+                  <GroupBox key={dept} title={dept} count={members.length}>
+                    <div className="flex flex-wrap justify-center gap-4">
+                      {members.map((u: any) => <Card key={u.id} u={u} />)}
                     </div>
-                    <div className="p-4 flex flex-wrap justify-center gap-4">
-                      {members.map(u => <Card key={u.id} u={u} />)}
-                    </div>
-                  </section>
+                  </GroupBox>
                 ))}
               </div>
             </>
@@ -150,13 +154,12 @@ export default function OrgPage() {
       </div>
 
       {selected && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setSelected(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-80 overflow-hidden" onClick={e=>e.stopPropagation()}>
-            <div className="bg-gray-50 flex items-center justify-center p-5" style={{minHeight:'220px'}}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSelected(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-80 overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-gray-50 flex items-center justify-center p-5" style={{ minHeight: '220px' }}>
               {selected.avatar_url
                 ? <img src={selected.avatar_url} alt={selected.name} className="max-w-full max-h-52 object-contain rounded-xl" />
-                : <div className="w-36 h-36 rounded-full flex items-center justify-center text-5xl font-bold" style={{background:getColor(selected),color:'#fff'}}>{selected.name?.[0]}</div>
-              }
+                : <div className="w-36 h-36 rounded-full flex items-center justify-center text-5xl font-bold" style={{ background: getColor(selected), color: '#fff' }}>{selected.name?.[0]}</div>}
             </div>
             <div className="p-5">
               <div className="flex items-start justify-between mb-3 gap-3">
@@ -168,14 +171,18 @@ export default function OrgPage() {
                     <span className="text-sm font-semibold text-purple-600">{selected.grade}</span>
                   </div>
                 </div>
-                <span className={`text-xs px-2 py-1 rounded-full flex-shrink-0 ${selected.role==='director'?'bg-purple-100 text-purple-700':'bg-gray-100 text-gray-500'}`}>
-                  {selected.role==='director'?'관리자':'직원'}
+                <span className={`text-xs px-2 py-1 rounded-full flex-shrink-0 ${selected.role === 'director' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-500'}`}>
+                  {selected.role === 'director' ? '관리자' : '직원'}
                 </span>
               </div>
               <div className="space-y-2 border-t border-gray-100 pt-3">
                 {[
-                  ['부서', selected.dept], ['직급', selected.grade], ['이메일', selected.email], ['연락처', selected.tel], ['입사일', selected.join_date]
-                ].filter(([,v])=>v).map(([l,v])=>(
+                  ['부서', selected.dept],
+                  ['직급', selected.grade],
+                  ['이메일', selected.email],
+                  ['연락처', selected.tel],
+                  ['입사일', selected.join_date],
+                ].filter(([, v]) => v).map(([l, v]) => (
                   <div key={String(l)} className="flex gap-3">
                     <span className="text-gray-400 w-16 flex-shrink-0 text-xs">{l}</span>
                     <span className="text-gray-700 text-xs break-all">{v}</span>
@@ -184,7 +191,7 @@ export default function OrgPage() {
               </div>
             </div>
             <div className="px-5 pb-5">
-              <button onClick={()=>setSelected(null)} className="btn-secondary w-full text-sm">닫기</button>
+              <button onClick={() => setSelected(null)} className="btn-secondary w-full text-sm">닫기</button>
             </div>
           </div>
         </div>
