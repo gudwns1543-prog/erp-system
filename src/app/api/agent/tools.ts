@@ -389,15 +389,27 @@ export async function executeTool(name: string, input: any, ctx: Ctx): Promise<a
       const reason = input.reason || '개인 사정'
       const approverName = input.approver_name || '박팔주'
 
-      // 결재자 ID 찾기
+      // 결재자 ID 찾기: 조직 정책상 can_approve=true 또는 기존 관리자(role=director) 허용
       const { data: approver } = await supabase.from('profiles')
-        .select('id, name').eq('name', approverName).eq('role', 'director').maybeSingle()
-      if (!approver) {
-        // 박팔주 못 찾으면 아무 director라도
-        const { data: anyDir } = await supabase.from('profiles')
-          .select('id, name').eq('role', 'director').limit(1).maybeSingle()
-        if (!anyDir) return { 오류: `결재자(${approverName})를 찾을 수 없고, 관리자 권한자가 한 명도 없습니다.` }
-        return await insertApproval(supabase, userId, anyDir, type, start_date, end_date, reason, input)
+        .select('id, name, role, can_approve, authority_role, org_level')
+        .eq('name', approverName)
+        .maybeSingle()
+      const isValidApprover = approver && (approver.can_approve === true || approver.role === 'director' || ['ceo','executive_admin','manager_admin'].includes(approver.authority_role))
+      if (!isValidApprover) {
+        // 박팔주 못 찾으면 결재 가능자 중 가장 상위자를 선택
+        const { data: approvers } = await supabase.from('profiles')
+          .select('id, name, role, can_approve, authority_role, org_level')
+          .eq('status', 'active')
+        const candidates = (approvers || [])
+          .filter((u:any) => u.can_approve === true || u.role === 'director' || ['ceo','executive_admin','manager_admin'].includes(u.authority_role))
+          .sort((a:any,b:any) => {
+            if (a.name === '박팔주') return -1
+            if (b.name === '박팔주') return 1
+            return (a.org_level || 99) - (b.org_level || 99)
+          })
+        const fallback = candidates[0]
+        if (!fallback) return { 오류: `결재자(${approverName})를 찾을 수 없고, 결재 권한자가 한 명도 없습니다.` }
+        return await insertApproval(supabase, userId, fallback, type, start_date, end_date, reason, input)
       }
       return await insertApproval(supabase, userId, approver, type, start_date, end_date, reason, input)
     }

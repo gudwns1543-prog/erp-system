@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { sortByGrade } from '@/lib/attendance'
+import { canApprove, sortByOrgAuthority } from '@/lib/org'
 
 function hoursBetween(startTime: string, endTime: string): number {
   if (!startTime || !endTime) return 0
@@ -48,11 +49,13 @@ export default function BizTripPage() {
     const { data: emps } = await supabase.from('profiles')
       .select('id,name,grade,dept,color,tc,role').eq('status', 'active').order('name')
     setStaffList(sortByGrade(emps || []))
-    // 결재자 후보 (이사급 이상)
-    const apprs = (emps || []).filter((e: any) =>
-      ['대표이사', '대표', '이사', '부사장', '전무이사', '전무', '상무이사', '상무'].includes(e.grade)
-    )
-    setApprovers(sortByGrade(apprs))
+    // 결재자 후보: 조직 정책상 결재 가능자
+    const apprs = sortByOrgAuthority((emps || []).filter((e: any) => canApprove(e))).sort((a:any, b:any) => {
+      if (a.name === '박팔주') return -1
+      if (b.name === '박팔주') return 1
+      return 0
+    })
+    setApprovers(apprs)
 
     // 회사 출장 정책 로딩
     const { data: cs } = await supabase.from('company_settings')

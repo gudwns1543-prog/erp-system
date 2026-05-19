@@ -5,6 +5,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
 import AgentChat from '@/components/AgentChat'
+import { getAuthorityLabel, isAdminLike } from '@/lib/org'
 
 const NAV = [
   { group: '홈', items: [
@@ -71,7 +72,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       }
       setProfile(data)
       // 결재 대기
-      if (data.role === 'director') {
+      if (isAdminLike(data)) {
         const { count } = await supabase
           .from('approvals').select('*', { count: 'exact', head: true })
           .eq('approver_id', session.user.id).eq('status', 'pending')
@@ -246,7 +247,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           const supabase2 = createClient()
           const { data: { session } } = await supabase2.auth.getSession()
           if (!session) return
-          if (profile.role === 'director') {
+          if (isAdminLike(profile)) {
             const { count } = await supabase2.from('approvals').select('*',{count:'exact',head:true})
               .eq('approver_id', session.user.id).eq('status','pending')
             setPendingCount(count||0)
@@ -304,7 +305,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       const supabase = createClient()
       supabase.auth.getSession().then(async ({ data: { session } }) => {
         if (!session || !profile) return
-        if (profile.role === 'director') {
+        if (isAdminLike(profile)) {
           const { count } = await supabase.from('approvals')
             .select('*',{count:'exact',head:true})
             .eq('approver_id', session.user.id).eq('status','pending')
@@ -328,7 +329,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       localStorage.setItem(`tasks_read_${profile.id}`, new Date().toISOString())
       setUnreadTasks(0)
     }
-    if (pathname === '/dashboard/signup' && profile?.role==='director') {
+    if (pathname === '/dashboard/signup' && isAdminLike(profile)) {
       setPendingSignup(0)
     }
   }, [pathname, profile])
@@ -377,7 +378,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {href === '/dashboard/tasks' && unreadTasks > 0 && pathname !== '/dashboard/tasks' && (
         <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{unreadTasks}</span>
       )}
-      {href === '/dashboard/signup' && pendingSignup > 0 && profile?.role==='director' && (
+      {href === '/dashboard/signup' && pendingSignup > 0 && isAdminLike(profile) && (
         <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingSignup}</span>
       )}
     </>
@@ -406,8 +407,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="min-w-0">
             <div className="text-xs font-semibold text-gray-800 truncate">{profile.name}</div>
             <div className="text-xs text-gray-500 truncate">{profile.dept} · {profile.grade}</div>
-            <div className={`text-xs font-medium ${profile.role==='director'?'text-purple-600':'text-gray-400'}`}>
-              {profile.role==='director'?'관리자':'일반직원'}
+            <div className={`text-xs font-medium ${isAdminLike(profile)?'text-purple-600':'text-gray-400'}`}>
+              {isAdminLike(profile)?getAuthorityLabel(profile):'일반직원'}
             </div>
           </div>
         </div>
@@ -420,7 +421,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               {group.group}
             </div>
             {group.items
-              .filter(item => !item.adminOnly || profile.role === 'director')
+              .filter(item => !item.adminOnly || isAdminLike(profile))
               .map(item => {
                 const isActive = pathname === item.href ||
                   (item.href !== '/dashboard' && pathname.startsWith(item.href))

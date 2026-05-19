@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { sortByGrade, formatWon } from '@/lib/attendance'
+import { AUTHORITY_LABEL } from '@/lib/org'
 
 async function uploadAvatar(file: File, userId: string) {
   const supabase = createClient()
@@ -44,13 +45,30 @@ export default function HrmPage() {
       if (url) avatarUrl = url
     }
     const supabase = createClient()
-    await supabase.from('profiles').update({
+    const baseUpdate: any = {
       name: editing.name, dept: editing.dept, grade: editing.grade,
       role: editing.role, join_date: editing.join_date, gender: editing.gender,
       birth_date: editing.birth_date, tel: editing.tel, address: editing.address,
       annual_leave: editing.annual_leave, avatar_url: avatarUrl, status: editing.status,
-    }).eq('id', editing.id)
-    setAlert('저장되었습니다.')
+    }
+    const orgUpdate: any = {
+      ...baseUpdate,
+      authority_role: editing.authority_role || 'staff',
+      org_level: Number(editing.org_level || 40),
+      manager_id: editing.manager_id || null,
+      can_approve: Boolean(editing.can_approve),
+      org_sort: Number(editing.org_sort || 999),
+    }
+    let { error } = await supabase.from('profiles').update(orgUpdate).eq('id', editing.id)
+    if (error && String(error.message || '').includes('authority_role')) {
+      await supabase.from('profiles').update(baseUpdate).eq('id', editing.id)
+      setAlert('기본 정보는 저장되었습니다. 조직 권한 항목은 Supabase SQL 적용 후 저장됩니다.')
+    } else if (error) {
+      setAlert('저장 실패: ' + error.message)
+      return
+    } else {
+      setAlert('저장되었습니다.')
+    }
     setEditing(null)
     load()
     setTimeout(()=>setAlert(''), 3000)
@@ -335,11 +353,45 @@ export default function HrmPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">권한</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">시스템 권한</label>
                   <select className="input text-sm" value={editing.role||'staff'}
                     onChange={e=>setEditing((p:any)=>({...p,role:e.target.value}))}>
                     <option value="staff">일반직원</option>
                     <option value="director">관리자</option>
+                  </select>
+                  <p className="text-[11px] text-gray-400 mt-1">접근 권한입니다. 실제 조직 서열은 아래 조직 권한으로 관리합니다.</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">조직 권한</label>
+                  <select className="input text-sm" value={editing.authority_role||'staff'}
+                    onChange={e=>setEditing((p:any)=>({...p,authority_role:e.target.value}))}>
+                    {Object.entries(AUTHORITY_LABEL).map(([key,label])=>(
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">직속 상급자</label>
+                  <select className="input text-sm" value={editing.manager_id||''}
+                    onChange={e=>setEditing((p:any)=>({...p,manager_id:e.target.value||null}))}>
+                    <option value="">없음</option>
+                    {staff.filter((u:any)=>u.id!==editing.id).map((u:any)=>(
+                      <option key={u.id} value={u.id}>{u.name} {u.grade}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">조직 단계</label>
+                  <input type="number" className="input text-sm" value={editing.org_level||40}
+                    onChange={e=>setEditing((p:any)=>({...p,org_level:+e.target.value}))} />
+                  <p className="text-[11px] text-gray-400 mt-1">10 대표 / 20 최종관리자 / 30 하위관리자 / 40 실무자</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">결재 가능</label>
+                  <select className="input text-sm" value={editing.can_approve ? 'true' : 'false'}
+                    onChange={e=>setEditing((p:any)=>({...p,can_approve:e.target.value==='true'}))}>
+                    <option value="false">불가</option>
+                    <option value="true">가능</option>
                   </select>
                 </div>
                 <div>

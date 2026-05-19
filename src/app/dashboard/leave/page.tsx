@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
+import { canApprove, sortByOrgAuthority } from '@/lib/org'
 import { isHoliday, classifyWork, minutesToHours } from '@/lib/attendance'
 
 // 한국어 조사 자동 (은/는, 이/가, 을/를)
@@ -120,17 +121,16 @@ export default function LeavePage() {
     if (!session) return
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
-    // 결재자 후보: 이사급 이상(grade_order <= 7) + 본인 제외 (셀프 결재 방지)
-    const APPROVER_GRADES = ['회장','대표이사','대표','사장','부사장','전무이사','전무','상무이사','상무','이사','감사']
-    const { data: dirs } = await supabase.from('profiles').select('id,name,grade')
+    // 결재자 후보: 조직 정책상 결재 가능자 + 본인 제외
+    // DB 마이그레이션 전에도 동작하도록 select('*') 후 클라이언트에서 판정합니다.
+    const { data: allApprovers } = await supabase.from('profiles').select('*')
       .eq('status', 'active')
-      .in('grade', APPROVER_GRADES)
-      .neq('id', session.user.id) // 본인 제외 (셀프 결재 차단)
-    // 박팔주를 기본 결재자로 우선 배치 (있으면 맨 앞으로)
-    const sortedDirs = (dirs||[]).slice().sort((a:any, b:any) => {
+      .neq('id', session.user.id)
+    const sortedDirs = sortByOrgAuthority((allApprovers || []).filter((u:any) => canApprove(u))).sort((a:any, b:any) => {
+      // 기본 결재자는 실질 최종관리자인 박팔주 이사를 우선합니다.
       if (a.name === '박팔주') return -1
       if (b.name === '박팔주') return 1
-      return (a.name||'').localeCompare(b.name||'')
+      return 0
     })
     setApprovers(sortedDirs)
     if (sortedDirs[0] && !form.approverId) setForm(f=>({...f, approverId: sortedDirs[0].id}))
