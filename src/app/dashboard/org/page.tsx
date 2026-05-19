@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { GRADE_ORDER } from '@/lib/attendance'
-import { AUTHORITY_BADGE_CLASS, getAuthorityLabel, getAuthorityRole, getOrgLevel, sortByOrgAuthority } from '@/lib/org'
+import { sortByOrgAuthority } from '@/lib/org'
 
 const DEPT_COLORS = [
   '#534AB7','#185FA5','#0F6E56','#A32D2D',
@@ -10,11 +10,25 @@ const DEPT_COLORS = [
   '#1A6B45','#7B3F6E','#2C5F8A','#5C6B1A',
 ]
 
-function roleDescription(role: string) {
-  if (role === 'ceo') return '회사 전체 의사결정 최상위 책임자'
-  if (role === 'executive_admin') return '실질 운영·결재 최종관리자'
-  if (role === 'manager_admin') return '현장·실무 하위관리자'
-  return '실무 담당자'
+const TEAM_ORDER = ['경영지원팀', '운영팀', '실무팀']
+const NAME_ORDER: Record<string, number> = {
+  '송영아': 10,
+  '박팔주': 20,
+  '박형준': 30,
+  '박황규': 41,
+  '박형규': 41,
+  '김재현': 42,
+  '박희원': 43,
+  '김경세': 44,
+}
+
+function sortMembers(a: any, b: any) {
+  const oa = typeof a.org_sort === 'number' ? a.org_sort : NAME_ORDER[a.name] || 999
+  const ob = typeof b.org_sort === 'number' ? b.org_sort : NAME_ORDER[b.name] || 999
+  if (oa !== ob) return oa - ob
+  const gradeDiff = (GRADE_ORDER[a.grade || ''] || 99) - (GRADE_ORDER[b.grade || ''] || 99)
+  if (gradeDiff !== 0) return gradeDiff
+  return String(a.name || '').localeCompare(String(b.name || ''), 'ko')
 }
 
 export default function OrgPage() {
@@ -37,28 +51,29 @@ export default function OrgPage() {
 
   const getColor = (u: any) => deptColorMap[u.dept || '기타'] || DEPT_COLORS[0]
 
-  const ceo = staff.find(u => getAuthorityRole(u) === 'ceo')
-  const executiveAdmin = staff.find(u => getAuthorityRole(u) === 'executive_admin')
-  const managerAdmins = staff.filter(u => getAuthorityRole(u) === 'manager_admin')
-  const workers = staff.filter(u => getAuthorityRole(u) === 'staff')
+  const ceo = staff.find(u => u.name === '송영아')
+  const executive = staff.find(u => u.name === '박팔주')
+  const hyungjoon = staff.find(u => u.name === '박형준')
 
-  const workersByManager: Record<string, any[]> = {}
-  workers.forEach(u => {
-    const key = u.manager_id || managerAdmins[0]?.id || 'no-manager'
-    if (!workersByManager[key]) workersByManager[key] = []
-    workersByManager[key].push(u)
-  })
-  Object.keys(workersByManager).forEach(key => {
-    workersByManager[key].sort((a,b) => {
-      const g = (GRADE_ORDER[a.grade||'']||99) - (GRADE_ORDER[b.grade||'']||99)
-      if (g !== 0) return g
-      return String(a.name || '').localeCompare(String(b.name || ''), 'ko')
+  const teamGroups = useMemo(() => {
+    const exclude = new Set(['송영아', '박팔주', '박형준'])
+    const groups: Record<string, any[]> = {}
+    staff.filter(u => !exclude.has(u.name)).forEach(u => {
+      const dept = u.dept || '기타'
+      if (!groups[dept]) groups[dept] = []
+      groups[dept].push(u)
     })
-  })
+    Object.keys(groups).forEach(dept => groups[dept].sort(sortMembers))
+    return Object.entries(groups).sort(([a], [b]) => {
+      const ai = TEAM_ORDER.indexOf(a)
+      const bi = TEAM_ORDER.indexOf(b)
+      if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
+      return a.localeCompare(b, 'ko')
+    })
+  }, [staff])
 
   const Card = ({u, size='normal'}: {u:any, size?:'large'|'normal'|'small'}) => {
     const color = getColor(u)
-    const role = getAuthorityRole(u)
     const large = size === 'large'
     const small = size === 'small'
     return (
@@ -75,11 +90,11 @@ export default function OrgPage() {
         </div>
         <div className="p-2 text-center" style={{background:color}}>
           <div className="font-bold text-white truncate text-xs">{u.name}</div>
-          <div className="text-white/80 text-[11px] truncate">{u.grade}</div>
+          <div className="text-white/85 text-[11px] truncate">{u.grade}</div>
         </div>
         <div className="px-2 py-1 text-center bg-white">
-          <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${AUTHORITY_BADGE_CLASS[role] || AUTHORITY_BADGE_CLASS.staff}`}>
-            {getAuthorityLabel(u)}
+          <span className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold bg-gray-100 text-gray-600">
+            {u.dept || '기타'}
           </span>
         </div>
       </button>
@@ -87,81 +102,64 @@ export default function OrgPage() {
   }
 
   const Connector = ({wide=false}:{wide?:boolean}) => (
-    <div className="flex flex-col items-center" aria-hidden="true">
+    <div className="flex flex-col items-center w-full" aria-hidden="true">
       <div className="w-px h-6 bg-gray-300" />
       {wide && <div className="h-px bg-gray-300 w-full max-w-3xl" />}
     </div>
   )
+
+  const managementLine = [ceo, executive, hyungjoon].filter(Boolean) as any[]
 
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
       <div className="mb-6">
         <h1 className="text-lg font-semibold text-gray-800">조직도</h1>
         <p className="text-xs text-gray-500 mt-1">
-          대표 → 최종관리자 → 하위관리자 → 실무자 순으로 실제 경영·결재 체계를 반영합니다.
+          대표 → 이사 → 박형준 과장 중심의 관리 체계와 실제 부서 구성을 함께 표시합니다.
         </p>
       </div>
 
       <div className="bg-white border border-gray-100 rounded-3xl shadow-sm p-4 sm:p-6 overflow-x-auto">
         <div className="min-w-[620px] flex flex-col items-center">
-          {ceo && <Card u={ceo} size="large" />}
-
-          {ceo && executiveAdmin && <Connector />}
-          {executiveAdmin && <Card u={executiveAdmin} size="large" />}
-
-          {executiveAdmin && managerAdmins.length > 0 && <Connector wide />}
-          {managerAdmins.length > 0 && (
-            <div className="flex flex-wrap justify-center gap-5">
-              {managerAdmins.map(u => <Card key={u.id} u={u} />)}
+          <section className="rounded-2xl border border-purple-100 bg-purple-50/40 px-6 py-5 flex flex-col items-center">
+            <div className="text-xs font-semibold text-purple-600 mb-4">경영지원팀 / 관리 라인</div>
+            <div className="flex flex-col items-center">
+              {managementLine.map((u, idx) => (
+                <div key={u.id || u.name} className="flex flex-col items-center">
+                  {idx > 0 && <div className="w-px h-6 bg-gray-300" />}
+                  <Card u={u} size={idx === 0 ? 'large' : 'normal'} />
+                </div>
+              ))}
             </div>
-          )}
+          </section>
 
-          {managerAdmins.length > 0 && workers.length > 0 && <Connector wide />}
-          {managerAdmins.length > 0 && (
+          {teamGroups.length > 0 && <Connector wide />}
+
+          {teamGroups.length > 0 && (
             <div className="flex flex-wrap justify-center gap-6 w-full">
-              {managerAdmins.map(manager => {
-                const members = workersByManager[manager.id] || []
-                return (
-                  <section key={manager.id} className="bg-gray-50 border border-gray-100 rounded-2xl min-w-[220px] max-w-[360px] flex-1 overflow-hidden">
-                    <div className="px-4 py-3 border-b border-gray-100 bg-white flex items-center justify-between">
-                      <div>
-                        <div className="text-xs text-gray-400">하위관리자</div>
-                        <div className="text-sm font-bold text-gray-700">{manager.name} {manager.grade}</div>
-                      </div>
-                      <span className="text-xs text-gray-400">{members.length}명</span>
-                    </div>
-                    <div className="p-4 flex flex-wrap justify-center gap-3">
-                      {members.length > 0
-                        ? members.map(u => <Card key={u.id} u={u} size="small" />)
-                        : <div className="text-xs text-gray-400 py-6">배정된 실무자가 없습니다.</div>
-                      }
-                    </div>
-                  </section>
-                )
-              })}
-              {workersByManager['no-manager']?.length > 0 && (
-                <section className="bg-gray-50 border border-gray-100 rounded-2xl min-w-[220px] max-w-[360px] flex-1 overflow-hidden">
+              {teamGroups.map(([dept, members]) => (
+                <section key={dept} className="bg-gray-50 border border-gray-100 rounded-2xl min-w-[220px] max-w-[380px] flex-1 overflow-hidden">
                   <div className="px-4 py-3 border-b border-gray-100 bg-white flex items-center justify-between">
-                    <div className="text-sm font-bold text-gray-700">미배정 실무자</div>
-                    <span className="text-xs text-gray-400">{workersByManager['no-manager'].length}명</span>
+                    <div>
+                      <div className="text-sm font-bold text-gray-700">{dept}</div>
+                      <div className="text-[11px] text-gray-400">소속 직원</div>
+                    </div>
+                    <span className="text-xs text-gray-400">{members.length}명</span>
                   </div>
                   <div className="p-4 flex flex-wrap justify-center gap-3">
-                    {workersByManager['no-manager'].map(u => <Card key={u.id} u={u} size="small" />)}
+                    {members.map(u => <Card key={u.id} u={u} size="small" />)}
                   </div>
                 </section>
-              )}
+              ))}
             </div>
           )}
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs">
-        {(['ceo','executive_admin','manager_admin','staff'] as const).map(key => (
-          <div key={key} className="bg-white border border-gray-100 rounded-xl p-3">
-            <span className={`inline-block rounded-full px-2 py-0.5 font-semibold ${AUTHORITY_BADGE_CLASS[key]}`}>{getAuthorityLabel({authority_role:key})}</span>
-            <p className="text-gray-500 mt-2">{roleDescription(key)}</p>
-          </div>
-        ))}
+      <div className="mt-4 bg-white border border-gray-100 rounded-2xl p-4 text-xs text-gray-500 leading-relaxed">
+        <div className="font-semibold text-gray-700 mb-1">조직 운영 기준</div>
+        <p>결재·관리 체계는 대표 → 이사 → 박형준 과장 순으로 적용하고, 실무자는 소속 부서와 내부 순서에 따라 표시합니다.</p>
+        <p className="mt-1">박희원 대리는 김경세 대리보다 선임으로 정렬되도록 반영했습니다.</p>
       </div>
 
       {selected && (
@@ -186,14 +184,13 @@ export default function OrgPage() {
                     <span className="text-sm font-semibold text-purple-600">{selected.grade}</span>
                   </div>
                 </div>
-                <span className={`text-xs px-2 py-1 rounded-full flex-shrink-0 ${AUTHORITY_BADGE_CLASS[getAuthorityRole(selected)] || AUTHORITY_BADGE_CLASS.staff}`}>
-                  {getAuthorityLabel(selected)}
+                <span className={`text-xs px-2 py-1 rounded-full flex-shrink-0 ${selected.role==='director'?'bg-purple-100 text-purple-700':'bg-gray-100 text-gray-500'}`}>
+                  {selected.role==='director'?'관리자':'직원'}
                 </span>
               </div>
               <div className="space-y-2 border-t border-gray-100 pt-3">
                 {[
-                  ['조직 단계', `${getOrgLevel(selected)}단계`],
-                  ['이메일', selected.email], ['연락처', selected.tel], ['입사일', selected.join_date]
+                  ['부서', selected.dept], ['직급', selected.grade], ['이메일', selected.email], ['연락처', selected.tel], ['입사일', selected.join_date]
                 ].filter(([,v])=>v).map(([l,v])=>(
                   <div key={String(l)} className="flex gap-3">
                     <span className="text-gray-400 w-16 flex-shrink-0 text-xs">{l}</span>

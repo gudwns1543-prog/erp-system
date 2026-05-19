@@ -62,7 +62,7 @@ export default function HrmPage() {
     let { error } = await supabase.from('profiles').update(orgUpdate).eq('id', editing.id)
     if (error && String(error.message || '').includes('authority_role')) {
       await supabase.from('profiles').update(baseUpdate).eq('id', editing.id)
-      setAlert('기본 정보는 저장되었습니다. 조직 권한 항목은 Supabase SQL 적용 후 저장됩니다.')
+      setAlert('기본 정보는 저장되었습니다. 조직 역할 항목은 Supabase SQL 적용 후 저장됩니다.')
     } else if (error) {
       setAlert('저장 실패: ' + error.message)
       return
@@ -359,10 +359,10 @@ export default function HrmPage() {
                     <option value="staff">일반직원</option>
                     <option value="director">관리자</option>
                   </select>
-                  <p className="text-[11px] text-gray-400 mt-1">접근 권한입니다. 실제 조직 서열은 아래 조직 권한으로 관리합니다.</p>
+                  <p className="text-[11px] text-gray-400 mt-1">접근 권한입니다. 실제 조직 서열은 아래 조직 역할로 관리합니다.</p>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">조직 권한</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">조직 역할</label>
                   <select className="input text-sm" value={editing.authority_role||'staff'}
                     onChange={e=>setEditing((p:any)=>({...p,authority_role:e.target.value}))}>
                     {Object.entries(AUTHORITY_LABEL).map(([key,label])=>(
@@ -384,7 +384,7 @@ export default function HrmPage() {
                   <label className="block text-xs font-medium text-gray-500 mb-1">조직 단계</label>
                   <input type="number" className="input text-sm" value={editing.org_level||40}
                     onChange={e=>setEditing((p:any)=>({...p,org_level:+e.target.value}))} />
-                  <p className="text-[11px] text-gray-400 mt-1">10 대표 / 20 최종관리자 / 30 하위관리자 / 40 실무자</p>
+                  <p className="text-[11px] text-gray-400 mt-1">10 대표 / 20 이사 / 30 중간관리자 / 40 직원</p>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">결재 가능</label>
