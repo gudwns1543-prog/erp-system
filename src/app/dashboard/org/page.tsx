@@ -1,4 +1,4 @@
-use client'
+'use client'
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { GRADE_ORDER } from '@/lib/attendance'
