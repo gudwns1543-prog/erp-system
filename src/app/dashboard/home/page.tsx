@@ -25,11 +25,57 @@ function josa(word: string, eunNun: '은/는' | '이/가' | '을/를' = '은/는
 
 const leaveNotes = ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가']
 
-// UTC timestamp → KST 날짜 문자열 (YYYY-MM-DD)
-function toKSTDate(utcStr: string): string {
-  const d = new Date(utcStr)
+function hasTimezone(value: string) {
+  return /(?:Z|[+-]\d{2}:?\d{2})$/.test(value)
+}
+
+function getKSTParts(value: string) {
+  if (!value) return { date: '', time: '' }
+
+  // Supabase timestamptz처럼 Z/+00:00/+09:00 시간대가 붙은 값만 KST로 변환합니다.
+  // timestamp without time zone처럼 시간대가 없는 값은 이미 사용자가 입력한 로컬 시간으로 보고 그대로 씁니다.
+  if (hasTimezone(value)) {
+    const d = new Date(value)
+    const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
+    return {
+      date: `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}`,
+      time: `${String(kst.getUTCHours()).padStart(2,'0')}:${String(kst.getUTCMinutes()).padStart(2,'0')}`,
+    }
+  }
+
+  return {
+    date: value.slice(0, 10),
+    time: value.slice(11, 16) || '00:00',
+  }
+}
+
+function toKSTDate(value: string): string {
+  return getKSTParts(value).date
+}
+
+function toKSTTime(value: string): string {
+  return getKSTParts(value).time
+}
+
+function shiftKSTMinutes(value: string, minutes: number) {
+  if (!value) return ''
+  const iso = hasTimezone(value) ? value : `${value}+09:00`
+  const d = new Date(iso)
+  d.setMinutes(d.getMinutes() + minutes)
   const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
-  return kst.toISOString().slice(0, 10)
+  return `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}`
+}
+
+function getEventEndDisplayDate(event: any) {
+  const endDate = toKSTDate(event.end_at)
+  const endTime = toKSTTime(event.end_at)
+
+  // 시간 일정이 정확히 다음 날 00:00에 끝나는 경우, 캘린더에서는 전날 일정으로만 보여줍니다.
+  // 일정 메뉴와 홈 미니 캘린더의 날짜 표시 기준을 동일하게 맞추기 위한 보정입니다.
+  if (!event.all_day && endTime === '00:00') {
+    return shiftKSTMinutes(event.end_at, -1)
+  }
+  return endDate
 }
 
 function makeApprovalEvents(approvals: any[], myUserId: string) {
@@ -849,7 +895,7 @@ export default function HomePage() {
   const todayDate = todayStr()
 
   function getEventsForDate(ds: string) {
-    const filtered = allEvents.filter((e:any) => toKSTDate(e.start_at) <= ds && ds <= toKSTDate(e.end_at))
+    const filtered = allEvents.filter((e:any) => toKSTDate(e.start_at) <= ds && ds <= getEventEndDisplayDate(e))
     // 본인 결재 우선 정렬 (slice 3개 안에 본인 거가 짤리지 않도록)
     return filtered.sort((a:any, b:any) => {
       if (a.isMe && !b.isMe) return -1
@@ -1329,7 +1375,6 @@ export default function HomePage() {
                       fontSize: '11px',
                       lineHeight: '15px',
                       color: '#7C2D12',
-                      transform: `rotate(${(t.id.charCodeAt(0) % 5) - 2}deg)`,
                       boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
                       marginTop: '2px',
                     }}>
