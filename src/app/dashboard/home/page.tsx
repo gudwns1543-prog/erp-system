@@ -7,6 +7,13 @@ import { Logo } from '@/components/Logo'
 
 const DAYS = ['일','월','화','수','목','금','토']
 const DAYS_SHORT = ['일','월','화','수','목','금','토']
+const HOLIDAY_NAMES: Record<string,string> = {
+  '2026-01-01':'신정','2026-02-16':'설날연휴','2026-02-17':'설날',
+  '2026-02-18':'설날연휴','2026-03-01':'삼일절','2026-05-05':'어린이날',
+  '2026-05-25':'부처님오신날','2026-06-03':'현충일',
+  '2026-08-17':'광복절대체','2026-09-24':'추석연휴','2026-09-25':'추석',
+  '2026-09-26':'추석연휴','2026-10-05':'개천절대체','2026-10-09':'한글날','2026-12-25':'성탄절',
+}
 function todayStr() {
   const d = new Date()
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
@@ -401,7 +408,12 @@ export default function HomePage() {
       setHasNewNotice(newest > lastRead)
     }
 
-    // 업무 카운트 (내가 담당자거나 등록자)
+    // 업무 카운트 + 홈 캘린더 스티커
+    // 일정 메뉴와 동일하게 공유 업무는 모두, 개인 업무는 본인 관련 업무만 표시합니다.
+    const monthStart = `${calYear}-${String(calMonth+1).padStart(2,'0')}-01`
+    const nextMonthDate = new Date(calYear, calMonth+1, 1)
+    const monthEnd = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth()+1).padStart(2,'0')}-01`
+
     const { data: myTasks } = await supabase.from('tasks')
       .select('id, title, status, priority, due_date, due_time, assignees, creator_id, visibility, progress, assignee_progress')
     const today = todayStr()
@@ -418,8 +430,14 @@ export default function HomePage() {
       if (avgProg >= 100 && t.status !== 'done' && isMine) {
         autoCompleteIds.push(t.id)
       }
-      // 캘린더 스티커용 - 본인 관련 + 공유 업무, 미완료 + 마감일 있음
-      if (t.due_date && !isCompleted && (isMine || t.visibility === 'shared')) {
+      // 캘린더 스티커용 - 일정 메뉴와 같은 표시 기준
+      if (
+        t.due_date &&
+        t.due_date >= monthStart &&
+        t.due_date < monthEnd &&
+        !isCompleted &&
+        (isMine || t.visibility === 'shared')
+      ) {
         calTasks.push(t)
       }
       if (!isMine) continue
@@ -431,7 +449,7 @@ export default function HomePage() {
       if (t.due_date && t.due_date < today) counts.overdue++
     }
     setTaskCounts(counts)
-    setCalendarTasks(calTasks)
+    setCalendarTasks(calTasks.sort((a:any,b:any) => String(a.due_time || '').localeCompare(String(b.due_time || '')) || String(a.title || '').localeCompare(String(b.title || ''), 'ko')))
 
     // 평균 100% 도달 업무를 백그라운드에서 자동 완료 처리
     if (autoCompleteIds.length > 0) {
@@ -1297,9 +1315,14 @@ export default function HomePage() {
                 className={`min-h-[110px] border border-gray-100 p-1.5 cursor-pointer transition-colors
                   ${isSat?'bg-blue-50/60':isHol||isSun?'bg-red-50':'bg-white'}
                   hover:bg-purple-50/40`}>
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold mb-1
-                  ${isToday?'bg-purple-600 text-white':isSat?'text-blue-500':isHol||isSun?'text-red-400':'text-gray-700'}`}>
-                  {day}
+                <div className="flex items-center gap-1 mb-1">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0
+                    ${isToday?'bg-purple-600 text-white':isSat?'text-blue-500':isHol||isSun?'text-red-400':'text-gray-700'}`}>
+                    {day}
+                  </div>
+                  {HOLIDAY_NAMES[ds] && (
+                    <span className="text-red-400 text-xs truncate font-semibold">{HOLIDAY_NAMES[ds]}</span>
+                  )}
                 </div>
                 {dayEvs.slice(0,3).map((ev:any)=>{
                   // 마지막으로 캘린더를 확인한 시간 이후 생성/수정된 일정 = NEW
@@ -1366,7 +1389,7 @@ export default function HomePage() {
                   <div key={'task-'+t.id}
                     onClick={(e)=>{e.stopPropagation(); router.push('/dashboard/tasks')}}
                     title={`📌 업무: ${t.title}${t.due_time ? ' '+t.due_time.slice(0,5) : ''}`}
-                    className="cursor-pointer hover:scale-105 transition-transform"
+                    className="cursor-pointer hover:opacity-80 transition-opacity"
                     style={{
                       background: t.priority === 'high' ? '#FECACA' : '#FED7AA',
                       border: '1px dashed ' + (t.priority === 'high' ? '#EF4444' : '#F97316'),
