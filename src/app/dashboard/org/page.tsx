@@ -1,4 +1,4 @@
-'use client'
+use client'
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { GRADE_ORDER } from '@/lib/attendance'
@@ -10,7 +10,7 @@ const DEPT_COLORS = [
   '#1A6B45','#7B3F6E','#2C5F8A','#5C6B1A',
 ]
 
-const TEAM_ORDER = ['경영지원팀', '운영팀', '실무팀']
+const TEAM_ORDER = ['운영팀', '실무팀']
 const NAME_ORDER: Record<string, number> = {
   '송영아': 10,
   '박팔주': 20,
@@ -72,28 +72,24 @@ export default function OrgPage() {
     })
   }, [staff])
 
-  const Card = ({u, size='normal'}: {u:any, size?:'large'|'normal'|'small'}) => {
+  const Card = ({u}: {u:any}) => {
     const color = getColor(u)
-    const large = size === 'large'
-    const small = size === 'small'
     return (
       <button onClick={()=>setSelected(u)}
-        className={`rounded-xl overflow-hidden shadow-sm cursor-pointer hover:shadow-lg hover:-translate-y-1 transition-all duration-200 bg-white text-left flex-shrink-0 ${large?'w-36':small?'w-24':'w-28'}`}
+        className="w-36 rounded-xl overflow-hidden shadow-sm cursor-pointer hover:shadow-lg hover:-translate-y-1 transition-all duration-200 bg-white text-left flex-shrink-0"
         style={{border:`2px solid ${color}35`}}>
-        <div className={`${large?'h-36':small?'h-24':'h-28'} flex items-center justify-center overflow-hidden`}
-          style={{background:`${color}12`}}>
+        <div className="h-36 flex items-center justify-center overflow-hidden" style={{background:`${color}12`}}>
           {u.avatar_url
             ? <img src={u.avatar_url} alt={u.name} className="w-full h-full object-cover object-top" />
-            : <div className="w-full h-full flex items-center justify-center text-2xl font-bold"
-                style={{background:color,color:'#fff'}}>{u.name?.[0]}</div>
+            : <div className="w-full h-full flex items-center justify-center text-3xl font-bold" style={{background:color,color:'#fff'}}>{u.name?.[0]}</div>
           }
         </div>
         <div className="p-2 text-center" style={{background:color}}>
-          <div className="font-bold text-white truncate text-xs">{u.name}</div>
-          <div className="text-white/85 text-[11px] truncate">{u.grade}</div>
+          <div className="font-bold text-white truncate text-sm">{u.name}</div>
+          <div className="text-white/85 text-xs truncate">{u.grade}</div>
         </div>
-        <div className="px-2 py-1 text-center bg-white">
-          <span className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold bg-gray-100 text-gray-600">
+        <div className="px-2 py-1.5 text-center bg-white">
+          <span className="inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold bg-gray-100 text-gray-600">
             {u.dept || '기타'}
           </span>
         </div>
@@ -101,77 +97,65 @@ export default function OrgPage() {
     )
   }
 
-  const Connector = ({wide=false}:{wide?:boolean}) => (
-    <div className="flex flex-col items-center w-full" aria-hidden="true">
-      <div className="w-px h-6 bg-gray-300" />
-      {wide && <div className="h-px bg-gray-300 w-full max-w-3xl" />}
-    </div>
-  )
-
-  const managementLine = [ceo, executive, hyungjoon].filter(Boolean) as any[]
+  const VerticalLine = ({height='h-7'}:{height?:string}) => <div className={`w-px ${height} bg-gray-300`} aria-hidden="true" />
 
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
       <div className="mb-6">
         <h1 className="text-lg font-semibold text-gray-800">조직도</h1>
-        <p className="text-xs text-gray-500 mt-1">
-          대표 → 이사 → 박형준 과장 중심의 관리 체계와 실제 부서 구성을 함께 표시합니다.
-        </p>
+        <p className="text-xs text-gray-500 mt-1">부서와 직급 기준으로 조직 구성을 표시합니다.</p>
       </div>
 
       <div className="bg-white border border-gray-100 rounded-3xl shadow-sm p-4 sm:p-6 overflow-x-auto">
-        <div className="min-w-[620px] flex flex-col items-center">
-          <section className="rounded-2xl border border-purple-100 bg-purple-50/40 px-6 py-5 flex flex-col items-center">
-            <div className="text-xs font-semibold text-purple-600 mb-4">경영지원팀 / 관리 라인</div>
-            <div className="flex flex-col items-center">
-              {managementLine.map((u, idx) => (
-                <div key={u.id || u.name} className="flex flex-col items-center">
-                  {idx > 0 && <div className="w-px h-6 bg-gray-300" />}
-                  <Card u={u} size={idx === 0 ? 'large' : 'normal'} />
-                </div>
-              ))}
-            </div>
-          </section>
+        <div className="min-w-[760px] flex flex-col items-center">
+          {ceo && <Card u={ceo} />}
 
-          {teamGroups.length > 0 && <Connector wide />}
+          {(executive || hyungjoon) && (
+            <>
+              <VerticalLine />
+              <div className="w-[420px] max-w-[70%] h-px bg-gray-300" aria-hidden="true" />
+              <div className="grid grid-cols-2 gap-28 items-start">
+                <div className="flex flex-col items-center">
+                  <VerticalLine height="h-7" />
+                  {executive && <Card u={executive} />}
+                </div>
+                <div className="flex flex-col items-center">
+                  <VerticalLine height="h-7" />
+                  {hyungjoon && <Card u={hyungjoon} />}
+                </div>
+              </div>
+            </>
+          )}
 
           {teamGroups.length > 0 && (
-            <div className="flex flex-wrap justify-center gap-6 w-full">
-              {teamGroups.map(([dept, members]) => (
-                <section key={dept} className="bg-gray-50 border border-gray-100 rounded-2xl min-w-[220px] max-w-[380px] flex-1 overflow-hidden">
-                  <div className="px-4 py-3 border-b border-gray-100 bg-white flex items-center justify-between">
-                    <div>
+            <>
+              <VerticalLine height="h-8" />
+              <div className="w-[520px] h-px bg-gray-300" aria-hidden="true" />
+              <div className="flex justify-center gap-8 w-full">
+                {teamGroups.map(([dept, members]) => (
+                  <section key={dept} className="bg-gray-50 border border-gray-100 rounded-2xl min-w-[300px] max-w-[360px] overflow-hidden">
+                    <div className="px-4 py-3 border-b border-gray-100 bg-white flex items-center justify-between">
                       <div className="text-sm font-bold text-gray-700">{dept}</div>
-                      <div className="text-[11px] text-gray-400">소속 직원</div>
+                      <span className="text-xs text-gray-400">{members.length}명</span>
                     </div>
-                    <span className="text-xs text-gray-400">{members.length}명</span>
-                  </div>
-                  <div className="p-4 flex flex-wrap justify-center gap-3">
-                    {members.map(u => <Card key={u.id} u={u} size="small" />)}
-                  </div>
-                </section>
-              ))}
-            </div>
+                    <div className="p-4 flex flex-wrap justify-center gap-4">
+                      {members.map(u => <Card key={u.id} u={u} />)}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            </>
           )}
         </div>
       </div>
 
-      <div className="mt-4 bg-white border border-gray-100 rounded-2xl p-4 text-xs text-gray-500 leading-relaxed">
-        <div className="font-semibold text-gray-700 mb-1">조직 운영 기준</div>
-        <p>결재·관리 체계는 대표 → 이사 → 박형준 과장 순으로 적용하고, 실무자는 소속 부서와 내부 순서에 따라 표시합니다.</p>
-        <p className="mt-1">박희원 대리는 김경세 대리보다 선임으로 정렬되도록 반영했습니다.</p>
-      </div>
-
       {selected && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-          onClick={()=>setSelected(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-80 overflow-hidden"
-            onClick={e=>e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={()=>setSelected(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-80 overflow-hidden" onClick={e=>e.stopPropagation()}>
             <div className="bg-gray-50 flex items-center justify-center p-5" style={{minHeight:'220px'}}>
               {selected.avatar_url
                 ? <img src={selected.avatar_url} alt={selected.name} className="max-w-full max-h-52 object-contain rounded-xl" />
-                : <div className="w-36 h-36 rounded-full flex items-center justify-center text-5xl font-bold"
-                    style={{background:getColor(selected),color:'#fff'}}>{selected.name?.[0]}</div>
+                : <div className="w-36 h-36 rounded-full flex items-center justify-center text-5xl font-bold" style={{background:getColor(selected),color:'#fff'}}>{selected.name?.[0]}</div>
               }
             </div>
             <div className="p-5">
