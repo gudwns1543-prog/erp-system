@@ -38,3 +38,119 @@ body {
   .badge-approved { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700; }
   .badge-rejected { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700; }
 }
+
+/* ============================================================
+   Mobile responsive safety layer for ERP screens
+   - PC 화면 구조는 유지하면서 모바일에서 깨지는 표/카드/폼을 우선 보정합니다.
+   - 복잡한 기능은 이후 모바일 전용 페이지로 분리할 수 있습니다.
+   ============================================================ */
+@media (max-width: 767px) {
+  html, body {
+    overflow-x: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  .mobile-main-area {
+    width: 100%;
+  }
+
+  .mobile-main-area > * {
+    max-width: 100vw;
+  }
+
+  .mobile-main-area main,
+  .mobile-main-area section,
+  .mobile-main-area article {
+    width: 100%;
+  }
+
+  /* PC 기준의 넓은 패딩/마진을 모바일에서 줄입니다. */
+  .mobile-main-area .p-8 { padding: 1rem !important; }
+  .mobile-main-area .p-6 { padding: 1rem !important; }
+  .mobile-main-area .px-8 { padding-left: 1rem !important; padding-right: 1rem !important; }
+  .mobile-main-area .px-6 { padding-left: 1rem !important; padding-right: 1rem !important; }
+  .mobile-main-area .py-8 { padding-top: 1rem !important; padding-bottom: 1rem !important; }
+  .mobile-main-area .gap-6 { gap: 1rem !important; }
+  .mobile-main-area .gap-5 { gap: 0.875rem !important; }
+
+  /* PC 그리드가 모바일에서 지나치게 좁아지지 않도록 1열화합니다. */
+  .mobile-main-area .grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  /* 카드/패널은 화면폭 안쪽으로 안전하게 맞춥니다. */
+  .mobile-main-area .card,
+  .mobile-main-area [class*="rounded-xl"],
+  .mobile-main-area [class*="rounded-2xl"] {
+    max-width: 100%;
+  }
+
+  /* 테이블은 가로 스크롤로 살리고, 글자가 뭉개지지 않게 합니다. */
+  .mobile-main-area table {
+    min-width: 680px;
+    width: max-content;
+  }
+
+  .mobile-main-area table th,
+  .mobile-main-area table td {
+    white-space: nowrap;
+  }
+
+  .mobile-main-area :has(> table) {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Tailwind overflow-hidden이 표 스크롤을 막는 경우 보정합니다. */
+  .mobile-main-area .overflow-hidden:has(table) {
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+  }
+
+  /* 폼 컨트롤은 손가락 터치가 편하게 최소 높이를 확보합니다. */
+  .mobile-main-area input,
+  .mobile-main-area select,
+  .mobile-main-area textarea,
+  .mobile-main-area button {
+    font-size: 16px;
+  }
+
+  .mobile-main-area input,
+  .mobile-main-area select,
+  .mobile-main-area textarea {
+    min-height: 42px;
+  }
+
+  .mobile-main-area button {
+    min-height: 38px;
+  }
+
+  /* 모달은 모바일 화면에 맞춰 아래에서 올라오는 형태에 가깝게 보정합니다. */
+  .mobile-main-area [class*="fixed"][class*="inset-0"] > [class*="max-w"],
+  body > [class*="fixed"][class*="inset-0"] > [class*="max-w"] {
+    width: calc(100vw - 1rem) !important;
+    max-width: calc(100vw - 1rem) !important;
+    max-height: calc(100vh - 2rem) !important;
+    overflow-y: auto;
+  }
+
+  /* 캘린더/대시보드 등에서 긴 제목은 화면을 밀지 않게 처리합니다. */
+  .mobile-main-area h1,
+  .mobile-main-area h2,
+  .mobile-main-area h3,
+  .mobile-main-area p,
+  .mobile-main-area span,
+  .mobile-main-area div {
+    word-break: keep-all;
+  }
+
+  .mobile-main-area .truncate {
+    min-width: 0;
+  }
+}
+
+@supports (padding: max(0px)) {
+  .safe-bottom {
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+  }
+}
