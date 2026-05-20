@@ -617,7 +617,7 @@ export default function HomePage() {
     // 긴급한 것 먼저
     filteredNotifs.sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0))
     setNotifications(filteredNotifs)
-  }, [])
+  }, [calYear, calMonth])
 
   useEffect(() => { load() }, [load])
 
@@ -1324,89 +1324,102 @@ export default function HomePage() {
                     <span className="text-red-400 text-xs truncate font-semibold">{HOLIDAY_NAMES[ds]}</span>
                   )}
                 </div>
-                {dayEvs.slice(0,3).map((ev:any)=>{
-                  // 마지막으로 캘린더를 확인한 시간 이후 생성/수정된 일정 = NEW
-                  const lastChecked = typeof window !== 'undefined'
-                    ? localStorage.getItem(`cal_checked_${profile?.id}`) || '2000-01-01'
-                    : '2000-01-01'
-                  const evTime = ev.updated_at || ev.created_at
-                  const isNew = evTime && new Date(evTime).getTime() > new Date(lastChecked).getTime()
-                    && ev.creator_id !== profile?.id // 내가 만든 건 NEW 표시 안 함
-
-                  // title 매칭: 새 형식 "[상태] 유형 이름" 또는 옛날 형식 "[유형] 이름"
-                  const matchNew = String(ev.title||'').match(/^\[([^\]]+)\]\s+(\S+)\s+(.+)$/)
-                  const matchOld = !matchNew ? String(ev.title||'').match(/^\[(\S+)\]\s+(.+)$/) : null
-                  let isApproval = false
-                  let isPending = false
-                  let typeName = ''
-                  let personName = ''
-                  if (matchNew) {
-                    isApproval = true
-                    isPending = matchNew[1] === '신청중'
-                    typeName = matchNew[2]
-                    personName = matchNew[3]
-                  } else if (matchOld && ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가'].includes(matchOld[1])) {
-                    isApproval = true
-                    isPending = false
-                    typeName = matchOld[1]
-                    personName = matchOld[2]
-                  }
-                  const typeShort = typeName === '반차(오전)' ? '오전반차'
-                    : typeName === '반차(오후)' ? '오후반차'
-                    : typeName.replace(/[()]/g, '')
-                  const displayText = isApproval ? `${personName}-${typeShort}` : ev.title
-
+                {(() => {
+                  const dayTasks = calendarTasks.filter((t:any) => t.due_date === ds)
+                  const visibleTasks = dayTasks.slice(0, 2)
+                  const remainingSlots = Math.max(0, 3 - visibleTasks.length)
+                  const visibleEvents = dayEvs.slice(0, remainingSlots)
                   return (
-                    <div key={ev.id}
-                      className="rounded px-1.5 mb-1 flex items-center gap-1 truncate font-bold"
-                      title={ev.title}
-                      style={isApproval ? {
-                        backgroundColor: isPending ? '#FEF3C7' : '#DBEAFE',
-                        border: isPending ? '1px solid #FCD34D' : '1px solid #93C5FD',
-                        color: '#111827',
-                        fontSize:'12px',
-                        lineHeight:'18px',
-                      } : {
-                        background:ev.color||'#534AB7',
-                        color:'#fff',
-                        fontSize:'12px',
-                        lineHeight:'20px',
-                        fontWeight:500,
-                      }}>
-                      <span className="truncate flex-1">{displayText}</span>
-                      {isNew && (
-                        <span className="flex-shrink-0 rounded px-1 font-bold"
-                          style={{fontSize:'10px',background:'#ef4444',color:'#facc15',border:'1px solid #dc2626'}}>
-                          NEW
-                        </span>
+                    <>
+                      {/* 업무 스티커: 홈에서도 일정 메뉴처럼 먼저 노출 */}
+                      {visibleTasks.map((t:any) => (
+                        <div key={'task-'+t.id}
+                          onClick={(e)=>{e.stopPropagation(); router.push('/dashboard/tasks')}}
+                          title={`📌 업무: ${t.title}${t.due_time ? ' '+t.due_time.slice(0,5) : ''}`}
+                          className="cursor-pointer hover:opacity-80 transition-opacity truncate"
+                          style={{
+                            background: t.status === 'done' ? '#FEF3C7' : t.priority === 'high' ? '#FECACA' : '#FED7AA',
+                            border: '1px dashed ' + (t.status === 'done' ? '#F59E0B' : t.priority === 'high' ? '#EF4444' : '#F97316'),
+                            borderRadius: '3px',
+                            padding: '0 4px',
+                            fontSize: '11px',
+                            lineHeight: '15px',
+                            color: t.status === 'done' ? '#92400E' : '#7C2D12',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                            marginBottom: '4px',
+                          }}>
+                          📌 {t.title.length > 8 ? t.title.slice(0,8)+'…' : t.title}
+                        </div>
+                      ))}
+
+                      {visibleEvents.map((ev:any)=>{
+                        // 마지막으로 캘린더를 확인한 시간 이후 생성/수정된 일정 = NEW
+                        const lastChecked = typeof window !== 'undefined'
+                          ? localStorage.getItem(`cal_checked_${profile?.id}`) || '2000-01-01'
+                          : '2000-01-01'
+                        const evTime = ev.updated_at || ev.created_at
+                        const isNew = evTime && new Date(evTime).getTime() > new Date(lastChecked).getTime()
+                          && ev.creator_id !== profile?.id // 내가 만든 건 NEW 표시 안 함
+
+                        // title 매칭: 새 형식 "[상태] 유형 이름" 또는 옛날 형식 "[유형] 이름"
+                        const matchNew = String(ev.title||'').match(/^\[([^\]]+)\]\s+(\S+)\s+(.+)$/)
+                        const matchOld = !matchNew ? String(ev.title||'').match(/^\[(\S+)\]\s+(.+)$/) : null
+                        let isApproval = false
+                        let isPending = false
+                        let typeName = ''
+                        let personName = ''
+                        if (matchNew) {
+                          isApproval = true
+                          isPending = matchNew[1] === '신청중'
+                          typeName = matchNew[2]
+                          personName = matchNew[3]
+                        } else if (matchOld && ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가'].includes(matchOld[1])) {
+                          isApproval = true
+                          isPending = false
+                          typeName = matchOld[1]
+                          personName = matchOld[2]
+                        }
+                        const typeShort = typeName === '반차(오전)' ? '오전반차'
+                          : typeName === '반차(오후)' ? '오후반차'
+                          : typeName.replace(/[()]/g, '')
+                        const displayText = isApproval ? `${personName}-${typeShort}` : ev.title
+
+                        return (
+                          <div key={ev.id}
+                            className="rounded px-1.5 mb-1 flex items-center gap-1 truncate font-bold"
+                            title={ev.title}
+                            style={isApproval ? {
+                              backgroundColor: isPending ? '#FEF3C7' : '#DBEAFE',
+                              border: isPending ? '1px solid #FCD34D' : '1px solid #93C5FD',
+                              color: '#111827',
+                              fontSize:'12px',
+                              lineHeight:'18px',
+                            } : {
+                              background:ev.color||'#534AB7',
+                              color:'#fff',
+                              fontSize:'12px',
+                              lineHeight:'20px',
+                              fontWeight:500,
+                            }}>
+                            <span className="truncate flex-1">{displayText}</span>
+                            {isNew && (
+                              <span className="flex-shrink-0 rounded px-1 font-bold"
+                                style={{fontSize:'10px',background:'#ef4444',color:'#facc15',border:'1px solid #dc2626'}}>
+                                NEW
+                              </span>
+                            )}
+                          </div>
+                        )
+                      })}
+
+                      {(dayTasks.length + dayEvs.length) > 3 && (
+                        <div className="text-gray-500 font-medium" style={{fontSize:'12px'}}>
+                          +{dayTasks.length + dayEvs.length - 3}
+                        </div>
                       )}
-                    </div>
+                    </>
                   )
-                })}
-                {dayEvs.length>3 && <div className="text-gray-500 font-medium" style={{fontSize:'12px'}}>+{dayEvs.length-3}</div>}
-                {/* 업무 스티커 (마감일 본인 업무) */}
-                {calendarTasks.filter((t:any) => t.due_date === ds).slice(0, 2).map((t:any) => (
-                  <div key={'task-'+t.id}
-                    onClick={(e)=>{e.stopPropagation(); router.push('/dashboard/tasks')}}
-                    title={`📌 업무: ${t.title}${t.due_time ? ' '+t.due_time.slice(0,5) : ''}`}
-                    className="cursor-pointer hover:opacity-80 transition-opacity"
-                    style={{
-                      background: t.priority === 'high' ? '#FECACA' : '#FED7AA',
-                      border: '1px dashed ' + (t.priority === 'high' ? '#EF4444' : '#F97316'),
-                      borderRadius: '3px',
-                      padding: '0 4px',
-                      fontSize: '11px',
-                      lineHeight: '15px',
-                      color: '#7C2D12',
-                      boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
-                      marginTop: '2px',
-                    }}>
-                    📌 {t.title.length > 7 ? t.title.slice(0,7)+'…' : t.title}
-                  </div>
-                ))}
-                {calendarTasks.filter((t:any) => t.due_date === ds).length > 2 && (
-                  <div className="text-orange-600 font-medium" style={{fontSize:'10px',marginTop:'2px'}}>+업무 {calendarTasks.filter((t:any) => t.due_date === ds).length-2}</div>
-                )}
+                })()}
               </div>
             )
           })}
