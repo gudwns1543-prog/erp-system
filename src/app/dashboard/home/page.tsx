@@ -431,11 +431,11 @@ export default function HomePage() {
         autoCompleteIds.push(t.id)
       }
       // 캘린더 스티커용 - 일정 메뉴와 같은 표시 기준
+      // 일정 메뉴는 완료/진척률과 무관하게 마감일 있는 업무 스티커를 표시하므로 홈도 동일하게 맞춤
       if (
         t.due_date &&
         t.due_date >= monthStart &&
         t.due_date < monthEnd &&
-        !isCompleted &&
         (isMine || t.visibility === 'shared')
       ) {
         calTasks.push(t)
