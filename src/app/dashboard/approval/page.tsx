@@ -24,88 +24,139 @@ function isWeekend(dateStr: string): boolean {
   return d === 0 || d === 6
 }
 
-
-function parseInternalAttendeeIds(raw: string | null | undefined): string[] {
-  if (!raw) return []
-  const idsPart = String(raw).split('|')[0] || ''
-  return idsPart.startsWith('staff:')
-    ? idsPart.replace('staff:', '').split(';').map(v => v.trim()).filter(Boolean)
+function parseTripInternalUserIds(trip: any): string[] {
+  const raw = trip?.attendees || ''
+  const idsPart = raw.split('|')[0] || ''
+  const internalIds = idsPart.startsWith('staff:')
+    ? idsPart.replace('staff:', '').split(';').filter(Boolean)
     : []
+  return Array.from(new Set([trip?.user_id, ...internalIds].filter(Boolean)))
 }
 
-function getBusinessTripUserIds(trip: any): string[] {
-  return Array.from(new Set([trip?.user_id, ...parseInternalAttendeeIds(trip?.attendees)].filter(Boolean)))
-}
-
-function isBusinessTripParticipant(trip: any, userId?: string): boolean {
+function isTripParticipant(trip: any, userId?: string): boolean {
   if (!userId || !trip) return false
-  return getBusinessTripUserIds(trip).includes(userId)
+  if (trip.user_id === userId) return true
+  return parseTripInternalUserIds(trip).includes(userId)
+}
+
+function getTripNote(trip: any): string {
+  const tripDuration = trip?.all_day ? 8 : Number(trip?.duration_hours || 0)
+  return tripDuration >= 4 ? '출장(장)' : '출장(단)'
+}
+
+function removeTripText(note: string | null | undefined): string | null {
+  const cleaned = String(note || '')
+    .replace(/\s*·\s*출장(?:\([장단]\))?/g, '')
+    .replace(/출장(?:\([장단]\))?\s*·\s*/g, '')
+    .replace(/^출장(?:\([장단]\))?$/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  return cleaned || null
 }
 
 async function applyBusinessTripAttendance(supabase: any, trip: any) {
-  const userIds = getBusinessTripUserIds(trip)
-  const tripDuration = trip.all_day ? 8 : Number(trip.duration_hours || 0)
-  const tripNote = tripDuration >= 4 ? '출장(장)' : '출장(단)'
-  const checkIn = trip.all_day ? '09:00:00' : (trip.start_time || '09:00:00')
-  const checkOut = trip.all_day ? '18:00:00' : (trip.end_time || '18:00:00')
-  const r = classifyWork(trip.trip_date, checkIn, checkOut)
+  const allUserIds = parseTripInternalUserIds(trip)
+  const regH = trip.all_day ? 8 : Math.min(8, Number(trip.duration_hours || 0))
+  const tripNote = getTripNote(trip)
 
-  for (const userId of userIds) {
-    const { data: existingList } = await supabase.from('attendance')
+  for (const userId of allUserIds) {
+    const { data: existingLinks } = await supabase.from('business_trip_attendance_links')
+      .select('id, attendance_id')
+      .eq('business_trip_id', trip.id)
+      .eq('user_id', userId)
+      .limit(1)
+
+    if (existingLinks && existingLinks.length > 0) continue
+
+    const { data: existingRows } = await supabase.from('attendance')
       .select('id, note')
       .eq('user_id', userId)
       .eq('work_date', trip.trip_date)
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: true })
+      .limit(1)
 
-    const existing = existingList?.[0]
-    if (existing) {
-      const note = String(existing.note || '')
-      if (!note.includes('출장')) {
-        await supabase.from('attendance').update({
-          note: note ? `${note} · ${tripNote}` : tripNote,
-        }).eq('id', existing.id)
+    let attendanceId = existingRows?.[0]?.id
+
+    if (attendanceId) {
+      const oldNote = existingRows?.[0]?.note || ''
+      const nextNote = oldNote.includes('출장')
+        ? oldNote
+        : oldNote ? `${oldNote} · ${tripNote}` : tripNote
+
+      if (nextNote !== oldNote) {
+        await supabase.from('attendance').update({ note: nextNote }).eq('id', attendanceId)
       }
     } else {
-      await supabase.from('attendance').insert({
+      const { data: inserted } = await supabase.from('attendance').insert({
         user_id: userId,
         work_date: trip.trip_date,
-        check_in: checkIn,
-        check_out: checkOut,
-        reg_hours: minutesToHours(r.reg),
-        ext_hours: minutesToHours(r.ext),
-        night_hours: minutesToHours(r.night),
-        hol_hours: minutesToHours(r.hReg),
-        hol_eve_hours: minutesToHours(r.hEve),
-        hol_night_hours: minutesToHours(r.hNight),
-        ignored_hours: minutesToHours(r.ignored),
+        check_in: trip.all_day ? '09:00:00' : (trip.start_time || '09:00:00'),
+        check_out: trip.all_day ? '18:00:00' : (trip.end_time || '18:00:00'),
+        reg_hours: regH,
+        ext_hours: 0,
+        night_hours: 0,
+        hol_hours: 0,
+        hol_eve_hours: 0,
+        hol_night_hours: 0,
         note: tripNote,
-        is_holiday: isHoliday(trip.trip_date),
-      })
+        is_holiday: false,
+      }).select('id').single()
+      attendanceId = inserted?.id
+    }
+
+    if (attendanceId) {
+      await supabase.from('business_trip_attendance_links').upsert({
+        business_trip_id: trip.id,
+        user_id: userId,
+        attendance_id: attendanceId,
+        trip_date: trip.trip_date,
+      }, { onConflict: 'business_trip_id,user_id' })
     }
   }
 }
 
-async function removeBusinessTripAttendance(supabase: any, trip: any) {
-  const userIds = getBusinessTripUserIds(trip)
-  for (const userId of userIds) {
-    const { data: existingList } = await supabase.from('attendance')
-      .select('id, note')
+async function clearBusinessTripAttendance(supabase: any, trip: any) {
+  const allUserIds = parseTripInternalUserIds(trip)
+
+  for (const userId of allUserIds) {
+    const { data: links } = await supabase.from('business_trip_attendance_links')
+      .select('id, attendance_id')
+      .eq('business_trip_id', trip.id)
       .eq('user_id', userId)
-      .eq('work_date', trip.trip_date)
-    for (const existing of (existingList || [])) {
-      const note = String(existing.note || '')
-      if (['출장(장)', '출장(단)', '출장'].includes(note)) {
-        await supabase.from('attendance').delete().eq('id', existing.id)
-      } else if (note.includes('출장')) {
-        const cleaned = note
-          .replace(/\s*·?\s*출장(?:\([장단]\))?/g, '')
-          .replace(/^\s*·\s*/, '')
-          .trim()
-        await supabase.from('attendance').update({ note: cleaned || null }).eq('id', existing.id)
-      }
+
+    await supabase.from('business_trip_attendance_links')
+      .delete()
+      .eq('business_trip_id', trip.id)
+      .eq('user_id', userId)
+
+    const { data: remainLinks } = await supabase.from('business_trip_attendance_links')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('trip_date', trip.trip_date)
+      .limit(1)
+
+    if (remainLinks && remainLinks.length > 0) continue
+
+    const attendanceId = links?.[0]?.attendance_id
+    if (!attendanceId) continue
+
+    const { data: existing } = await supabase.from('attendance')
+      .select('id, note')
+      .eq('id', attendanceId)
+      .maybeSingle()
+
+    if (!existing) continue
+
+    if (['출장(장)', '출장(단)', '출장'].includes(existing.note || '')) {
+      await supabase.from('attendance').delete().eq('id', existing.id)
+    } else if (String(existing.note || '').includes('출장')) {
+      await supabase.from('attendance').update({
+        note: removeTripText(existing.note),
+      }).eq('id', existing.id)
     }
   }
 }
+
 
 export default function ApprovalPage() {
   const [profile, setProfile] = useState<any>(null)
@@ -151,12 +202,11 @@ export default function ApprovalPage() {
     const { data: sentAppr } = await supabase.from('approvals')
       .select('*, requester:requester_id(name,dept,color,tc), approver:approver_id(name)')
       .eq('requester_id', session.user.id).order('created_at',{ascending:false})
-    const { data: sentTripsRaw } = await supabase.from('business_trips')
+    const { data: sentTrips } = await supabase.from('business_trips')
       .select('*, user:user_id(id,name,dept,color,tc), approver:approver_id(name)')
-      .or(`user_id.eq.${session.user.id},attendees.ilike.%${session.user.id}%`)
       .neq('status', 'draft') // draft는 결재함에 노출 안 함
+      .or(`user_id.eq.${session.user.id},attendees.ilike.%${session.user.id}%`)
       .order('created_at',{ascending:false})
-    const sentTrips = (sentTripsRaw || []).filter((t:any) => isBusinessTripParticipant(t, session.user.id))
     const sentMerged = [
       ...(sentAppr || []).map((a: any) => ({ ...a, kind: 'approval' })),
       ...(sentTrips || []).map(mapBizTrip),
@@ -235,14 +285,15 @@ export default function ApprovalPage() {
 
     // 출장 결재 처리
     if (kind === 'biztrip') {
-      // 승인/반려 시 - 작성자 + 내부 참석자 전원의 근태 출장 기록을 동기화
       const { data: trip } = await supabase.from('business_trips')
         .select('*').eq('id', id).single()
+
       if (trip) {
         if (status === 'approved') {
           await applyBusinessTripAttendance(supabase, trip)
-        } else if (status === 'rejected') {
-          await removeBusinessTripAttendance(supabase, trip)
+        }
+        if (status === 'rejected') {
+          await clearBusinessTripAttendance(supabase, trip)
         }
       }
 
@@ -254,7 +305,7 @@ export default function ApprovalPage() {
         return
       }
       setAlert(status === 'approved'
-        ? '✅ 출장 보고서 승인 완료 (참석자 전원의 근태기록에 출장 등록됨)'
+        ? '✅ 출장 보고서 승인 완료 (작성자와 내부 동행자의 근태기록에 출장 등록됨)'
         : '❌ 출장 보고서가 반려되었습니다.')
       setShowDetail(null)
       setTimeout(() => setAlert(''), 3000)
@@ -465,9 +516,9 @@ export default function ApprovalPage() {
         (trip.status === 'approved' ? '\n\n참석자들의 근태기록에서 출장 표시도 함께 삭제됩니다.' : '')
       if (!confirm(msg)) return
 
-      // 승인 상태였으면 작성자 + 내부 참석자 전원의 attendance 출장 표시 정리
+      // 승인 상태였으면 해당 출장 문서와 연결된 attendance 표시만 정리
       if (trip.status === 'approved') {
-        await removeBusinessTripAttendance(supabase, trip)
+        await clearBusinessTripAttendance(supabase, trip)
       }
 
       const { error } = await supabase.from('business_trips')
