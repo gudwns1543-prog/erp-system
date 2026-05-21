@@ -424,10 +424,17 @@ function BizTripModal({ trip, currentUser, approvers, staffList, tripPolicy, onC
     start_time: trip?.start_time?.slice(0, 5) || '09:00',
     end_time: trip?.end_time?.slice(0, 5) || '18:00',
     location: trip?.location || '',
+    project_code: trip?.project_code || '',
+    project_name: trip?.project_name || '',
+    customer_name: trip?.customer_name || '',
+    customer_position: trip?.customer_position || '',
+    customer_company: trip?.customer_company || '',
+    customer_contact: trip?.customer_contact || '',
     attendeeIds: trip ? initParsed.ids : (currentUser?.id ? [currentUser.id] : []),
     externalAttendees: initParsed.external,
     purpose: trip?.purpose || '',
     notes: trip?.notes || '',
+    trip_result: trip?.trip_result || '',
     approver_id: trip?.approver_id || approvers[0]?.id || '',
     status: trip?.status || 'draft',
   })
@@ -455,9 +462,16 @@ function BizTripModal({ trip, currentUser, approvers, staffList, tripPolicy, onC
       end_time: form.all_day ? null : form.end_time,
       duration_hours: duration,
       location: form.location,
+      project_code: form.project_code || null,
+      project_name: form.project_name || null,
+      customer_name: form.customer_name || null,
+      customer_position: form.customer_position || null,
+      customer_company: form.customer_company || null,
+      customer_contact: form.customer_contact || null,
       attendees: attendeesStr,
       purpose: form.purpose,
       notes: form.notes,
+      trip_result: form.trip_result || null,
       approver_id: form.approver_id || null,
       status,
       allowance,
@@ -549,6 +563,23 @@ function BizTripModal({ trip, currentUser, approvers, staffList, tripPolicy, onC
             </div>
           </div>
 
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">프로젝트 코드</label>
+              <input className="input" disabled={isReadOnly}
+                placeholder="예: 2026-SF-001"
+                value={form.project_code}
+                onChange={e => setForm(f => ({ ...f, project_code: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">프로젝트 명</label>
+              <input className="input" disabled={isReadOnly}
+                placeholder="예: 스마트생태공장"
+                value={form.project_name}
+                onChange={e => setForm(f => ({ ...f, project_name: e.target.value }))} />
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">장소 *</label>
             <input className="input" disabled={isReadOnly}
@@ -635,7 +666,25 @@ function BizTripModal({ trip, currentUser, approvers, staffList, tripPolicy, onC
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">출장 내용 *</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1">고객정보</label>
+            <div className="grid grid-cols-2 gap-2">
+              <input className="input" disabled={isReadOnly} placeholder="성명"
+                value={form.customer_name}
+                onChange={e => setForm(f => ({ ...f, customer_name: e.target.value }))} />
+              <input className="input" disabled={isReadOnly} placeholder="직위"
+                value={form.customer_position}
+                onChange={e => setForm(f => ({ ...f, customer_position: e.target.value }))} />
+              <input className="input" disabled={isReadOnly} placeholder="업체명"
+                value={form.customer_company}
+                onChange={e => setForm(f => ({ ...f, customer_company: e.target.value }))} />
+              <input className="input" disabled={isReadOnly} placeholder="연락처"
+                value={form.customer_contact}
+                onChange={e => setForm(f => ({ ...f, customer_contact: e.target.value }))} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">출장목적 *</label>
             <textarea className="input min-h-[80px]" disabled={isReadOnly}
               placeholder="회의 내용, 진행 사항 등 자세히 작성"
               value={form.purpose}
@@ -652,6 +701,14 @@ function BizTripModal({ trip, currentUser, approvers, staffList, tripPolicy, onC
                 <option key={a.id} value={a.id}>{a.name} ({a.grade})</option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">출장결과</label>
+            <textarea className="input min-h-[100px] resize-y" disabled={isReadOnly}
+              placeholder="출장 결과, 협의 내용, 후속 조치 등을 입력하세요."
+              value={form.trip_result}
+              onChange={e => setForm(f => ({ ...f, trip_result: e.target.value }))} />
           </div>
 
           <div>

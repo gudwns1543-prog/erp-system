@@ -16,11 +16,11 @@ const PAY_ITEMS: ItemDef[] = [
   { key: 'holiday',      label: '휴일근무수당',   auto: true, description: '시급 × 1.5 × 휴일근무' },
   { key: 'holiday_ext',  label: '휴일연장수당',   auto: true, description: '시급 × 2.0 × 휴일연장' },
   { key: 'holiday_night',label: '휴일야간수당',   auto: true, description: '시급 × 2.5 × 휴일야간' },
+  { key: 'trip',         label: '🚗 출장수당',    auto: true, description: '근태/출장보고 기반 자동 계산' },
   // 비과세 자동
   { key: 'meal',         label: '식대',           auto: true, description: '비과세 (월 계약값)' },
   { key: 'transport_fixed', label: '교통비',      auto: true, description: '비과세 (월 계약값)' },
   { key: 'comm_fixed',   label: '통신비',         auto: true, description: '비과세 (월 계약값)' },
-  { key: 'trip',         label: '🚗 출장수당',    auto: true, description: '승인된 출장 합계' },
   // 수기 입력 항목
   { key: 'bonus',        label: '상여금' },
   { key: 'performance',  label: '성과급' },
@@ -74,6 +74,22 @@ export default function PayrollPage() {
 
   const years = Array.from({length:5},(_,i)=>new Date().getFullYear()-i)
 
+  function parseMoneyInput(value: string): number | undefined {
+    const cleaned = value.replace(/[^0-9-]/g, '')
+    if (!cleaned || cleaned === '-') return undefined
+    const n = Number(cleaned)
+    return Number.isFinite(n) ? n : undefined
+  }
+
+  function formatMoneyInput(value: string): string {
+    const n = parseMoneyInput(value)
+    return n === undefined ? '' : n.toLocaleString('ko-KR')
+  }
+
+  function handleMoneyWheel(e: any) {
+    e.currentTarget.blur()
+  }
+
   const load = useCallback(async () => {
     const supabase = createClient()
     const { data: s } = await supabase.from('profiles').select('id,name,grade,dept').eq('status','active')
@@ -117,11 +133,25 @@ export default function PayrollPage() {
         setWorkData(null)
       }
       // 출장 (승인된 것만)
-      const { data: trips } = await supabase.from('business_trips')
+      // 작성자 출장 + 동행자로 승인 반영된 출장 링크를 모두 합산합니다.
+      const { data: ownTrips } = await supabase.from('business_trips')
         .select('id, allowance').eq('user_id', uid).eq('status', 'approved')
         .gte('trip_date', start).lte('trip_date', end)
-      const tripsCount = trips?.length || 0
-      const tripsTotal = (trips || []).reduce((sum: number, t: any) => sum + (t.allowance || 0), 0)
+
+      let linkedTrips: any[] = []
+      const { data: links } = await supabase.from('business_trip_attendance_links')
+        .select('business_trip_id, business_trip:business_trip_id(id, allowance, status, trip_date)')
+        .eq('user_id', uid)
+        .gte('trip_date', start).lte('trip_date', end)
+      linkedTrips = (links || [])
+        .map((l:any) => l.business_trip)
+        .filter((t:any) => t && t.status === 'approved')
+
+      const tripMap = new Map<string, any>()
+      ;[...(ownTrips || []), ...linkedTrips].forEach((t:any) => { if (t?.id) tripMap.set(t.id, t) })
+      const approvedTrips = Array.from(tripMap.values())
+      const tripsCount = approvedTrips.length
+      const tripsTotal = approvedTrips.reduce((sum: number, t: any) => sum + (Number(t.allowance) || 0), 0)
       setTripCount(tripsCount)
       setTripTotalFromTrips(tripsTotal)
 
@@ -196,7 +226,7 @@ export default function PayrollPage() {
   // 최종 값 = 수기 입력이 있으면 그 값, 없으면 자동값 (자동 항목만), 수기 항목은 입력값 그대로
   // 단, 근태 기반 자동 항목은 절대 override 불가 (시급×시간으로 엄격하게)
   function getPayValue(item: ItemDef): number {
-    const isFromAttendance = ['base','reg','overtime','night','holiday','holiday_ext','holiday_night'].includes(item.key)
+    const isFromAttendance = ['base','reg','overtime','night','holiday','holiday_ext','holiday_night','trip'].includes(item.key)
     if (isFromAttendance) return getAutoPayValue(item.key) // 강제로 자동값
     if (payOverrides[item.key] !== undefined) return payOverrides[item.key]
     if (item.auto) return getAutoPayValue(item.key)
@@ -271,10 +301,10 @@ export default function PayrollPage() {
   // 입력값 표시용 (DB 저장값과 자동값 둘 다 고려)
   function getInputDisplayValue(item: ItemDef, type: 'pay' | 'deduct'): string {
     const override = type === 'pay' ? payOverrides[item.key] : deductOverrides[item.key]
-    if (override !== undefined) return String(override)
+    if (override !== undefined) return override.toLocaleString('ko-KR')
     if (item.auto) {
       const autoVal = type === 'pay' ? getAutoPayValue(item.key) : getAutoDeductValue(item.key)
-      return autoVal > 0 ? String(autoVal) : ''
+      return autoVal > 0 ? autoVal.toLocaleString('ko-KR') : ''
     }
     return ''
   }
@@ -396,15 +426,17 @@ export default function PayrollPage() {
                     note: '시급 × 2.0' },
                   { label: '휴일 야간수당', hours: workData.holNightH, rate: Math.round(rate * 2.5), pay: autoCalc.payHolNight || 0,
                     note: '시급 × 2.5' },
+                  { label: '출장수당', hours: tripCount, rate: 0, pay: tripTotalFromTrips || 0,
+                    note: '승인된 출장보고 기준 자동 산출', unit: '건', noMultiply: true },
                 ].map((row, i) => (
                   <tr key={i} className={`border-b border-gray-50 ${row.hours > 0 ? '' : 'opacity-40'}`}>
                     <td className="px-2 py-1.5">
                       <div className="text-gray-700 font-medium">{row.label}</div>
                       <div className="text-[9px] text-gray-400">{row.note}</div>
                     </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-700">{row.hours.toFixed(1)}h</td>
-                    <td className="px-2 py-1.5 text-center text-gray-300">×</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-600">{formatWon(row.rate)}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-700">{row.unit === '건' ? `${row.hours}건` : `${row.hours.toFixed(1)}h`}</td>
+                    <td className="px-2 py-1.5 text-center text-gray-300">{row.noMultiply ? '' : '×'}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-600">{row.noMultiply ? '-' : formatWon(row.rate)}</td>
                     <td className="px-2 py-1.5 text-center text-gray-300">=</td>
                     <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-blue-700">
                       {row.pay > 0 ? formatWon(row.pay) : '-'}
@@ -415,14 +447,14 @@ export default function PayrollPage() {
                   <td colSpan={5} className="px-2 py-2 text-right text-blue-800">근태 기준 산출액 소계</td>
                   <td className="px-2 py-2 text-right tabular-nums text-blue-700">
                     {formatWon(regularWorkPay + (autoCalc.payExt||0) + (autoCalc.payNight||0) +
-                      (autoCalc.payHol||0) + (autoCalc.payHolExt||0) + (autoCalc.payHolNight||0))}
+                      (autoCalc.payHol||0) + (autoCalc.payHolExt||0) + (autoCalc.payHolNight||0) + (tripTotalFromTrips||0))}
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
           <div className="text-[10px] text-gray-400 mt-2">
-            ⚠️ 이 표는 근태시간 기준 산출액을 보여주는 참고표입니다. 실제 지급 항목의 기본급은 계약연봉 ÷ 12 기준이며, 정규근무수당과 중복 지급되지 않습니다.
+            ⚠️ 이 표는 근태·출장보고 기준 산출액을 보여주는 참고표입니다. 기본급은 근태시간과 무관하게 계약연봉 ÷ 12 기준으로 지급되며, 정규근무수당과 중복 지급되지 않습니다.
           </div>
         </div>
       )}
@@ -443,7 +475,7 @@ export default function PayrollPage() {
               const display = getInputDisplayValue(item, 'pay')
               const isOverridden = payOverrides[item.key] !== undefined
               // 근태 기반 자동 항목은 수정 불가 (시급 × 시간으로 정확히 산정)
-              const isFromAttendance = ['base','reg','overtime','night','holiday','holiday_ext','holiday_night'].includes(item.key)
+              const isFromAttendance = ['base','reg','overtime','night','holiday','holiday_ext','holiday_night','trip'].includes(item.key)
               return (
                 <div key={item.key}
                   className={`px-3 py-2 border-b border-gray-50 last:border-0 flex items-center gap-2
@@ -468,12 +500,13 @@ export default function PayrollPage() {
                     ) : (
                       // 수정 가능
                       <>
-                        <input type="number"
+                        <input type="text" inputMode="numeric" onWheel={handleMoneyWheel}
                           className={`input text-xs py-1 w-28 text-right tabular-nums
                             ${item.auto ? (isOverridden ? 'bg-amber-50' : 'bg-white') : ''}`}
-                          placeholder={item.auto ? String(getAutoPayValue(item.key)) : '0'}
+                          placeholder={item.auto ? getAutoPayValue(item.key).toLocaleString('ko-KR') : '0'}
                           value={display}
-                          onChange={e => setPayValue(item.key, e.target.value === '' ? undefined : +e.target.value)} />
+                          onChange={e => setPayValue(item.key, parseMoneyInput(e.target.value))}
+                          onBlur={e => { e.currentTarget.value = formatMoneyInput(e.currentTarget.value) }} />
                         {item.auto && isOverridden && (
                           <button onClick={() => setPayValue(item.key, undefined)}
                             title="자동값으로 복원"
@@ -520,12 +553,13 @@ export default function PayrollPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-1">
-                    <input type="number"
+                    <input type="text" inputMode="numeric" onWheel={handleMoneyWheel}
                       className={`input text-xs py-1 w-28 text-right tabular-nums
                         ${item.auto ? (isOverridden ? 'bg-amber-50' : 'bg-white') : ''}`}
-                      placeholder={item.auto ? String(getAutoDeductValue(item.key)) : '0'}
+                      placeholder={item.auto ? getAutoDeductValue(item.key).toLocaleString('ko-KR') : '0'}
                       value={display}
-                      onChange={e => setDeductValue(item.key, e.target.value === '' ? undefined : +e.target.value)} />
+                      onChange={e => setDeductValue(item.key, parseMoneyInput(e.target.value))}
+                      onBlur={e => { e.currentTarget.value = formatMoneyInput(e.currentTarget.value) }} />
                     {item.auto && isOverridden && (
                       <button onClick={() => setDeductValue(item.key, undefined)}
                         title="자동값으로 복원"
@@ -552,7 +586,7 @@ export default function PayrollPage() {
               <div className="text-xs text-amber-700">승인된 출장 <strong>{tripCount}건</strong></div>
               <div className="text-base font-bold text-amber-700 mt-1 tabular-nums">{formatWon(tripTotalFromTrips)}</div>
               <div className="text-[10px] text-amber-600 mt-1">
-                정책: 4시간 이상 {tripPolicy.long.toLocaleString()}원 / 4시간 미만 {tripPolicy.short.toLocaleString()}원
+                정책: 4시간 이상 {tripPolicy.long.toLocaleString('ko-KR')}원 / 4시간 미만 {tripPolicy.short.toLocaleString('ko-KR')}원
               </div>
             </>
           ) : (
