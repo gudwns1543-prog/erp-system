@@ -601,7 +601,7 @@ export default function ApprovalPage() {
       window.location.href = '/dashboard/biztrip'
       return
     }
-    alert('이 문서는 별도 수정 화면이 없어 삭제 후 다시 작성하는 방식으로 처리해 주세요.')
+    window.alert('이 문서는 별도 수정 화면이 없어 삭제 후 다시 작성하는 방식으로 처리해 주세요.')
   }
 
   async function handleDelete(r: any) {
