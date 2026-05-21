@@ -82,7 +82,7 @@ export default function PayrollPage() {
     setSalaryList(salaries||[])
     // 회사 출장 정책 가져오기
     const { data: cs } = await supabase.from('company_settings')
-      .select('trip_short_amount, trip_long_amount').eq('id', 1).maybeSingle()
+      .select('trip_short_amount, trip_long_amount').limit(1).maybeSingle()
     if (cs) {
       setTripPolicy({
         short: cs.trip_short_amount ?? 13000,
@@ -116,12 +116,44 @@ export default function PayrollPage() {
       } else {
         setWorkData(null)
       }
-      // 출장 (승인된 것만)
-      const { data: trips } = await supabase.from('business_trips')
-        .select('id, allowance').eq('user_id', uid).eq('status', 'approved')
-        .gte('trip_date', start).lte('trip_date', end)
-      const tripsCount = trips?.length || 0
-      const tripsTotal = (trips || []).reduce((sum: number, t: any) => sum + (t.allowance || 0), 0)
+      // 출장수당: 작성자뿐 아니라 내부 참석자/동행자도 반영
+      const calcTripAllowance = (t: any) => {
+        const hours = t?.all_day ? 8 : Number(t?.duration_hours || 0)
+        return hours >= 4 ? tripPolicy.long : tripPolicy.short
+      }
+
+      const tripMap = new Map<string, any>()
+
+      const { data: linkedTrips } = await supabase.from('business_trip_attendance_links')
+        .select('business_trip_id, trip_date, business_trip:business_trip_id(id, status, allowance, duration_hours, all_day, trip_date)')
+        .eq('user_id', uid)
+        .gte('trip_date', start)
+        .lte('trip_date', end)
+
+      for (const row of (linkedTrips || [])) {
+        const trip: any = (row as any).business_trip
+        if (trip && trip.status === 'approved') {
+          tripMap.set(trip.id, trip)
+        }
+      }
+
+      const { data: fallbackTrips } = await supabase.from('business_trips')
+        .select('id, user_id, attendees, status, allowance, duration_hours, all_day, trip_date')
+        .eq('status', 'approved')
+        .gte('trip_date', start)
+        .lte('trip_date', end)
+
+      for (const trip of (fallbackTrips || [])) {
+        const raw = String((trip as any).attendees || '')
+        const isParticipant = (trip as any).user_id === uid || raw.includes(uid)
+        if (isParticipant) {
+          tripMap.set((trip as any).id, trip)
+        }
+      }
+
+      const trips = Array.from(tripMap.values())
+      const tripsCount = trips.length
+      const tripsTotal = trips.reduce((sum: number, t: any) => sum + calcTripAllowance(t), 0)
       setTripCount(tripsCount)
       setTripTotalFromTrips(tripsTotal)
 
@@ -143,7 +175,7 @@ export default function PayrollPage() {
       setEditingAnnual(false)
     }
     loadWork()
-  }, [selIdx, selYear, month, staffList])
+  }, [selIdx, selYear, month, staffList, tripPolicy.short, tripPolicy.long])
 
   // 자동 계산
   useEffect(() => {
@@ -558,17 +590,21 @@ export default function PayrollPage() {
               <div className="text-xs font-semibold text-red-800">공제 합계</div>
               <div className="text-sm font-bold text-red-700 tabular-nums">-{formatWon(totalDeduct)}</div>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 출장 수당 + 실수령액 */}
-      <div className="mt-4 grid md:grid-cols-2 gap-4">
-        <div className="card bg-gradient-to-r from-purple-600 to-purple-700 border-0">
-          <div className="text-xs font-semibold text-purple-100 mb-1">실수령액</div>
-          <div className="text-2xl font-bold text-white tabular-nums">{formatWon(netPay)}</div>
-          <div className="text-[10px] text-purple-100 mt-1">
-            지급 {formatWon(totalPay)} − 공제 {formatWon(totalDeduct)}
+            <div className="p-4 bg-white border-t border-gray-100">
+              <div className="rounded-2xl bg-gradient-to-r from-purple-600 to-purple-700 px-4 py-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold text-purple-100 mb-1">실수령액</div>
+                    <div className="text-2xl font-bold text-white tabular-nums">{formatWon(netPay)}</div>
+                    <div className="text-[10px] text-purple-100 mt-1">지급 {formatWon(totalPay)} − 공제 {formatWon(totalDeduct)}</div>
+                  </div>
+                  <div className="text-right text-[10px] text-purple-100 shrink-0">
+                    <div>출장 {tripCount}건</div>
+                    <div className="mt-1">출장수당 {formatWon(tripTotalFromTrips)}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

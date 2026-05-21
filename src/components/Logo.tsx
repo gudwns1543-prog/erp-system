@@ -1,12 +1,17 @@
+import Image from 'next/image'
+
 export function Logo({ size = 40 }: { size?: number }) {
-  const width = size * 2
+  const height = size
+  const width = Math.round((106 / 91) * size)
+
   return (
-    <img
+    <Image
       src="/logo-solution.jpg"
       alt="(주)솔루션 로고"
       width={width}
-      height={size}
-      style={{ width, height: size, objectFit: 'contain' }}
+      height={height}
+      className="object-contain"
+      priority
     />
   )
 }
