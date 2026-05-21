@@ -1,8 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
-import { sortByGrade } from '@/lib/attendance'
-import { canApprove, sortByOrgAuthority } from '@/lib/org'
+import { sortByGrade, classifyWork, minutesToHours, isHoliday } from '@/lib/attendance'
 
 function hoursBetween(startTime: string, endTime: string): number {
   if (!startTime || !endTime) return 0
@@ -23,6 +22,89 @@ const STATUS_COLOR: Record<string, string> = {
   pending: 'bg-amber-100 text-amber-700',
   approved: 'bg-green-100 text-green-700',
   rejected: 'bg-red-100 text-red-700',
+}
+
+
+function parseInternalAttendeeIds(raw: string | null | undefined): string[] {
+  if (!raw) return []
+  const idsPart = String(raw).split('|')[0] || ''
+  return idsPart.startsWith('staff:')
+    ? idsPart.replace('staff:', '').split(';').map(v => v.trim()).filter(Boolean)
+    : []
+}
+
+function getBusinessTripUserIds(trip: any): string[] {
+  return Array.from(new Set([trip?.user_id, ...parseInternalAttendeeIds(trip?.attendees)].filter(Boolean)))
+}
+
+function isBusinessTripParticipant(trip: any, userId?: string): boolean {
+  if (!userId || !trip) return false
+  return getBusinessTripUserIds(trip).includes(userId)
+}
+
+async function applyBusinessTripAttendance(supabase: any, trip: any) {
+  const userIds = getBusinessTripUserIds(trip)
+  const tripDuration = trip.all_day ? 8 : Number(trip.duration_hours || 0)
+  const tripNote = tripDuration >= 4 ? '출장(장)' : '출장(단)'
+  const checkIn = trip.all_day ? '09:00:00' : (trip.start_time || '09:00:00')
+  const checkOut = trip.all_day ? '18:00:00' : (trip.end_time || '18:00:00')
+  const r = classifyWork(trip.trip_date, checkIn, checkOut)
+
+  for (const userId of userIds) {
+    const { data: existingList } = await supabase.from('attendance')
+      .select('id, note')
+      .eq('user_id', userId)
+      .eq('work_date', trip.trip_date)
+      .order('created_at', { ascending: false })
+
+    const existing = existingList?.[0]
+    if (existing) {
+      const note = String(existing.note || '')
+      if (!note.includes('출장')) {
+        await supabase.from('attendance').update({
+          note: note ? `${note} · ${tripNote}` : tripNote,
+        }).eq('id', existing.id)
+      }
+    } else {
+      await supabase.from('attendance').insert({
+        user_id: userId,
+        work_date: trip.trip_date,
+        check_in: checkIn,
+        check_out: checkOut,
+        reg_hours: minutesToHours(r.reg),
+        ext_hours: minutesToHours(r.ext),
+        night_hours: minutesToHours(r.night),
+        hol_hours: minutesToHours(r.hReg),
+        hol_eve_hours: minutesToHours(r.hEve),
+        hol_night_hours: minutesToHours(r.hNight),
+        ignored_hours: minutesToHours(r.ignored),
+        note: tripNote,
+        is_holiday: isHoliday(trip.trip_date),
+      })
+    }
+  }
+}
+
+async function removeBusinessTripAttendance(supabase: any, trip: any) {
+  const userIds = getBusinessTripUserIds(trip)
+  for (const userId of userIds) {
+    const { data: existingList } = await supabase.from('attendance')
+      .select('id, note')
+      .eq('user_id', userId)
+      .eq('work_date', trip.trip_date)
+    for (const existing of (existingList || [])) {
+      const note = String(existing.note || '')
+      if (['출장(장)', '출장(단)', '출장'].includes(note)) {
+        await supabase.from('attendance').delete().eq('id', existing.id)
+      } else if (note.includes('출장')) {
+        const cleaned = note
+          .replace(/\s*·?\s*출장(?:\([장단]\))?/g, '')
+          .replace(/^\s*·\s*/, '')
+          .trim()
+        await supabase.from('attendance').update({ note: cleaned || null }).eq('id', existing.id)
+      }
+    }
+  }
 }
 
 export default function BizTripPage() {
@@ -49,13 +131,11 @@ export default function BizTripPage() {
     const { data: emps } = await supabase.from('profiles')
       .select('id,name,grade,dept,color,tc,role').eq('status', 'active').order('name')
     setStaffList(sortByGrade(emps || []))
-    // 결재자 후보: 조직 정책상 결재 가능자
-    const apprs = sortByOrgAuthority((emps || []).filter((e: any) => canApprove(e))).sort((a:any, b:any) => {
-      if (a.name === '박팔주') return -1
-      if (b.name === '박팔주') return 1
-      return 0
-    })
-    setApprovers(apprs)
+    // 결재자 후보 (이사급 이상)
+    const apprs = (emps || []).filter((e: any) =>
+      ['대표이사', '대표', '이사', '부사장', '전무이사', '전무', '상무이사', '상무'].includes(e.grade)
+    )
+    setApprovers(sortByGrade(apprs))
 
     // 회사 출장 정책 로딩
     const { data: cs } = await supabase.from('company_settings')
@@ -88,7 +168,8 @@ export default function BizTripPage() {
   function getFilteredTrips() {
     if (!profile) return []
     if (tab === 'mine') {
-      return trips.filter(t => t.user_id === profile.id)
+      // 작성자뿐 아니라 내부 참석자로 포함된 출장도 본인 출장으로 표시
+      return trips.filter(t => isBusinessTripParticipant(t, profile.id) && t.status !== 'draft')
     } else if (tab === 'pending') {
       // 본인이 결재자로 지정된 pending
       return trips.filter(t => t.approver_id === profile.id && t.status === 'pending')
@@ -109,11 +190,22 @@ export default function BizTripPage() {
 
   async function handleApprove(id: string, status: 'approved' | 'rejected') {
     const supabase = createClient()
+    const { data: trip } = await supabase.from('business_trips').select('*').eq('id', id).single()
+    if (!trip) { window.alert('출장 보고서를 찾을 수 없습니다.'); return }
+
+    if (status === 'approved') {
+      await applyBusinessTripAttendance(supabase, trip)
+    } else if (status === 'rejected' && trip.status === 'approved') {
+      await removeBusinessTripAttendance(supabase, trip)
+    }
+
     const { error } = await supabase.from('business_trips')
       .update({ status, updated_at: new Date().toISOString() }).eq('id', id)
     if (error) { window.alert('처리 실패: ' + error.message); return }
-    setAlert(status === 'approved' ? '승인되었습니다.' : '반려되었습니다.')
-    setTimeout(() => setAlert(''), 2000)
+    setAlert(status === 'approved'
+      ? '승인되었습니다. 작성자와 내부 참석자 전원의 근태에 출장 기록이 반영되었습니다.'
+      : '반려되었습니다.')
+    setTimeout(() => setAlert(''), 2500)
     load()
   }
 
@@ -136,7 +228,7 @@ export default function BizTripPage() {
         <button onClick={() => setTab('mine')}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
             tab === 'mine' ? 'border-purple-600 text-purple-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}>📋 내 출장 ({trips.filter(t => t.user_id === profile?.id).length})</button>
+          }`}>📋 내 출장 ({trips.filter(t => isBusinessTripParticipant(t, profile?.id) && t.status !== 'draft').length})</button>
         {profile?.role === 'director' && (
           <>
             <button onClick={() => setTab('pending')}
@@ -224,6 +316,10 @@ export default function BizTripPage() {
                         </>
                       )}
                       {t.status === 'approved' && (
+                        <button onClick={() => setEditing(t)}
+                          className="text-gray-400 hover:text-purple-600 text-xs px-1" title="보기">👁</button>
+                      )}
+                      {t.user_id !== profile?.id && t.status !== 'approved' && isBusinessTripParticipant(t, profile?.id) && (
                         <button onClick={() => setEditing(t)}
                           className="text-gray-400 hover:text-purple-600 text-xs px-1" title="보기">👁</button>
                       )}
