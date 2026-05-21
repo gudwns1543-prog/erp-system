@@ -194,14 +194,7 @@ export default function ApprovalPage() {
       start_time: t.start_time,
       end_time: t.end_time,
       // 보고 내용을 reason 필드에 매핑 (UI 호환)
-      reason: [
-        t.project_code || t.project_name ? `[프로젝트] ${t.project_code || '-'} / ${t.project_name || '-'}` : '',
-        `[장소] ${t.location || '-'}`,
-        `[출장목적] ${t.purpose || '-'}`,
-        t.customer_company || t.customer_name ? `[고객정보] ${t.customer_company || ''} ${t.customer_name || ''} ${t.customer_position || ''} ${t.customer_contact || ''}`.trim() : '',
-        t.trip_result ? `[출장결과] ${t.trip_result}` : '',
-        t.notes ? `[비고] ${t.notes}` : '',
-      ].filter(Boolean).join('\n'),
+      reason: `[장소] ${t.location}\n[내용] ${t.purpose}${t.notes ? '\n[비고] ' + t.notes : ''}`,
       // 본인 작성 보고서가 draft 상태로 남아있어도 'sent'에는 포함
     })
 
@@ -578,34 +571,97 @@ export default function ApprovalPage() {
     setTimeout(()=>setAlert(''),3000)
   }
 
-  function canDelete(r: any): boolean {
-    if (!profile || !r) return false
-    if (r.status === 'approved' && r.kind !== 'biztrip') return false
-    if (profile.role === 'director') return true
-    const ownerId = r.kind === 'biztrip' ? r.user_id : r.requester_id
-    return ownerId === profile.id && r.status !== 'approved'
+  function canDelete(r: any) {
+    if (!r || !profile) return false
+    // 대기/반려 문서는 신청자·결재자·관리자 삭제 가능
+    if (r.status === 'pending' || r.status === 'rejected') {
+      return r.requester_id === profile.id || r.approver_id === profile.id || profile.role === 'director'
+    }
+    // 승인 문서는 관리자/결재자만 삭제 가능. 삭제 시 관련 근태/캘린더도 정리합니다.
+    return r.status === 'approved' && (r.approver_id === profile.id || profile.role === 'director')
+  }
+
+  function canEdit(r: any) {
+    if (!r || !profile) return false
+    // 우선 대기 상태의 본인 작성 문서만 수정 진입 허용
+    return r.status === 'pending' && r.requester_id === profile.id
+  }
+
+  function handleEdit(r: any) {
+    if (!r) return
+    if (r.kind === 'biztrip') {
+      window.location.href = '/dashboard/biztrip'
+      return
+    }
+    if (['연차','반차(오전)','반차(오후)','반반차','병가','공가','특별휴가'].includes(r.type)) {
+      window.location.href = '/dashboard/leave'
+      return
+    }
+    if (r.type === '외근') {
+      window.location.href = '/dashboard/biztrip'
+      return
+    }
+    alert('이 문서는 별도 수정 화면이 없어 삭제 후 다시 작성하는 방식으로 처리해 주세요.')
   }
 
   async function handleDelete(r: any) {
-    if (!canDelete(r)) return
-    const msg = r.status === 'approved' && r.kind === 'biztrip'
-      ? '승인된 출장보고서를 삭제하면 해당 출장 근태 반영도 함께 정리됩니다. 삭제하시겠습니까?'
-      : '이 결재 문서를 삭제하시겠습니까? 삭제 후에는 복구할 수 없습니다.'
-    if (!confirm(msg)) return
+    if (!r || !canDelete(r)) return
+    const statusKr = r.status === 'approved' ? '승인' : r.status === 'rejected' ? '반려' : '대기'
+    const cleanupMsg = r.status === 'approved'
+      ? '\n\n승인 문서이므로 관련 근태기록/캘린더/출장 연결 기록도 함께 정리됩니다.'
+      : ''
+    if (!confirm(`이 ${statusKr} 결재 문서를 삭제하시겠습니까?${cleanupMsg}`)) return
+
     const supabase = createClient()
+
     if (r.kind === 'biztrip') {
       const { data: trip } = await supabase.from('business_trips').select('*').eq('id', r.id).single()
-      if (trip?.status === 'approved') await clearBusinessTripAttendance(supabase, trip)
+      if (trip?.status === 'approved') {
+        await clearBusinessTripAttendance(supabase, trip)
+      }
+      await supabase.from('business_trip_attendance_links').delete().eq('business_trip_id', r.id)
       const { error } = await supabase.from('business_trips').delete().eq('id', r.id)
-      if (error) { setAlert('삭제 실패: ' + error.message); setTimeout(()=>setAlert(''),3000); return }
-    } else {
-      const { error } = await supabase.from('approvals').delete().eq('id', r.id)
-      if (error) { setAlert('삭제 실패: ' + error.message); setTimeout(()=>setAlert(''),3000); return }
+      if (error) {
+        setAlert('삭제 실패: ' + error.message)
+        setTimeout(() => setAlert(''), 3000)
+        return
+      }
+      setAlert('출장 결재 문서가 삭제되었습니다.')
+      setShowDetail(null)
+      load()
+      setTimeout(() => setAlert(''), 3000)
+      return
     }
-    setAlert('삭제되었습니다.')
+
+    // 승인된 일반 결재 삭제 시 근태/캘린더 정리
+    if (r.status === 'approved') {
+      const dates = getDateRange(r.start_date, r.end_date || r.start_date)
+      for (const dateStr of dates) {
+        await supabase.from('attendance')
+          .delete()
+          .eq('user_id', r.requester_id)
+          .eq('work_date', dateStr)
+          .eq('note', r.type)
+      }
+      await supabase.from('events')
+        .delete()
+        .eq('creator_id', r.requester_id)
+        .eq('is_locked', true)
+        .like('title', `[${r.type}]%`)
+        .gte('start_at', `${r.start_date}T00:00:00`)
+        .lte('start_at', `${(r.end_date || r.start_date)}T23:59:59`)
+    }
+
+    const { error } = await supabase.from('approvals').delete().eq('id', r.id)
+    if (error) {
+      setAlert('삭제 실패: ' + error.message)
+      setTimeout(() => setAlert(''), 3000)
+      return
+    }
+    setAlert('결재 문서가 삭제되었습니다.')
     setShowDetail(null)
     load()
-    setTimeout(()=>setAlert(''),2500)
+    setTimeout(() => setAlert(''), 3000)
   }
 
   const Badge = ({s}:{s:string}) => (
@@ -697,16 +753,26 @@ export default function ApprovalPage() {
 
       {/* 결재 문서 상세 모달 */}
       {showDetail && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-md shadow-xl">
-            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3">
+          <div className="bg-white rounded-xl w-full max-w-2xl shadow-xl max-h-[88vh] flex flex-col overflow-hidden">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between gap-4 flex-shrink-0">
               <div>
                 <div className="text-base font-semibold text-gray-800">결재 문서</div>
                 <div className="text-xs text-gray-400 mt-0.5">{showDetail.created_at?.slice(0,16).replace('T',' ')} 신청</div>
               </div>
-              <Badge s={showDetail.status} />
+              <div className="flex items-center gap-3">
+                <Badge s={showDetail.status} />
+                <button
+                  onClick={()=>setShowDetail(null)}
+                  className="w-8 h-8 rounded-full border border-gray-200 text-gray-400 hover:text-gray-700 hover:bg-gray-50 flex items-center justify-center text-lg"
+                  aria-label="닫기"
+                  title="닫기"
+                >
+                  ×
+                </button>
+              </div>
             </div>
-            <div className="p-5 space-y-3">
+            <div className="p-5 space-y-3 overflow-y-auto flex-1">
               {[
                 {label:'신청자', val:(showDetail.requester as any)?.name || profile?.name},
                 {label:'부서', val:(showDetail.requester as any)?.dept || profile?.dept},
@@ -720,8 +786,6 @@ export default function ApprovalPage() {
                       : '-'
                   },
                   {label:'출장수당', val: showDetail.allowance ? `${showDetail.allowance.toLocaleString('ko-KR')}원` : '0원'},
-                  ...(showDetail.project_code || showDetail.project_name ? [{label:'프로젝트', val:`${showDetail.project_code || '-'} / ${showDetail.project_name || '-'}`}] : []),
-                  ...(showDetail.customer_company || showDetail.customer_name ? [{label:'고객정보', val:`${showDetail.customer_company || ''} ${showDetail.customer_name || ''} ${showDetail.customer_position || ''} ${showDetail.customer_contact || ''}`.trim()}] : []),
                 ] : []),
                 {label:'결재자', val:(showDetail.approver as any)?.name},
               ].map(item=>(
@@ -771,11 +835,16 @@ export default function ApprovalPage() {
                 </div>
               </div>
             </div>
-            <div className="p-4 border-t border-gray-100 flex gap-2 justify-end">
-              {canDelete(showDetail) && (
-                <button onClick={()=>handleDelete(showDetail)} className="btn-danger text-sm mr-auto">삭제</button>
-              )}
+            <div className="p-4 border-t border-gray-100 flex gap-2 justify-end flex-wrap flex-shrink-0 bg-white">
               <button onClick={()=>setShowDetail(null)} className="btn-secondary text-sm">닫기</button>
+
+              {canEdit(showDetail) && (
+                <button onClick={()=>handleEdit(showDetail)}
+                  className="btn-secondary text-sm text-blue-700 border-blue-200 hover:bg-blue-50">
+                  수정
+                </button>
+              )}
+
               {canApprove(showDetail) && (
                 <>
                   <button onClick={()=>handle(showDetail.id,'rejected', showDetail.kind)} className="btn-danger text-sm">반려</button>
@@ -783,10 +852,17 @@ export default function ApprovalPage() {
                     className="btn-secondary text-sm text-green-700 border-green-200 hover:bg-green-50">승인</button>
                 </>
               )}
+
               {canRevoke(showDetail) && (
                 <button onClick={()=>handleRevoke(showDetail.id, showDetail.kind)}
                   className="btn-secondary text-sm text-orange-600 border-orange-200 hover:bg-orange-50">
                   {showDetail.status==='approved' ? '승인 철회' : '반려 철회'}
+                </button>
+              )}
+
+              {canDelete(showDetail) && (
+                <button onClick={()=>handleDelete(showDetail)} className="btn-danger text-sm">
+                  삭제
                 </button>
               )}
             </div>
