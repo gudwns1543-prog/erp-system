@@ -23,7 +23,7 @@ function josa(word: string, eunNun: '은/는' | '이/가' | '을/를' = '은/는
   return hasFinal ? '을' : '를'
 }
 
-const leaveNotes = ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가']
+const leaveNotes = ['연차','반차(오전)','반차(오후)','반반차','병가','공가','특별휴가']
 
 // UTC timestamp → KST 날짜 문자열 (YYYY-MM-DD)
 function toKSTDate(utcStr: string): string {
@@ -113,7 +113,7 @@ export default function HomePage() {
     const minute = now.getMinutes()
     const totalMin = hour * 60 + minute
     if (totalMin >= 18 * 60 && totalMin < 19 * 60) {
-      alert('🍱 지금은 저녁식사 시간입니다.\n19:00 이후에 다시 출근해 주세요.')
+      window.alert('🍱 지금은 저녁식사 시간입니다.\n19:00 이후에 다시 출근해 주세요.')
       return
     }
 
@@ -121,32 +121,75 @@ export default function HomePage() {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
     const ds = todayStr()
-    await supabase.from('attendance').insert({
-      user_id: session.user.id, work_date: ds,
-      check_in: nowStr(), is_holiday: isHoliday(ds),
+    const inTime = nowStr()
+
+    // 복귀출근은 같은 날짜에 새 seq로 추가해야 unique 제약에 걸리지 않습니다.
+    const { data: latestSessions, error: loadErr } = await supabase.from('attendance')
+      .select('id, seq, check_in, check_out')
+      .eq('user_id', session.user.id)
+      .eq('work_date', ds)
+      .order('seq', { ascending: false })
+      .order('created_at', { ascending: false })
+
+    if (loadErr) {
+      window.alert('출근 전 세션 확인 실패: ' + loadErr.message)
+      return
+    }
+
+    const latest = latestSessions || []
+    const stillOpen = latest.find((s:any) => s.check_in && !s.check_out)
+    if (stillOpen) {
+      window.alert('이미 근무 중인 출근 세션이 있습니다. 먼저 퇴근 처리해 주세요.')
+      return
+    }
+
+    const maxSeq = latest.reduce((max:number, s:any) => Math.max(max, Number(s.seq || 1)), 0)
+    const seqNum = maxSeq + 1
+
+    const { error } = await supabase.from('attendance').insert({
+      user_id: session.user.id,
+      work_date: ds,
+      seq: seqNum,
+      check_in: inTime,
+      is_holiday: isHoliday(ds),
     })
+
+    if (error) {
+      window.alert('출근 처리 실패: ' + error.message)
+      return
+    }
+
     load()
   }
 
   async function handleCheckOut() {
-    if (!today?.check_in) return
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
     const outTime = nowStr(); const ds = todayStr()
-    const r = classifyWork(ds, today.check_in, outTime)
-    // check_out이 없는 가장 최근 세션 업데이트 (created_at 기준)
-    const { data: openSessions } = await supabase.from('attendance')
-      .select('id').eq('user_id', session.user.id).eq('work_date', ds).is('check_out', null)
+    // check_out이 없는 가장 최근 세션을 기준으로 퇴근 처리합니다.
+    const { data: openSessions, error: findErr } = await supabase.from('attendance')
+      .select('id, check_in').eq('user_id', session.user.id).eq('work_date', ds).is('check_out', null)
       .order('created_at', {ascending: false}).limit(1)
-    if (openSessions?.[0]) {
-      await supabase.from('attendance').update({
-        check_out: outTime,
-        reg_hours: minutesToHours(r.reg), ext_hours: minutesToHours(r.ext),
-        night_hours: minutesToHours(r.night), hol_hours: minutesToHours(r.hReg),
-        hol_eve_hours: minutesToHours(r.hEve), hol_night_hours: minutesToHours(r.hNight),
-        ignored_hours: minutesToHours(r.ignored),
-      }).eq('id', openSessions[0].id)
+    if (findErr) {
+      window.alert('퇴근 세션 확인 실패: ' + findErr.message)
+      return
+    }
+    if (!openSessions?.[0]?.check_in) {
+      window.alert('현재 퇴근 처리할 근무 중 세션이 없습니다.')
+      return
+    }
+    const r = classifyWork(ds, openSessions[0].check_in, outTime)
+    const { error } = await supabase.from('attendance').update({
+      check_out: outTime,
+      reg_hours: minutesToHours(r.reg), ext_hours: minutesToHours(r.ext),
+      night_hours: minutesToHours(r.night), hol_hours: minutesToHours(r.hReg),
+      hol_eve_hours: minutesToHours(r.hEve), hol_night_hours: minutesToHours(r.hNight),
+      ignored_hours: minutesToHours(r.ignored),
+    }).eq('id', openSessions[0].id)
+    if (error) {
+      window.alert('퇴근 처리 실패: ' + error.message)
+      return
     }
     load()
   }
@@ -224,13 +267,11 @@ export default function HomePage() {
       .select('*').eq('user_id', session.user.id).eq('work_date', todayStr())
       .order('created_at', {ascending: true})
     // 활성 세션(미퇴근) 또는 가장 최근 세션
-    // 기존에는 check_out이 끝난 세션도 check_in이 있다는 이유로 출근 버튼이 막히는 경우가 있었습니다.
-    // _isActive/_isLeave 플래그를 별도로 붙여 복귀출근 가능 여부를 명확히 판단합니다.
-    const BLOCK_NOTES = ['연차','반차(오전)','반차(오후)','반반차','병가','공가','특별휴가']
-    const leaveS = (todaySess||[]).find((s:any) => BLOCK_NOTES.includes(s.note))
-    const activeOpen = [...(todaySess||[])].reverse().find((s:any) => s.check_in && !s.check_out && !BLOCK_NOTES.includes(s.note))
-    const lastS = (todaySess||[]).slice(-1)[0]
-    setToday(leaveS ? {...leaveS, _isLeave:true, _isActive:false} : activeOpen ? {...activeOpen, _isActive:true} : lastS ? {...lastS, _isActive:false} : null)
+    const orderedToday = todaySess || []
+    const leaveS = orderedToday.find((s:any) => leaveNotes.includes(s.note))
+    const activeS = leaveS || [...orderedToday].reverse().find((s:any) => s.check_in && !s.check_out)
+    const lastS = orderedToday.slice(-1)[0]
+    setToday(activeS || lastS || null)
 
     // 어제 미퇴근 세션 체크 (퇴근 시간 사후 입력 팝업)
     // 야간자동컷오프된 건도 본인이 수정/승인 요청을 안 했다면 보여줌
@@ -355,7 +396,7 @@ export default function HomePage() {
     if (typeof window !== 'undefined' && notices && notices.length > 0) {
       const lastRead = localStorage.getItem('notice_read_' + session.user.id) || '2000-01-01'
       const newest = notices[0].created_at
-      setHasNewNotice(new Date(newest).getTime() > new Date(lastRead).getTime())
+      setHasNewNotice(newest > lastRead)
     }
 
     // 업무 카운트 (내가 담당자거나 등록자)
@@ -559,16 +600,6 @@ export default function HomePage() {
   }, [])
 
   useEffect(() => { load() }, [load])
-
-  // 홈 캘린더가 화면에 보이면 현재까지의 일정은 확인한 것으로 처리합니다.
-  // 기존에는 '전체 →' 또는 날짜 클릭 시에만 cal_checked가 갱신되어 NEW 표시가 계속 남았습니다.
-  useEffect(() => {
-    if (!profile?.id || typeof window === 'undefined') return
-    const t = setTimeout(() => {
-      localStorage.setItem(`cal_checked_${profile.id}`, new Date().toISOString())
-    }, 1500)
-    return () => clearTimeout(t)
-  }, [profile?.id, calYear, calMonth])
 
   // 알림 개별 닫기 (X 버튼)
   function dismissNotification(notifId: string) {
@@ -891,9 +922,7 @@ export default function HomePage() {
               <div className="flex-1 min-w-0 cursor-pointer hover:opacity-80 transition-opacity"
                 onClick={()=>{
                   if (typeof window !== 'undefined' && profile?.id) {
-                    const newest = recentNotices[0]?.created_at || new Date().toISOString()
-                    localStorage.setItem('notice_read_' + profile.id, newest)
-                    setHasNewNotice(false)
+                    localStorage.setItem('notice_read_' + profile.id, new Date().toISOString())
                   }
                   router.push('/dashboard/notice')
                 }}>
@@ -931,11 +960,11 @@ export default function HomePage() {
                 <div className="flex flex-col items-end gap-1">
                   <div className="text-lg font-bold text-gray-700 tabular-nums leading-tight">{time}</div>
                   <div className="flex gap-2">
-                    <button onClick={handleCheckIn} disabled={today?._isActive || today?._isLeave}
+                    <button onClick={handleCheckIn} disabled={!!today?.check_in || leaveNotes.includes(today?.note)}
                       className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <span style={{fontSize:13}}>🔴</span> {today?.check_out && !today?._isActive ? '복귀출근' : '출근'}
+                      <span style={{fontSize:13}}>🔴</span> 출근
                     </button>
-                    <button onClick={handleCheckOut} disabled={!today?._isActive}
+                    <button onClick={handleCheckOut} disabled={!today?.check_in||!!today?.check_out}
                       className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-600 text-white hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">
                       <span style={{fontSize:13}}>🔴</span> 퇴근
                     </button>
@@ -943,7 +972,7 @@ export default function HomePage() {
                 </div>
               </div>
             </div>
-            {today?.check_out && !today?._isActive && !today?._isLeave && (
+            {today?.check_out && (
               <div className="mt-3 p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-center justify-between">
                 <span className="text-xs text-amber-700">퇴근 처리됨 · 업무에 복귀하시겠습니까?</span>
                 <button onClick={handleResumeWork} className="text-xs bg-amber-600 text-white px-3 py-1.5 rounded-lg hover:bg-amber-700">🔄 근무 복귀</button>
