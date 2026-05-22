@@ -71,47 +71,69 @@ export default function DashboardPage() {
   }, [])
 
   // 현재 활성 세션 (가장 최근 미완료 세션)
-  const LEAVE_NOTES = ['연차','반차(오전)','반차(오후)','반반차','병가','출장','외근','특별휴가']
-  const leaveSession = sessions.find((s:any) => LEAVE_NOTES.includes(s.note))
-  const activeSession = !leaveSession ? sessions.find((s:any) => s.check_in && !s.check_out) : null
+  // 출장/외근 기록은 근태 표시용으로 남을 수 있으므로 복귀출근 자체를 막지 않습니다.
+  const BLOCK_NOTES = ['연차','반차(오전)','반차(오후)','반반차','병가','공가','특별휴가']
+  const leaveSession = sessions.find((s:any) => BLOCK_NOTES.includes(s.note))
+  const activeSession = !leaveSession ? [...sessions].reverse().find((s:any) => s.check_in && !s.check_out && !BLOCK_NOTES.includes(s.note)) : null
   // 오늘 마지막 완료 세션
   const lastDone = sessions.filter((s:any) => s.check_out).slice(-1)[0]
   const isWorking = !!activeSession
   const isDone = !isWorking && !leaveSession && sessions.length > 0 && sessions.every((s:any) => s.check_out)
 
   async function handleCheckIn() {
+    if (activeSession) {
+      setAlert('이미 근무 중인 출근 세션이 있습니다. 먼저 퇴근 처리해 주세요.')
+      setTimeout(()=>setAlert(''),4000)
+      return
+    }
     setLoading(true)
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { setLoading(false); return }
     const ds = todayStr(); const inTime = nowStr()
-    const seqNum = sessions.length + 1
-    await supabase.from('attendance').insert({
+    const seqNum = sessions.filter((s:any)=>s.check_in).length + 1
+    const { error } = await supabase.from('attendance').insert({
       user_id: session.user.id, work_date: ds,
       check_in: inTime, is_holiday: isHoliday(ds),
     })
+    if (error) {
+      setAlert('출근 처리 실패: ' + error.message)
+      setTimeout(()=>setAlert(''),5000)
+      setLoading(false)
+      return
+    }
     const label = seqNum === 1 ? '출근' : `${seqNum}번째 출근 (복귀)`
     setAlert(`${label} 완료 (${inTime.slice(0,5)})`)
-    setTimeout(()=>setAlert(''),4000); loadData(); setLoading(false)
+    setTimeout(()=>setAlert(''),4000); await loadData(); setLoading(false)
   }
 
   async function handleCheckOut() {
-    if (!activeSession) return
+    if (!activeSession) {
+      setAlert('현재 퇴근 처리할 근무 중 세션이 없습니다.')
+      setTimeout(()=>setAlert(''),4000)
+      return
+    }
     setLoading(true)
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
-    if (!session) return
+    if (!session) { setLoading(false); return }
     const outTime = nowStr(); const ds = todayStr()
     const r = classifyWork(ds, activeSession.check_in, outTime)
-    await supabase.from('attendance').update({
+    const { error } = await supabase.from('attendance').update({
       check_out: outTime,
       reg_hours: minutesToHours(r.reg), ext_hours: minutesToHours(r.ext),
       night_hours: minutesToHours(r.night), hol_hours: minutesToHours(r.hReg),
       hol_eve_hours: minutesToHours(r.hEve), hol_night_hours: minutesToHours(r.hNight),
       ignored_hours: minutesToHours(r.ignored),
     }).eq('id', activeSession.id)
+    if (error) {
+      setAlert('퇴근 처리 실패: ' + error.message)
+      setTimeout(()=>setAlert(''),5000)
+      setLoading(false)
+      return
+    }
     setAlert(`퇴근 완료! 정규 ${minutesToHours(r.reg)}h / 시간외 ${minutesToHours(r.ext)}h`)
-    setTimeout(()=>setAlert(''),4000); loadData(); setLoading(false)
+    setTimeout(()=>setAlert(''),4000); await loadData(); setLoading(false)
   }
 
   // 오늘 전체 합산 근태

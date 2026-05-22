@@ -59,79 +59,10 @@ function makeApprovalEvents(approvals: any[], myUserId: string) {
   })
 }
 
-function hasTimezone(value: string) {
-  return /(?:Z|[+-]\d{2}:?\d{2})$/.test(value)
-}
-
-function getKSTParts(value: string) {
-  if (!value) return { date: '', time: '' }
-
-  // Supabase timestamptz처럼 Z/+00:00/+09:00 시간대가 붙은 값만 KST로 변환합니다.
-  // timestamp without time zone처럼 시간대가 없는 값은 이미 사용자가 입력한 로컬 시간으로 보고 그대로 씁니다.
-  if (hasTimezone(value)) {
-    const d = new Date(value)
-    const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
-    return {
-      date: `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}`,
-      time: `${String(kst.getUTCHours()).padStart(2,'0')}:${String(kst.getUTCMinutes()).padStart(2,'0')}`,
-    }
-  }
-
-  return {
-    date: value.slice(0, 10),
-    time: value.slice(11, 16) || '00:00',
-  }
-}
-
-function toKSTDate(value: string): string {
-  return getKSTParts(value).date
-}
-
-function toKSTTime(value: string): string {
-  return getKSTParts(value).time
-}
-
-function makeKSTDateTime(date: string, time: string) {
-  return `${date}T${time}:00+09:00`
-}
-
-
-function getDefaultEndFromStart(date: string, time: string) {
-  if (!date || !time) return { end_date: date || '', end_time: '10:00' }
-  const d = new Date(`${date}T${time}:00+09:00`)
-  if (Number.isNaN(d.getTime())) return { end_date: date, end_time: time }
-  d.setHours(d.getHours() + 1)
+function toKSTDate(utcStr: string): string {
+  const d = new Date(utcStr)
   const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
-  return {
-    end_date: `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}`,
-    end_time: `${String(kst.getUTCHours()).padStart(2,'0')}:${String(kst.getUTCMinutes()).padStart(2,'0')}`,
-  }
-}
-
-function shiftKSTMinutes(value: string, minutes: number) {
-  if (!value) return ''
-  const iso = hasTimezone(value) ? value : `${value}+09:00`
-  const d = new Date(iso)
-  d.setMinutes(d.getMinutes() + minutes)
-  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
-  return `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}`
-}
-
-function getEventEndDisplayDate(event: any) {
-  const endDate = toKSTDate(event.end_at)
-  const endTime = toKSTTime(event.end_at)
-
-  // 시간 일정이 정확히 다음 날 00:00에 끝나는 경우, 캘린더에서는 전날 일정으로만 보여야 합니다.
-  // 이 보정이 없으면 14~15시처럼 입력한 일정도 시간대 변환 문제로 이틀짜리처럼 보일 수 있습니다.
-  if (!event.all_day && endTime === '00:00') {
-    return shiftKSTMinutes(event.end_at, -1)
-  }
-  return endDate
-}
-
-function formatKSTDateTime(value: string) {
-  const p = getKSTParts(value)
-  return `${p.date} ${p.time}`
+  return kst.toISOString().slice(0, 10)
 }
 
 export default function CalendarPage() {
@@ -152,7 +83,7 @@ export default function CalendarPage() {
   const [tab, setTab] = useState<'calendar'|'invites'>('calendar')
   const [form, setForm] = useState({
     title:'', description:'', start_date:'', start_time:'09:00',
-    end_date:'', end_time:'10:00', all_day:false, time_tbd:false,
+    end_date:'', end_time:'18:00', all_day:false, time_tbd:false,
     location:'', color:'#534AB7', attendeeIds:[] as string[],
     calendar_type: 'personal' as 'personal'|'company',
     is_business_trip: false,
@@ -224,12 +155,18 @@ export default function CalendarPage() {
 
   useEffect(() => { load() }, [load])
 
+  // 일정 페이지 진입 시 현재까지 표시된 일정은 확인한 것으로 처리합니다.
+  useEffect(() => {
+    if (!profile?.id || typeof window === 'undefined') return
+    localStorage.setItem(`cal_checked_${profile.id}`, new Date().toISOString())
+  }, [profile?.id])
+
   const firstDay = new Date(curYear, curMonth, 1).getDay()
   const daysInMonth = new Date(curYear, curMonth+1, 0).getDate()
   const today = toLocalDateStr(new Date())
 
   function getEventsForDate(dateStr: string) {
-    const filtered = events.filter(e => toKSTDate(e.start_at) <= dateStr && dateStr <= getEventEndDisplayDate(e))
+    const filtered = events.filter(e => toKSTDate(e.start_at) <= dateStr && dateStr <= toKSTDate(e.end_at))
     // 본인 결재 우선 정렬
     return filtered.sort((a:any, b:any) => {
       if (a.isMe && !b.isMe) return -1
@@ -265,26 +202,20 @@ export default function CalendarPage() {
   async function handleSubmit() {
     if (!form.title || !form.start_date) return
     const supabase = createClient()
-    const safeEndDate = form.end_date || form.start_date
-    const startAt = form.all_day ? makeKSTDateTime(form.start_date, '00:00')
-      : form.time_tbd ? makeKSTDateTime(form.start_date, '00:00')
-      : makeKSTDateTime(form.start_date, form.start_time)
-    const endAt = form.all_day ? `${safeEndDate}T23:59:59+09:00`
-      : form.time_tbd ? `${safeEndDate}T23:59:59+09:00`
-      : makeKSTDateTime(safeEndDate, form.end_time)
-
-    if (!form.all_day && !form.time_tbd && new Date(endAt).getTime() <= new Date(startAt).getTime()) {
-      window.alert('종료 일시는 시작 일시보다 늦어야 합니다.')
-      return
-    }
+    const startAt = form.all_day ? `${form.start_date}T00:00:00`
+      : form.time_tbd ? `${form.start_date}T00:00:00`
+      : `${form.start_date}T${form.start_time}:00`
+    const endAt = form.all_day ? `${form.end_date||form.start_date}T23:59:59`
+      : form.time_tbd ? `${form.end_date||form.start_date}T23:59:59`
+      : `${form.end_date||form.start_date}T${form.end_time}:00`
     if (editMode && editingEventId) {
       await supabase.from('events').update({
         title:form.title, description:form.description, start_at:startAt, end_at:endAt,
         all_day:form.all_day, location:form.location, color:form.color,
         calendar_type:form.calendar_type, is_business_trip: form.is_business_trip,
       }).eq('id', editingEventId)
-      await supabase.from('event_attendees').delete().eq('event_id', editingEventId)
-      if (form.attendeeIds.length) {
+      await supabase.from('event_attendees').delete().eq('event_id', editingEventId).neq('user_id', profile.id)
+      if (form.calendar_type === 'personal' && form.attendeeIds.length) {
         await supabase.from('event_attendees').upsert(
           form.attendeeIds.map(uid=>({event_id:editingEventId, user_id:uid, status:'pending'})),
           {onConflict:'event_id,user_id'}
@@ -296,7 +227,7 @@ export default function CalendarPage() {
         all_day:form.all_day, location:form.location, color:form.color, creator_id:profile.id,
         calendar_type:form.calendar_type, is_business_trip: form.is_business_trip,
       }).select().single()
-      if (ev && form.attendeeIds.length) {
+      if (ev && form.calendar_type === 'personal' && form.attendeeIds.length) {
         await supabase.from('event_attendees').insert(
           form.attendeeIds.map(uid=>({event_id:ev.id, user_id:uid, status:'pending'}))
         )
@@ -346,14 +277,14 @@ export default function CalendarPage() {
 
   function resetForm() {
     setForm({title:'',description:'',start_date:selDate||'',start_time:'09:00',
-      end_date:selDate||'',end_time:'10:00',all_day:false,time_tbd:false,location:'',color:'#534AB7',
+      end_date:selDate||'',end_time:'18:00',all_day:false,time_tbd:false,location:'',color:'#534AB7',
       attendeeIds: profile?.id ? [profile.id] : [],
       calendar_type: 'personal', is_business_trip: false})  // 기본으로 본인 체크
   }
 
   function openCreate(dateStr: string) {
     setSelDate(dateStr)
-    setForm(f=>({ ...f, start_date: dateStr, ...getDefaultEndFromStart(dateStr, f.start_time || '09:00') }))
+    setForm(f=>({...f, start_date:dateStr, end_date:dateStr}))
     setEditMode(false); setShowForm(true)
   }
 
@@ -364,8 +295,8 @@ export default function CalendarPage() {
       ev.start_at.slice(11,16) === '00:00' && ev.end_at.slice(11,16) === '23:59'
     setForm({
       title:ev.title, description:ev.description||'',
-      start_date:toKSTDate(ev.start_at), start_time:toKSTTime(ev.start_at),
-      end_date:toKSTDate(ev.end_at), end_time:toKSTTime(ev.end_at),
+      start_date:toKSTDate(ev.start_at), start_time:ev.start_at.slice(11,16),
+      end_date:toKSTDate(ev.end_at), end_time:ev.end_at.slice(11,16),
       all_day:ev.all_day||false, time_tbd:isTimeTbd,
       location:ev.location||'', color:ev.color||'#534AB7', attendeeIds:atts,
       calendar_type: ev.calendar_type || 'personal',
@@ -551,7 +482,7 @@ export default function CalendarPage() {
                       {/* 업무 스티커 - 마감일 표시 */}
                       {dayTasks.slice(0, 2).map((t:any) => (
                         <div key={'task-'+t.id}
-                          className="relative cursor-pointer hover:opacity-80 transition-opacity"
+                          className="relative cursor-pointer hover:scale-105 transition-transform"
                           onClick={(e)=>{e.stopPropagation(); router.push('/dashboard/tasks')}}
                           title={`업무 마감: ${t.title}${t.due_time ? ' '+t.due_time.slice(0,5) : ''}`}
                           style={{
@@ -562,6 +493,7 @@ export default function CalendarPage() {
                             fontSize: '11px',
                             lineHeight: '14px',
                             color: t.status === 'done' ? '#92400E' : '#7C2D12',
+                            transform: `rotate(${(t.id.charCodeAt(0) % 5) - 2}deg)`, // 살짝 비스듬히 (스티커 느낌)
                             boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
                           }}>
                           <span className="font-medium">📌 {t.title.length > 8 ? t.title.slice(0,8)+'…' : t.title}</span>
@@ -635,13 +567,13 @@ export default function CalendarPage() {
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">시작일</label>
                   <input type="date" className="input" value={form.start_date}
-                    onChange={e=>setForm(f=>({ ...f, start_date: e.target.value, ...getDefaultEndFromStart(e.target.value, f.start_time || '09:00') }))} />
+                    onChange={e=>setForm(f=>({...f,start_date:e.target.value}))} />
                 </div>
                 {!form.all_day && !form.time_tbd && (
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">시작 시간</label>
                     <input type="time" className="input" value={form.start_time}
-                      onChange={e=>setForm(f=>({ ...f, start_time: e.target.value, ...getDefaultEndFromStart(f.start_date, e.target.value) }))} />
+                      onChange={e=>setForm(f=>({...f,start_time:e.target.value}))} />
                   </div>
                 )}
                 <div>
@@ -671,7 +603,7 @@ export default function CalendarPage() {
                   🚗 <strong>출장 일정</strong> - 체크하면 저장 시 자동으로 출장 보고서 초안이 생성됩니다.
                   {form.is_business_trip && (
                     <span className="block text-[10px] text-amber-600 mt-0.5">
-                      💡 4시간 이상 → 25,000원 / 4시간 미만 → 15,000원 출장수당 자동 산정
+                      💡 4시간 이상 → 25,000원 / 4시간 미만 → 13,000원 출장수당 자동 산정
                     </span>
                   )}
                 </label>
@@ -691,6 +623,7 @@ export default function CalendarPage() {
                   ))}
                 </div>
               </div>
+              {form.calendar_type === 'personal' ? (
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-2">
                   참석자 선택 {form.attendeeIds.length>0 && <span className="text-purple-600">({form.attendeeIds.length}명 선택)</span>}
@@ -722,7 +655,7 @@ export default function CalendarPage() {
                   ))}
                 </div>
               </div>
-              {form.calendar_type === 'company' && (
+              ) : (
               <div className="bg-green-50 border border-green-200 rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-sm">🏢</span>
@@ -730,8 +663,8 @@ export default function CalendarPage() {
                 </div>
                 <div className="text-xs text-green-600 leading-relaxed">
                   모든 직원의 캘린더에 자동으로 표시되고,<br/>
-                  선택한 참석자는 참석자 목록과 AI 브리핑에도 함께 반영됩니다.<br/>
-                  <span className="text-green-500 mt-1 block">참석자를 선택하지 않아도 전 직원 캘린더에는 표시됩니다.</span>
+                  각 직원의 AI 브리핑에 자동으로 포함됩니다.<br/>
+                  <span className="text-green-500 mt-1 block">마감기한, 공지성 일정 등에 활용하세요.</span>
                 </div>
               </div>
               )}
@@ -756,9 +689,9 @@ export default function CalendarPage() {
                 <div className="text-xs text-gray-400 mt-1">
                   {showDetail.all_day
                     ? `${toKSTDate(showDetail.start_at)} ~ ${toKSTDate(showDetail.end_at)} (종일)`
-                    : toKSTTime(showDetail.start_at) === '00:00' && toKSTTime(showDetail.end_at) === '23:59'
+                    : showDetail.start_at.slice(11,16) === '00:00' && showDetail.end_at.slice(11,16) === '23:59'
                       ? `${toKSTDate(showDetail.start_at)} ~ ${toKSTDate(showDetail.end_at)} ⏰ 시간 미정`
-                      : `${formatKSTDateTime(showDetail.start_at)} ~ ${toKSTTime(showDetail.end_at)}`}
+                      : `${showDetail.start_at.slice(0,16).replace('T',' ')} ~ ${showDetail.end_at.slice(11,16)}`}
                 </div>
                 {showDetail.calendar_type === 'company' && (
                   <span className="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full mt-1">

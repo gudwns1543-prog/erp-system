@@ -21,6 +21,14 @@ export default function NoticePage() {
     const { data } = await supabase.from('notices')
       .select('*, author:author_id(name)').order('created_at',{ascending:false})
     setNotices(data || [])
+
+    // 공지사항 페이지에 진입하면 현재까지 등록된 공지는 읽은 것으로 처리합니다.
+    // 기존에는 홈 카드 클릭으로 들어온 경우만 읽음 처리되어, 좌측 메뉴/직접 주소 접근 시 N 표시가 계속 남았습니다.
+    if (typeof window !== 'undefined') {
+      const newest = (data || [])[0]?.created_at || new Date().toISOString()
+      localStorage.setItem('notice_read_' + session.user.id, newest)
+      localStorage.setItem(`notif_read_${session.user.id}`, new Date().toISOString())
+    }
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -92,7 +100,12 @@ export default function NoticePage() {
           <div className="divide-y divide-gray-50">
             {notices.map(n=>(
               <div key={n.id} id={`notice-${n.id}`} className={`py-3 transition-colors rounded-lg px-2 -mx-2 ${open===n.id?'bg-purple-50/50':''}`}>
-                <div className="flex items-start justify-between cursor-pointer" onClick={()=>setOpen(open===n.id?null:n.id)}>
+                <div className="flex items-start justify-between cursor-pointer" onClick={()=>{
+                  setOpen(open===n.id?null:n.id)
+                  if (typeof window !== 'undefined' && profile?.id) {
+                    localStorage.setItem('notice_read_' + profile.id, n.created_at || new Date().toISOString())
+                  }
+                }}>
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="badge-pending text-xs">공지</span>

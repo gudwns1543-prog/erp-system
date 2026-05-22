@@ -7,13 +7,6 @@ import { Logo } from '@/components/Logo'
 
 const DAYS = ['일','월','화','수','목','금','토']
 const DAYS_SHORT = ['일','월','화','수','목','금','토']
-const HOLIDAY_NAMES: Record<string,string> = {
-  '2026-01-01':'신정','2026-02-16':'설날연휴','2026-02-17':'설날',
-  '2026-02-18':'설날연휴','2026-03-01':'삼일절','2026-05-05':'어린이날',
-  '2026-05-25':'부처님오신날','2026-06-03':'현충일',
-  '2026-08-17':'광복절대체','2026-09-24':'추석연휴','2026-09-25':'추석',
-  '2026-09-26':'추석연휴','2026-10-05':'개천절대체','2026-10-09':'한글날','2026-12-25':'성탄절',
-}
 function todayStr() {
   const d = new Date()
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
@@ -32,57 +25,11 @@ function josa(word: string, eunNun: '은/는' | '이/가' | '을/를' = '은/는
 
 const leaveNotes = ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가']
 
-function hasTimezone(value: string) {
-  return /(?:Z|[+-]\d{2}:?\d{2})$/.test(value)
-}
-
-function getKSTParts(value: string) {
-  if (!value) return { date: '', time: '' }
-
-  // Supabase timestamptz처럼 Z/+00:00/+09:00 시간대가 붙은 값만 KST로 변환합니다.
-  // timestamp without time zone처럼 시간대가 없는 값은 이미 사용자가 입력한 로컬 시간으로 보고 그대로 씁니다.
-  if (hasTimezone(value)) {
-    const d = new Date(value)
-    const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
-    return {
-      date: `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}`,
-      time: `${String(kst.getUTCHours()).padStart(2,'0')}:${String(kst.getUTCMinutes()).padStart(2,'0')}`,
-    }
-  }
-
-  return {
-    date: value.slice(0, 10),
-    time: value.slice(11, 16) || '00:00',
-  }
-}
-
-function toKSTDate(value: string): string {
-  return getKSTParts(value).date
-}
-
-function toKSTTime(value: string): string {
-  return getKSTParts(value).time
-}
-
-function shiftKSTMinutes(value: string, minutes: number) {
-  if (!value) return ''
-  const iso = hasTimezone(value) ? value : `${value}+09:00`
-  const d = new Date(iso)
-  d.setMinutes(d.getMinutes() + minutes)
+// UTC timestamp → KST 날짜 문자열 (YYYY-MM-DD)
+function toKSTDate(utcStr: string): string {
+  const d = new Date(utcStr)
   const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
-  return `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}`
-}
-
-function getEventEndDisplayDate(event: any) {
-  const endDate = toKSTDate(event.end_at)
-  const endTime = toKSTTime(event.end_at)
-
-  // 시간 일정이 정확히 다음 날 00:00에 끝나는 경우, 캘린더에서는 전날 일정으로만 보여줍니다.
-  // 일정 메뉴와 홈 미니 캘린더의 날짜 표시 기준을 동일하게 맞추기 위한 보정입니다.
-  if (!event.all_day && endTime === '00:00') {
-    return shiftKSTMinutes(event.end_at, -1)
-  }
-  return endDate
+  return kst.toISOString().slice(0, 10)
 }
 
 function makeApprovalEvents(approvals: any[], myUserId: string) {
@@ -277,10 +224,13 @@ export default function HomePage() {
       .select('*').eq('user_id', session.user.id).eq('work_date', todayStr())
       .order('created_at', {ascending: true})
     // 활성 세션(미퇴근) 또는 가장 최근 세션
-    const leaveS = (todaySess||[]).find((s:any) => leaveNotes.includes(s.note))
-    const activeS = leaveS || (todaySess||[]).find((s:any) => s.check_in && !s.check_out)
+    // 기존에는 check_out이 끝난 세션도 check_in이 있다는 이유로 출근 버튼이 막히는 경우가 있었습니다.
+    // _isActive/_isLeave 플래그를 별도로 붙여 복귀출근 가능 여부를 명확히 판단합니다.
+    const BLOCK_NOTES = ['연차','반차(오전)','반차(오후)','반반차','병가','공가','특별휴가']
+    const leaveS = (todaySess||[]).find((s:any) => BLOCK_NOTES.includes(s.note))
+    const activeOpen = [...(todaySess||[])].reverse().find((s:any) => s.check_in && !s.check_out && !BLOCK_NOTES.includes(s.note))
     const lastS = (todaySess||[]).slice(-1)[0]
-    setToday(activeS || lastS || null)
+    setToday(leaveS ? {...leaveS, _isLeave:true, _isActive:false} : activeOpen ? {...activeOpen, _isActive:true} : lastS ? {...lastS, _isActive:false} : null)
 
     // 어제 미퇴근 세션 체크 (퇴근 시간 사후 입력 팝업)
     // 야간자동컷오프된 건도 본인이 수정/승인 요청을 안 했다면 보여줌
@@ -405,15 +355,10 @@ export default function HomePage() {
     if (typeof window !== 'undefined' && notices && notices.length > 0) {
       const lastRead = localStorage.getItem('notice_read_' + session.user.id) || '2000-01-01'
       const newest = notices[0].created_at
-      setHasNewNotice(newest > lastRead)
+      setHasNewNotice(new Date(newest).getTime() > new Date(lastRead).getTime())
     }
 
-    // 업무 카운트 + 홈 캘린더 스티커
-    // 일정 메뉴와 동일하게 공유 업무는 모두, 개인 업무는 본인 관련 업무만 표시합니다.
-    const monthStart = `${calYear}-${String(calMonth+1).padStart(2,'0')}-01`
-    const nextMonthDate = new Date(calYear, calMonth+1, 1)
-    const monthEnd = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth()+1).padStart(2,'0')}-01`
-
+    // 업무 카운트 (내가 담당자거나 등록자)
     const { data: myTasks } = await supabase.from('tasks')
       .select('id, title, status, priority, due_date, due_time, assignees, creator_id, visibility, progress, assignee_progress')
     const today = todayStr()
@@ -430,14 +375,8 @@ export default function HomePage() {
       if (avgProg >= 100 && t.status !== 'done' && isMine) {
         autoCompleteIds.push(t.id)
       }
-      // 캘린더 스티커용 - 일정 메뉴와 같은 표시 기준
-      // 일정 메뉴는 완료/진척률과 무관하게 마감일 있는 업무 스티커를 표시하므로 홈도 동일하게 맞춤
-      if (
-        t.due_date &&
-        t.due_date >= monthStart &&
-        t.due_date < monthEnd &&
-        (isMine || t.visibility === 'shared')
-      ) {
+      // 캘린더 스티커용 - 본인 관련 + 공유 업무, 미완료 + 마감일 있음
+      if (t.due_date && !isCompleted && (isMine || t.visibility === 'shared')) {
         calTasks.push(t)
       }
       if (!isMine) continue
@@ -449,7 +388,7 @@ export default function HomePage() {
       if (t.due_date && t.due_date < today) counts.overdue++
     }
     setTaskCounts(counts)
-    setCalendarTasks(calTasks.sort((a:any,b:any) => String(a.due_time || '').localeCompare(String(b.due_time || '')) || String(a.title || '').localeCompare(String(b.title || ''), 'ko')))
+    setCalendarTasks(calTasks)
 
     // 평균 100% 도달 업무를 백그라운드에서 자동 완료 처리
     if (autoCompleteIds.length > 0) {
@@ -617,9 +556,19 @@ export default function HomePage() {
     // 긴급한 것 먼저
     filteredNotifs.sort((a, b) => (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0))
     setNotifications(filteredNotifs)
-  }, [calYear, calMonth])
+  }, [])
 
   useEffect(() => { load() }, [load])
+
+  // 홈 캘린더가 화면에 보이면 현재까지의 일정은 확인한 것으로 처리합니다.
+  // 기존에는 '전체 →' 또는 날짜 클릭 시에만 cal_checked가 갱신되어 NEW 표시가 계속 남았습니다.
+  useEffect(() => {
+    if (!profile?.id || typeof window === 'undefined') return
+    const t = setTimeout(() => {
+      localStorage.setItem(`cal_checked_${profile.id}`, new Date().toISOString())
+    }, 1500)
+    return () => clearTimeout(t)
+  }, [profile?.id, calYear, calMonth])
 
   // 알림 개별 닫기 (X 버튼)
   function dismissNotification(notifId: string) {
@@ -704,22 +653,6 @@ export default function HomePage() {
         a + (l.type.includes('반차') ? 0.5 : 1), 0)
       const remainLeave = (p?.annual_leave || 0) - usedLeave
 
-      // 향후 연차/반차 신청 현황 - AI가 잔여연차만 보고 임의로 신청했다고 오해하지 않도록 명시
-      const futureLeaveEndDate = new Date(todayDate)
-      futureLeaveEndDate.setDate(todayDate.getDate() + 90)
-      const futureLeaveEnd = futureLeaveEndDate.toISOString().slice(0, 10)
-      const { data: futureLeaves } = await supabase.from('approvals')
-        .select('type,status,start_date,end_date')
-        .eq('requester_id', session.user.id)
-        .in('status', ['pending','approved'])
-        .in('type', ['연차','반차(오전)','반차(오후)','반반차','특별휴가','병가'])
-        .gte('start_date', today)
-        .lte('start_date', futureLeaveEnd)
-        .order('start_date', { ascending: true })
-      const futureLeaveList = (futureLeaves || []).map((l: any) =>
-        `${l.start_date}${l.end_date && l.end_date !== l.start_date ? '~' + l.end_date : ''} ${l.type} ${l.status === 'approved' ? '승인' : '신청중'}`
-      )
-
       // 급여일 계산 - DB company_settings에서 읽기
       const { data: payDaySetting } = await supabase.from('company_settings')
         .select('value').eq('key', 'pay_day').maybeSingle()
@@ -762,10 +695,7 @@ export default function HomePage() {
       const pendingCol = p?.role === 'director' ? 'approver_id' : 'requester_id'
       const { data: pendingApprovals } = await supabase.from('approvals')
         .select('type,start_date,requester:requester_id(name)')
-        .eq(pendingCol, session.user.id).eq('status','pending')
-        .gte('start_date', today)
-        .order('start_date', { ascending: true })
-        .limit(5)
+        .eq(pendingCol, session.user.id).eq('status','pending').limit(5)
       const approvalList = (pendingApprovals||[]).map((a: any) =>
         p?.role === 'director'
           ? ((a.requester as any)?.name + '님 ' + a.type + ' (' + a.start_date + ')')
@@ -812,7 +742,7 @@ export default function HomePage() {
       const { count: noticeCount } = await supabase.from('notices')
         .select('*',{count:'exact',head:true}).gt('created_at', lastRead)
 
-      // 본인 관련 업무 상세 (브리핑용)
+      // 본인 관련 업무 상세 (통찰용)
       const { data: myDetailTasks } = await supabase.from('tasks')
         .select('id, title, status, priority, due_date, due_time, progress, assignee_progress, assignees, creator_id, creator:creator_id(name), updated_at')
         .neq('status', 'done')
@@ -868,7 +798,6 @@ export default function HomePage() {
         오늘출퇴근: attendStatus,
         이번달근태: thisMonth + '월 ' + workDays + '일 출근 / 정규 ' + monthReg + 'h / 초과 ' + monthExt + 'h',
         잔여연차: remainLeave + 'H (사용 ' + usedLeave + 'H / 기본 ' + (p?.annual_leave||0) + 'H)',
-        향후연차신청: futureLeaveList.length ? futureLeaveList : ['향후 90일 내 신청중/승인된 연차·휴가 없음'],
         급여일안내: paydayMsg,
         향후30일일정: eventList.length ? eventList : ['등록된 일정 없음'],
         결재현황: approvalList.length ? approvalList : ['대기중인 결재 없음'],
@@ -913,7 +842,7 @@ export default function HomePage() {
   const todayDate = todayStr()
 
   function getEventsForDate(ds: string) {
-    const filtered = allEvents.filter((e:any) => toKSTDate(e.start_at) <= ds && ds <= getEventEndDisplayDate(e))
+    const filtered = allEvents.filter((e:any) => toKSTDate(e.start_at) <= ds && ds <= toKSTDate(e.end_at))
     // 본인 결재 우선 정렬 (slice 3개 안에 본인 거가 짤리지 않도록)
     return filtered.sort((a:any, b:any) => {
       if (a.isMe && !b.isMe) return -1
@@ -962,7 +891,9 @@ export default function HomePage() {
               <div className="flex-1 min-w-0 cursor-pointer hover:opacity-80 transition-opacity"
                 onClick={()=>{
                   if (typeof window !== 'undefined' && profile?.id) {
-                    localStorage.setItem('notice_read_' + profile.id, new Date().toISOString())
+                    const newest = recentNotices[0]?.created_at || new Date().toISOString()
+                    localStorage.setItem('notice_read_' + profile.id, newest)
+                    setHasNewNotice(false)
                   }
                   router.push('/dashboard/notice')
                 }}>
@@ -1000,11 +931,11 @@ export default function HomePage() {
                 <div className="flex flex-col items-end gap-1">
                   <div className="text-lg font-bold text-gray-700 tabular-nums leading-tight">{time}</div>
                   <div className="flex gap-2">
-                    <button onClick={handleCheckIn} disabled={!!today?.check_in || leaveNotes.includes(today?.note)}
+                    <button onClick={handleCheckIn} disabled={today?._isActive || today?._isLeave}
                       className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <span style={{fontSize:13}}>🔴</span> 출근
+                      <span style={{fontSize:13}}>🔴</span> {today?.check_out && !today?._isActive ? '복귀출근' : '출근'}
                     </button>
-                    <button onClick={handleCheckOut} disabled={!today?.check_in||!!today?.check_out}
+                    <button onClick={handleCheckOut} disabled={!today?._isActive}
                       className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-600 text-white hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed">
                       <span style={{fontSize:13}}>🔴</span> 퇴근
                     </button>
@@ -1012,7 +943,7 @@ export default function HomePage() {
                 </div>
               </div>
             </div>
-            {today?.check_out && (
+            {today?.check_out && !today?._isActive && !today?._isLeave && (
               <div className="mt-3 p-3 bg-amber-50 border border-amber-100 rounded-xl flex items-center justify-between">
                 <span className="text-xs text-amber-700">퇴근 처리됨 · 업무에 복귀하시겠습니까?</span>
                 <button onClick={handleResumeWork} className="text-xs bg-amber-600 text-white px-3 py-1.5 rounded-lg hover:bg-amber-700">🔄 근무 복귀</button>
@@ -1020,7 +951,7 @@ export default function HomePage() {
             )}
           </div>
 
-          {/* 통합 알림 센터 + AI 브리핑 */}
+          {/* 통합 알림 센터 + AI 통찰 */}
           <div className="card border-amber-200 bg-amber-50/40 p-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <button onClick={()=>{
@@ -1042,7 +973,7 @@ export default function HomePage() {
                 )}
                 <span className="text-xs text-gray-400 ml-auto">{notificationsOpen ? '▲' : '▼'}</span>
               </button>
-              {/* AI 브리핑 받기 버튼 + 모두 닫기 */}
+              {/* AI 통찰 받기 버튼 + 모두 닫기 */}
               <div className="flex items-center gap-1.5">
                 {notifications.length > 0 && (
                   <button onClick={dismissAll}
@@ -1054,18 +985,18 @@ export default function HomePage() {
                 <button onClick={loadBriefing} disabled={briefingLoading}
                   className="flex items-center gap-1 px-2.5 py-1 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 text-white text-xs font-medium rounded-lg transition-colors">
                   <span>✨</span>
-                  {briefingLoading ? 'AI 브리핑 중...' : briefing ? '🔄 브리핑 새로고침' : 'AI 브리핑 받기'}
+                  {briefingLoading ? 'AI 분석 중...' : briefing ? '🔄 통찰 새로고침' : 'AI 통찰 받기'}
                 </button>
               </div>
             </div>
             {notificationsOpen && (
               <div className="mt-2 pt-2 border-t border-amber-200 space-y-2">
-                {/* AI 브리핑 영역 (브리핑 결과) */}
+                {/* AI 통찰 영역 (브리핑 결과) */}
                 {(briefing || briefingLoading) && (
                   <div className="bg-gradient-to-r from-purple-50 to-white border border-purple-100 rounded-md p-2.5">
                     <div className="flex items-center gap-1.5 mb-1.5">
                       <div className="w-5 h-5 rounded-full bg-purple-600 flex items-center justify-center text-[10px]">✨</div>
-                      <span className="text-xs font-semibold text-purple-800">AI 브리핑</span>
+                      <span className="text-xs font-semibold text-purple-800">AI 통찰</span>
                     </div>
                     {briefingLoading ? (
                       <div className="flex items-center gap-2 py-1">
@@ -1315,111 +1246,94 @@ export default function HomePage() {
                 className={`min-h-[110px] border border-gray-100 p-1.5 cursor-pointer transition-colors
                   ${isSat?'bg-blue-50/60':isHol||isSun?'bg-red-50':'bg-white'}
                   hover:bg-purple-50/40`}>
-                <div className="flex items-center gap-1 mb-1">
-                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0
-                    ${isToday?'bg-purple-600 text-white':isSat?'text-blue-500':isHol||isSun?'text-red-400':'text-gray-700'}`}>
-                    {day}
-                  </div>
-                  {HOLIDAY_NAMES[ds] && (
-                    <span className="text-red-400 text-xs truncate font-semibold">{HOLIDAY_NAMES[ds]}</span>
-                  )}
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold mb-1
+                  ${isToday?'bg-purple-600 text-white':isSat?'text-blue-500':isHol||isSun?'text-red-400':'text-gray-700'}`}>
+                  {day}
                 </div>
-                {(() => {
-                  const dayTasks = calendarTasks.filter((t:any) => t.due_date === ds)
-                  const visibleTasks = dayTasks.slice(0, 2)
-                  const remainingSlots = Math.max(0, 3 - visibleTasks.length)
-                  const visibleEvents = dayEvs.slice(0, remainingSlots)
+                {dayEvs.slice(0,3).map((ev:any)=>{
+                  // 마지막으로 캘린더를 확인한 시간 이후 생성/수정된 일정 = NEW
+                  const lastChecked = typeof window !== 'undefined'
+                    ? localStorage.getItem(`cal_checked_${profile?.id}`) || '2000-01-01'
+                    : '2000-01-01'
+                  const evTime = ev.updated_at || ev.created_at
+                  const isNew = evTime && new Date(evTime).getTime() > new Date(lastChecked).getTime()
+                    && ev.creator_id !== profile?.id // 내가 만든 건 NEW 표시 안 함
+
+                  // title 매칭: 새 형식 "[상태] 유형 이름" 또는 옛날 형식 "[유형] 이름"
+                  const matchNew = String(ev.title||'').match(/^\[([^\]]+)\]\s+(\S+)\s+(.+)$/)
+                  const matchOld = !matchNew ? String(ev.title||'').match(/^\[(\S+)\]\s+(.+)$/) : null
+                  let isApproval = false
+                  let isPending = false
+                  let typeName = ''
+                  let personName = ''
+                  if (matchNew) {
+                    isApproval = true
+                    isPending = matchNew[1] === '신청중'
+                    typeName = matchNew[2]
+                    personName = matchNew[3]
+                  } else if (matchOld && ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가'].includes(matchOld[1])) {
+                    isApproval = true
+                    isPending = false
+                    typeName = matchOld[1]
+                    personName = matchOld[2]
+                  }
+                  const typeShort = typeName === '반차(오전)' ? '오전반차'
+                    : typeName === '반차(오후)' ? '오후반차'
+                    : typeName.replace(/[()]/g, '')
+                  const displayText = isApproval ? `${personName}-${typeShort}` : ev.title
+
                   return (
-                    <>
-                      {/* 업무 스티커: 홈에서도 일정 메뉴처럼 먼저 노출 */}
-                      {visibleTasks.map((t:any) => (
-                        <div key={'task-'+t.id}
-                          onClick={(e)=>{e.stopPropagation(); router.push('/dashboard/tasks')}}
-                          title={`📌 업무: ${t.title}${t.due_time ? ' '+t.due_time.slice(0,5) : ''}`}
-                          className="cursor-pointer hover:opacity-80 transition-opacity truncate"
-                          style={{
-                            background: t.status === 'done' ? '#FEF3C7' : t.priority === 'high' ? '#FECACA' : '#FED7AA',
-                            border: '1px dashed ' + (t.status === 'done' ? '#F59E0B' : t.priority === 'high' ? '#EF4444' : '#F97316'),
-                            borderRadius: '3px',
-                            padding: '0 4px',
-                            fontSize: '11px',
-                            lineHeight: '15px',
-                            color: t.status === 'done' ? '#92400E' : '#7C2D12',
-                            boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
-                            marginBottom: '4px',
-                          }}>
-                          📌 {t.title.length > 8 ? t.title.slice(0,8)+'…' : t.title}
-                        </div>
-                      ))}
-
-                      {visibleEvents.map((ev:any)=>{
-                        // 마지막으로 캘린더를 확인한 시간 이후 생성/수정된 일정 = NEW
-                        const lastChecked = typeof window !== 'undefined'
-                          ? localStorage.getItem(`cal_checked_${profile?.id}`) || '2000-01-01'
-                          : '2000-01-01'
-                        const evTime = ev.updated_at || ev.created_at
-                        const isNew = evTime && new Date(evTime).getTime() > new Date(lastChecked).getTime()
-                          && ev.creator_id !== profile?.id // 내가 만든 건 NEW 표시 안 함
-
-                        // title 매칭: 새 형식 "[상태] 유형 이름" 또는 옛날 형식 "[유형] 이름"
-                        const matchNew = String(ev.title||'').match(/^\[([^\]]+)\]\s+(\S+)\s+(.+)$/)
-                        const matchOld = !matchNew ? String(ev.title||'').match(/^\[(\S+)\]\s+(.+)$/) : null
-                        let isApproval = false
-                        let isPending = false
-                        let typeName = ''
-                        let personName = ''
-                        if (matchNew) {
-                          isApproval = true
-                          isPending = matchNew[1] === '신청중'
-                          typeName = matchNew[2]
-                          personName = matchNew[3]
-                        } else if (matchOld && ['연차','반차(오전)','반차(오후)','반반차','병가','공가','출장','외근','특별휴가'].includes(matchOld[1])) {
-                          isApproval = true
-                          isPending = false
-                          typeName = matchOld[1]
-                          personName = matchOld[2]
-                        }
-                        const typeShort = typeName === '반차(오전)' ? '오전반차'
-                          : typeName === '반차(오후)' ? '오후반차'
-                          : typeName.replace(/[()]/g, '')
-                        const displayText = isApproval ? `${personName}-${typeShort}` : ev.title
-
-                        return (
-                          <div key={ev.id}
-                            className="rounded px-1.5 mb-1 flex items-center gap-1 truncate font-bold"
-                            title={ev.title}
-                            style={isApproval ? {
-                              backgroundColor: isPending ? '#FEF3C7' : '#DBEAFE',
-                              border: isPending ? '1px solid #FCD34D' : '1px solid #93C5FD',
-                              color: '#111827',
-                              fontSize:'12px',
-                              lineHeight:'18px',
-                            } : {
-                              background:ev.color||'#534AB7',
-                              color:'#fff',
-                              fontSize:'12px',
-                              lineHeight:'20px',
-                              fontWeight:500,
-                            }}>
-                            <span className="truncate flex-1">{displayText}</span>
-                            {isNew && (
-                              <span className="flex-shrink-0 rounded px-1 font-bold"
-                                style={{fontSize:'10px',background:'#ef4444',color:'#facc15',border:'1px solid #dc2626'}}>
-                                NEW
-                              </span>
-                            )}
-                          </div>
-                        )
-                      })}
-
-                      {(dayTasks.length + dayEvs.length) > 3 && (
-                        <div className="text-gray-500 font-medium" style={{fontSize:'12px'}}>
-                          +{dayTasks.length + dayEvs.length - 3}
-                        </div>
+                    <div key={ev.id}
+                      className="rounded px-1.5 mb-1 flex items-center gap-1 truncate font-bold"
+                      title={ev.title}
+                      style={isApproval ? {
+                        backgroundColor: isPending ? '#FEF3C7' : '#DBEAFE',
+                        border: isPending ? '1px solid #FCD34D' : '1px solid #93C5FD',
+                        color: '#111827',
+                        fontSize:'12px',
+                        lineHeight:'18px',
+                      } : {
+                        background:ev.color||'#534AB7',
+                        color:'#fff',
+                        fontSize:'12px',
+                        lineHeight:'20px',
+                        fontWeight:500,
+                      }}>
+                      <span className="truncate flex-1">{displayText}</span>
+                      {isNew && (
+                        <span className="flex-shrink-0 rounded px-1 font-bold"
+                          style={{fontSize:'10px',background:'#ef4444',color:'#facc15',border:'1px solid #dc2626'}}>
+                          NEW
+                        </span>
                       )}
-                    </>
+                    </div>
                   )
-                })()}
+                })}
+                {dayEvs.length>3 && <div className="text-gray-500 font-medium" style={{fontSize:'12px'}}>+{dayEvs.length-3}</div>}
+                {/* 업무 스티커 (마감일 본인 업무) */}
+                {calendarTasks.filter((t:any) => t.due_date === ds).slice(0, 2).map((t:any) => (
+                  <div key={'task-'+t.id}
+                    onClick={(e)=>{e.stopPropagation(); router.push('/dashboard/tasks')}}
+                    title={`📌 업무: ${t.title}${t.due_time ? ' '+t.due_time.slice(0,5) : ''}`}
+                    className="cursor-pointer hover:scale-105 transition-transform"
+                    style={{
+                      background: t.priority === 'high' ? '#FECACA' : '#FED7AA',
+                      border: '1px dashed ' + (t.priority === 'high' ? '#EF4444' : '#F97316'),
+                      borderRadius: '3px',
+                      padding: '0 4px',
+                      fontSize: '11px',
+                      lineHeight: '15px',
+                      color: '#7C2D12',
+                      transform: `rotate(${(t.id.charCodeAt(0) % 5) - 2}deg)`,
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                      marginTop: '2px',
+                    }}>
+                    📌 {t.title.length > 7 ? t.title.slice(0,7)+'…' : t.title}
+                  </div>
+                ))}
+                {calendarTasks.filter((t:any) => t.due_date === ds).length > 2 && (
+                  <div className="text-orange-600 font-medium" style={{fontSize:'10px',marginTop:'2px'}}>+업무 {calendarTasks.filter((t:any) => t.due_date === ds).length-2}</div>
+                )}
               </div>
             )
           })}

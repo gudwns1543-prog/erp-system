@@ -24,140 +24,6 @@ const STATUS_COLOR: Record<string, string> = {
   rejected: 'bg-red-100 text-red-700',
 }
 
-function parseTripInternalUserIds(trip: any): string[] {
-  const raw = trip?.attendees || ''
-  const idsPart = raw.split('|')[0] || ''
-  const internalIds = idsPart.startsWith('staff:')
-    ? idsPart.replace('staff:', '').split(';').filter(Boolean)
-    : []
-  return Array.from(new Set([trip?.user_id, ...internalIds].filter(Boolean)))
-}
-
-function isTripParticipant(trip: any, userId?: string): boolean {
-  if (!userId || !trip) return false
-  if (trip.user_id === userId) return true
-  return parseTripInternalUserIds(trip).includes(userId)
-}
-
-function getTripNote(trip: any): string {
-  const tripDuration = trip?.all_day ? 8 : Number(trip?.duration_hours || 0)
-  return tripDuration >= 4 ? '출장(장)' : '출장(단)'
-}
-
-function removeTripText(note: string | null | undefined): string | null {
-  const cleaned = String(note || '')
-    .replace(/\s*·\s*출장(?:\([장단]\))?/g, '')
-    .replace(/출장(?:\([장단]\))?\s*·\s*/g, '')
-    .replace(/^출장(?:\([장단]\))?$/g, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim()
-  return cleaned || null
-}
-
-async function applyBusinessTripAttendance(supabase: any, trip: any) {
-  const allUserIds = parseTripInternalUserIds(trip)
-  const regH = trip.all_day ? 8 : Math.min(8, Number(trip.duration_hours || 0))
-  const tripNote = getTripNote(trip)
-
-  for (const userId of allUserIds) {
-    const { data: existingLinks } = await supabase.from('business_trip_attendance_links')
-      .select('id, attendance_id')
-      .eq('business_trip_id', trip.id)
-      .eq('user_id', userId)
-      .limit(1)
-
-    if (existingLinks && existingLinks.length > 0) continue
-
-    const { data: existingRows } = await supabase.from('attendance')
-      .select('id, note')
-      .eq('user_id', userId)
-      .eq('work_date', trip.trip_date)
-      .order('created_at', { ascending: true })
-      .limit(1)
-
-    let attendanceId = existingRows?.[0]?.id
-
-    if (attendanceId) {
-      const oldNote = existingRows?.[0]?.note || ''
-      const nextNote = oldNote.includes('출장')
-        ? oldNote
-        : oldNote ? `${oldNote} · ${tripNote}` : tripNote
-
-      if (nextNote !== oldNote) {
-        await supabase.from('attendance').update({ note: nextNote }).eq('id', attendanceId)
-      }
-    } else {
-      const { data: inserted } = await supabase.from('attendance').insert({
-        user_id: userId,
-        work_date: trip.trip_date,
-        check_in: trip.all_day ? '09:00:00' : (trip.start_time || '09:00:00'),
-        check_out: trip.all_day ? '18:00:00' : (trip.end_time || '18:00:00'),
-        reg_hours: regH,
-        ext_hours: 0,
-        night_hours: 0,
-        hol_hours: 0,
-        hol_eve_hours: 0,
-        hol_night_hours: 0,
-        note: tripNote,
-        is_holiday: false,
-      }).select('id').single()
-      attendanceId = inserted?.id
-    }
-
-    if (attendanceId) {
-      await supabase.from('business_trip_attendance_links').upsert({
-        business_trip_id: trip.id,
-        user_id: userId,
-        attendance_id: attendanceId,
-        trip_date: trip.trip_date,
-      }, { onConflict: 'business_trip_id,user_id' })
-    }
-  }
-}
-
-async function clearBusinessTripAttendance(supabase: any, trip: any) {
-  const allUserIds = parseTripInternalUserIds(trip)
-
-  for (const userId of allUserIds) {
-    const { data: links } = await supabase.from('business_trip_attendance_links')
-      .select('id, attendance_id')
-      .eq('business_trip_id', trip.id)
-      .eq('user_id', userId)
-
-    await supabase.from('business_trip_attendance_links')
-      .delete()
-      .eq('business_trip_id', trip.id)
-      .eq('user_id', userId)
-
-    const { data: remainLinks } = await supabase.from('business_trip_attendance_links')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('trip_date', trip.trip_date)
-      .limit(1)
-
-    if (remainLinks && remainLinks.length > 0) continue
-
-    const attendanceId = links?.[0]?.attendance_id
-    if (!attendanceId) continue
-
-    const { data: existing } = await supabase.from('attendance')
-      .select('id, note')
-      .eq('id', attendanceId)
-      .maybeSingle()
-
-    if (!existing) continue
-
-    if (['출장(장)', '출장(단)', '출장'].includes(existing.note || '')) {
-      await supabase.from('attendance').delete().eq('id', existing.id)
-    } else if (String(existing.note || '').includes('출장')) {
-      await supabase.from('attendance').update({
-        note: removeTripText(existing.note),
-      }).eq('id', existing.id)
-    }
-  }
-}
-
-
 export default function BizTripPage() {
   const [profile, setProfile] = useState<any>(null)
   const [trips, setTrips] = useState<any[]>([])
@@ -219,7 +85,7 @@ export default function BizTripPage() {
   function getFilteredTrips() {
     if (!profile) return []
     if (tab === 'mine') {
-      return trips.filter(t => isTripParticipant(t, profile.id))
+      return trips.filter(t => t.user_id === profile.id)
     } else if (tab === 'pending') {
       // 본인이 결재자로 지정된 pending
       return trips.filter(t => t.approver_id === profile.id && t.status === 'pending')
@@ -240,24 +106,10 @@ export default function BizTripPage() {
 
   async function handleApprove(id: string, status: 'approved' | 'rejected') {
     const supabase = createClient()
-    const { data: trip } = await supabase.from('business_trips')
-      .select('*').eq('id', id).single()
-
-    if (trip) {
-      if (status === 'approved') {
-        await applyBusinessTripAttendance(supabase, trip)
-      }
-      if (status === 'rejected') {
-        await clearBusinessTripAttendance(supabase, trip)
-      }
-    }
-
     const { error } = await supabase.from('business_trips')
       .update({ status, updated_at: new Date().toISOString() }).eq('id', id)
     if (error) { window.alert('처리 실패: ' + error.message); return }
-    setAlert(status === 'approved'
-      ? '승인되었습니다. 작성자와 내부 동행자의 근태기록에 출장으로 반영되었습니다.'
-      : '반려되었습니다.')
+    setAlert(status === 'approved' ? '승인되었습니다.' : '반려되었습니다.')
     setTimeout(() => setAlert(''), 2000)
     load()
   }
@@ -281,7 +133,7 @@ export default function BizTripPage() {
         <button onClick={() => setTab('mine')}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
             tab === 'mine' ? 'border-purple-600 text-purple-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-          }`}>📋 내 출장 ({trips.filter(t => isTripParticipant(t, profile?.id)).length})</button>
+          }`}>📋 내 출장 ({trips.filter(t => t.user_id === profile?.id).length})</button>
         {profile?.role === 'director' && (
           <>
             <button onClick={() => setTab('pending')}
@@ -424,17 +276,10 @@ function BizTripModal({ trip, currentUser, approvers, staffList, tripPolicy, onC
     start_time: trip?.start_time?.slice(0, 5) || '09:00',
     end_time: trip?.end_time?.slice(0, 5) || '18:00',
     location: trip?.location || '',
-    project_code: trip?.project_code || '',
-    project_name: trip?.project_name || '',
-    customer_name: trip?.customer_name || '',
-    customer_position: trip?.customer_position || '',
-    customer_company: trip?.customer_company || '',
-    customer_contact: trip?.customer_contact || '',
     attendeeIds: trip ? initParsed.ids : (currentUser?.id ? [currentUser.id] : []),
     externalAttendees: initParsed.external,
     purpose: trip?.purpose || '',
     notes: trip?.notes || '',
-    trip_result: trip?.trip_result || '',
     approver_id: trip?.approver_id || approvers[0]?.id || '',
     status: trip?.status || 'draft',
   })
@@ -462,16 +307,9 @@ function BizTripModal({ trip, currentUser, approvers, staffList, tripPolicy, onC
       end_time: form.all_day ? null : form.end_time,
       duration_hours: duration,
       location: form.location,
-      project_code: form.project_code || null,
-      project_name: form.project_name || null,
-      customer_name: form.customer_name || null,
-      customer_position: form.customer_position || null,
-      customer_company: form.customer_company || null,
-      customer_contact: form.customer_contact || null,
       attendees: attendeesStr,
       purpose: form.purpose,
       notes: form.notes,
-      trip_result: form.trip_result || null,
       approver_id: form.approver_id || null,
       status,
       allowance,
@@ -496,9 +334,8 @@ function BizTripModal({ trip, currentUser, approvers, staffList, tripPolicy, onC
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto"
-        onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
         <div className="p-5 border-b border-gray-100 flex items-start justify-between">
           <div>
             <div className="text-sm font-semibold text-gray-800">
@@ -560,23 +397,6 @@ function BizTripModal({ trip, currentUser, approvers, staffList, tripPolicy, onC
             </div>
             <div className="text-sm font-bold text-purple-700 tabular-nums">
               출장수당 {allowance.toLocaleString('ko-KR')}원
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">프로젝트 코드</label>
-              <input className="input" disabled={isReadOnly}
-                placeholder="예: 2026-SF-001"
-                value={form.project_code}
-                onChange={e => setForm(f => ({ ...f, project_code: e.target.value }))} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">프로젝트 명</label>
-              <input className="input" disabled={isReadOnly}
-                placeholder="예: 스마트생태공장"
-                value={form.project_name}
-                onChange={e => setForm(f => ({ ...f, project_name: e.target.value }))} />
             </div>
           </div>
 
@@ -666,25 +486,7 @@ function BizTripModal({ trip, currentUser, approvers, staffList, tripPolicy, onC
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">고객정보</label>
-            <div className="grid grid-cols-2 gap-2">
-              <input className="input" disabled={isReadOnly} placeholder="성명"
-                value={form.customer_name}
-                onChange={e => setForm(f => ({ ...f, customer_name: e.target.value }))} />
-              <input className="input" disabled={isReadOnly} placeholder="직위"
-                value={form.customer_position}
-                onChange={e => setForm(f => ({ ...f, customer_position: e.target.value }))} />
-              <input className="input" disabled={isReadOnly} placeholder="업체명"
-                value={form.customer_company}
-                onChange={e => setForm(f => ({ ...f, customer_company: e.target.value }))} />
-              <input className="input" disabled={isReadOnly} placeholder="연락처"
-                value={form.customer_contact}
-                onChange={e => setForm(f => ({ ...f, customer_contact: e.target.value }))} />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">출장목적 *</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1">출장 내용 *</label>
             <textarea className="input min-h-[80px]" disabled={isReadOnly}
               placeholder="회의 내용, 진행 사항 등 자세히 작성"
               value={form.purpose}
@@ -701,14 +503,6 @@ function BizTripModal({ trip, currentUser, approvers, staffList, tripPolicy, onC
                 <option key={a.id} value={a.id}>{a.name} ({a.grade})</option>
               ))}
             </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">출장결과</label>
-            <textarea className="input min-h-[100px] resize-y" disabled={isReadOnly}
-              placeholder="출장 결과, 협의 내용, 후속 조치 등을 입력하세요."
-              value={form.trip_result}
-              onChange={e => setForm(f => ({ ...f, trip_result: e.target.value }))} />
           </div>
 
           <div>
