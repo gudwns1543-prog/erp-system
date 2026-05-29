@@ -24,140 +24,6 @@ function isWeekend(dateStr: string): boolean {
   return d === 0 || d === 6
 }
 
-function parseTripInternalUserIds(trip: any): string[] {
-  const raw = trip?.attendees || ''
-  const idsPart = raw.split('|')[0] || ''
-  const internalIds = idsPart.startsWith('staff:')
-    ? idsPart.replace('staff:', '').split(';').filter(Boolean)
-    : []
-  return Array.from(new Set([trip?.user_id, ...internalIds].filter(Boolean)))
-}
-
-function isTripParticipant(trip: any, userId?: string): boolean {
-  if (!userId || !trip) return false
-  if (trip.user_id === userId) return true
-  return parseTripInternalUserIds(trip).includes(userId)
-}
-
-function getTripNote(trip: any): string {
-  const tripDuration = trip?.all_day ? 8 : Number(trip?.duration_hours || 0)
-  return tripDuration >= 4 ? '출장(장)' : '출장(단)'
-}
-
-function removeTripText(note: string | null | undefined): string | null {
-  const cleaned = String(note || '')
-    .replace(/\s*·\s*출장(?:\([장단]\))?/g, '')
-    .replace(/출장(?:\([장단]\))?\s*·\s*/g, '')
-    .replace(/^출장(?:\([장단]\))?$/g, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim()
-  return cleaned || null
-}
-
-async function applyBusinessTripAttendance(supabase: any, trip: any) {
-  const allUserIds = parseTripInternalUserIds(trip)
-  const regH = trip.all_day ? 8 : Math.min(8, Number(trip.duration_hours || 0))
-  const tripNote = getTripNote(trip)
-
-  for (const userId of allUserIds) {
-    const { data: existingLinks } = await supabase.from('business_trip_attendance_links')
-      .select('id, attendance_id')
-      .eq('business_trip_id', trip.id)
-      .eq('user_id', userId)
-      .limit(1)
-
-    if (existingLinks && existingLinks.length > 0) continue
-
-    const { data: existingRows } = await supabase.from('attendance')
-      .select('id, note')
-      .eq('user_id', userId)
-      .eq('work_date', trip.trip_date)
-      .order('created_at', { ascending: true })
-      .limit(1)
-
-    let attendanceId = existingRows?.[0]?.id
-
-    if (attendanceId) {
-      const oldNote = existingRows?.[0]?.note || ''
-      const nextNote = oldNote.includes('출장')
-        ? oldNote
-        : oldNote ? `${oldNote} · ${tripNote}` : tripNote
-
-      if (nextNote !== oldNote) {
-        await supabase.from('attendance').update({ note: nextNote }).eq('id', attendanceId)
-      }
-    } else {
-      const { data: inserted } = await supabase.from('attendance').insert({
-        user_id: userId,
-        work_date: trip.trip_date,
-        check_in: trip.all_day ? '09:00:00' : (trip.start_time || '09:00:00'),
-        check_out: trip.all_day ? '18:00:00' : (trip.end_time || '18:00:00'),
-        reg_hours: regH,
-        ext_hours: 0,
-        night_hours: 0,
-        hol_hours: 0,
-        hol_eve_hours: 0,
-        hol_night_hours: 0,
-        note: tripNote,
-        is_holiday: false,
-      }).select('id').single()
-      attendanceId = inserted?.id
-    }
-
-    if (attendanceId) {
-      await supabase.from('business_trip_attendance_links').upsert({
-        business_trip_id: trip.id,
-        user_id: userId,
-        attendance_id: attendanceId,
-        trip_date: trip.trip_date,
-      }, { onConflict: 'business_trip_id,user_id' })
-    }
-  }
-}
-
-async function clearBusinessTripAttendance(supabase: any, trip: any) {
-  const allUserIds = parseTripInternalUserIds(trip)
-
-  for (const userId of allUserIds) {
-    const { data: links } = await supabase.from('business_trip_attendance_links')
-      .select('id, attendance_id')
-      .eq('business_trip_id', trip.id)
-      .eq('user_id', userId)
-
-    await supabase.from('business_trip_attendance_links')
-      .delete()
-      .eq('business_trip_id', trip.id)
-      .eq('user_id', userId)
-
-    const { data: remainLinks } = await supabase.from('business_trip_attendance_links')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('trip_date', trip.trip_date)
-      .limit(1)
-
-    if (remainLinks && remainLinks.length > 0) continue
-
-    const attendanceId = links?.[0]?.attendance_id
-    if (!attendanceId) continue
-
-    const { data: existing } = await supabase.from('attendance')
-      .select('id, note')
-      .eq('id', attendanceId)
-      .maybeSingle()
-
-    if (!existing) continue
-
-    if (['출장(장)', '출장(단)', '출장'].includes(existing.note || '')) {
-      await supabase.from('attendance').delete().eq('id', existing.id)
-    } else if (String(existing.note || '').includes('출장')) {
-      await supabase.from('attendance').update({
-        note: removeTripText(existing.note),
-      }).eq('id', existing.id)
-    }
-  }
-}
-
-
 export default function ApprovalPage() {
   const [profile, setProfile] = useState<any>(null)
   const [all, setAll] = useState<any[]>([])
@@ -198,18 +64,40 @@ export default function ApprovalPage() {
       // 본인 작성 보고서가 draft 상태로 남아있어도 'sent'에는 포함
     })
 
+    const mapMobileAttendance = (r: any) => ({
+      ...r,
+      kind: 'mobile_attendance',
+      requester_id: r.user_id,
+      requester: r.user,
+      type: r.request_type === 'business_trip' ? '📱 모바일 출장출근'
+        : r.request_type === 'training' ? '📱 모바일 교육출근'
+        : r.request_type === 'exception' ? '📱 모바일 예외출근'
+        : '📱 모바일 외근출근',
+      start_date: r.work_date,
+      end_date: r.work_date,
+      start_time: r.requested_time,
+      end_time: r.requested_time,
+      reason: `[사유] ${r.reason || ''}
+[판단] ${r.decision_reason || ''}
+[위치] ${r.distance_meters == null ? '-' : r.distance_meters + 'm'} / GPS ${r.accuracy ? Math.round(r.accuracy) + 'm' : '-'}`,
+      approver: r.approver,
+    })
+
     // 보낸 결재 = 일반 결재 + 본인 작성 출장 (draft/pending/approved/rejected 모두)
     const { data: sentAppr } = await supabase.from('approvals')
       .select('*, requester:requester_id(name,dept,color,tc), approver:approver_id(name)')
       .eq('requester_id', session.user.id).order('created_at',{ascending:false})
     const { data: sentTrips } = await supabase.from('business_trips')
       .select('*, user:user_id(id,name,dept,color,tc), approver:approver_id(name)')
-      .neq('status', 'draft') // draft는 결재함에 노출 안 함
-      .or(`user_id.eq.${session.user.id},attendees.ilike.%${session.user.id}%`)
+      .eq('user_id', session.user.id).neq('status', 'draft') // draft는 결재함에 노출 안 함
       .order('created_at',{ascending:false})
+    const { data: sentMobile } = await supabase.from('mobile_attendance_requests')
+      .select('*, user:profiles!mobile_attendance_requests_user_id_fkey(id,name,dept,color,tc), approver:profiles!mobile_attendance_requests_approver_id_fkey(id,name)')
+      .eq('user_id', session.user.id).order('created_at',{ascending:false})
     const sentMerged = [
       ...(sentAppr || []).map((a: any) => ({ ...a, kind: 'approval' })),
       ...(sentTrips || []).map(mapBizTrip),
+      ...(sentMobile || []).map(mapMobileAttendance),
     ].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
     setSent(sentMerged)
 
@@ -221,9 +109,13 @@ export default function ApprovalPage() {
       const { data: inboxTrips } = await supabase.from('business_trips')
         .select('*, user:user_id(id,name,dept,color,tc), approver:approver_id(name)')
         .eq('approver_id', session.user.id).eq('status','pending').order('created_at',{ascending:false})
+      const { data: inboxMobile } = await supabase.from('mobile_attendance_requests')
+        .select('*, user:profiles!mobile_attendance_requests_user_id_fkey(id,name,dept,color,tc), approver:profiles!mobile_attendance_requests_approver_id_fkey(id,name)')
+        .eq('status','pending').order('created_at',{ascending:false})
       const inboxMerged = [
         ...(inboxAppr || []).map((a: any) => ({ ...a, kind: 'approval' })),
         ...(inboxTrips || []).map(mapBizTrip),
+        ...(inboxMobile || []).map(mapMobileAttendance),
       ].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
       setInbox(inboxMerged)
 
@@ -234,9 +126,13 @@ export default function ApprovalPage() {
       const { data: allTrips } = await supabase.from('business_trips')
         .select('*, user:user_id(id,name,dept,color,tc), approver:approver_id(name)')
         .neq('status', 'draft').order('created_at',{ascending:false})
+      const { data: allMobile } = await supabase.from('mobile_attendance_requests')
+        .select('*, user:profiles!mobile_attendance_requests_user_id_fkey(id,name,dept,color,tc), approver:profiles!mobile_attendance_requests_approver_id_fkey(id,name)')
+        .order('created_at',{ascending:false})
       const allMerged = [
         ...(allAppr || []).map((a: any) => ({ ...a, kind: 'approval' })),
         ...(allTrips || []).map(mapBizTrip),
+        ...(allMobile || []).map(mapMobileAttendance),
       ].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
       setAll(allMerged)
       setTab('inbox')
@@ -268,6 +164,7 @@ export default function ApprovalPage() {
   // 철회 권한: 결재자 본인 또는 이사급 이상 (본인 신청건은 철회 불가)
   function canRevoke(r: any): boolean {
     if (!profile) return false
+    if (r.kind === 'mobile_attendance') return false
     if (r.status !== 'approved' && r.status !== 'rejected') return false
     // 셀프 철회 차단
     const isMyRequest = r.kind === 'biztrip'
@@ -280,20 +177,105 @@ export default function ApprovalPage() {
     return false
   }
 
-  async function handle(id: string, status: 'approved'|'rejected', kind: 'approval' | 'biztrip' = 'approval') {
+  async function handle(id: string, status: 'approved'|'rejected', kind: 'approval' | 'biztrip' | 'mobile_attendance' = 'approval') {
     const supabase = createClient()
+
+    if (kind === 'mobile_attendance') {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+      const res = await fetch('/api/mobile-attendance/admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ id, action: status === 'approved' ? 'approve' : 'reject' }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setAlert('처리 실패: ' + (json.error || '모바일 출근 처리 실패'))
+        setTimeout(() => setAlert(''), 3000)
+        return
+      }
+      setAlert(status === 'approved' ? '✅ 모바일 출근 승인 완료' : '❌ 모바일 출근 반려 완료')
+      setShowDetail(null)
+      setTimeout(() => setAlert(''), 3000)
+      load()
+      return
+    }
 
     // 출장 결재 처리
     if (kind === 'biztrip') {
-      const { data: trip } = await supabase.from('business_trips')
-        .select('*').eq('id', id).single()
+      // 승인 시 - 출장 보고서의 모든 참석자(작성자 + 내부 참석자)에 대해 attendance 기록 자동 등록
+      if (status === 'approved') {
+        const { data: trip } = await supabase.from('business_trips')
+          .select('*').eq('id', id).single()
+        if (trip) {
+          // 참석자 ID 목록 파싱 ('staff:uuid1;uuid2|외부텍스트')
+          const raw = trip.attendees || ''
+          const parts = raw.split('|')
+          const idsPart = parts[0] || ''
+          const internalIds = idsPart.startsWith('staff:')
+            ? idsPart.replace('staff:', '').split(';').filter(Boolean)
+            : []
+          // 작성자도 포함 (중복 제거)
+          const allUserIds = Array.from(new Set([trip.user_id, ...internalIds]))
 
-      if (trip) {
-        if (status === 'approved') {
-          await applyBusinessTripAttendance(supabase, trip)
+          // 시간 계산 (종일이면 정규 8시간, 아니면 duration_hours를 정규시간으로)
+          const regH = trip.all_day ? 8 : Math.min(8, Number(trip.duration_hours || 0))
+          // 출장 종류 (4시간 기준)
+          const tripDuration = trip.all_day ? 8 : Number(trip.duration_hours || 0)
+          const tripNote = tripDuration >= 4 ? '출장(장)' : '출장(단)' // 장=4h이상, 단=4h미만
+
+          for (const userId of allUserIds) {
+            // 이미 그 날짜에 attendance 있으면 출장 표시만 추가, 없으면 새로 등록
+            const { data: existing } = await supabase.from('attendance')
+              .select('id, note').eq('user_id', userId).eq('work_date', trip.trip_date).maybeSingle()
+            if (existing) {
+              // 기존 기록에 출장 표시만 추가 (note 갱신, 시간은 건드리지 않음)
+              await supabase.from('attendance').update({
+                note: existing.note ? existing.note + ' · ' + tripNote : tripNote,
+              }).eq('id', existing.id)
+            } else {
+              // 신규 등록 - 출장 시간을 정규 근무로 기록
+              await supabase.from('attendance').insert({
+                user_id: userId,
+                work_date: trip.trip_date,
+                check_in: trip.all_day ? '09:00:00' : (trip.start_time || '09:00:00'),
+                check_out: trip.all_day ? '18:00:00' : (trip.end_time || '18:00:00'),
+                reg_hours: regH,
+                ext_hours: 0,
+                night_hours: 0,
+                hol_hours: 0,
+                hol_eve_hours: 0,
+                hol_night_hours: 0,
+                note: tripNote,
+                is_holiday: false,
+              })
+            }
+          }
         }
-        if (status === 'rejected') {
-          await clearBusinessTripAttendance(supabase, trip)
+      }
+      // 반려 시 - 이미 등록된 출장 attendance 정리 (만약 이전 승인 후 다시 반려된 경우)
+      if (status === 'rejected') {
+        const { data: trip } = await supabase.from('business_trips').select('user_id, trip_date, attendees').eq('id', id).single()
+        if (trip) {
+          const raw = trip.attendees || ''
+          const idsPart = raw.split('|')[0] || ''
+          const internalIds = idsPart.startsWith('staff:')
+            ? idsPart.replace('staff:', '').split(';').filter(Boolean) : []
+          const allUserIds = Array.from(new Set([trip.user_id, ...internalIds]))
+          for (const userId of allUserIds) {
+            // note에 '출장'만 있으면 삭제, 다른 내용도 있으면 출장만 제거
+            const { data: existing } = await supabase.from('attendance')
+              .select('id, note').eq('user_id', userId).eq('work_date', trip.trip_date).maybeSingle()
+            if (existing) {
+              if (['출장(장)','출장(단)','출장'].includes(existing.note)) {
+                await supabase.from('attendance').delete().eq('id', existing.id)
+              } else if (existing.note?.includes('출장')) {
+                await supabase.from('attendance').update({
+                  note: existing.note.replace(/\s*·?\s*출장(?:\([장단]\))?/, '').replace(/^·\s*/, '') || null
+                }).eq('id', existing.id)
+              }
+            }
+          }
         }
       }
 
@@ -305,7 +287,7 @@ export default function ApprovalPage() {
         return
       }
       setAlert(status === 'approved'
-        ? '✅ 출장 보고서 승인 완료 (작성자와 내부 동행자의 근태기록에 출장 등록됨)'
+        ? '✅ 출장 보고서 승인 완료 (참석자 전원의 근태기록에 출장 등록됨)'
         : '❌ 출장 보고서가 반려되었습니다.')
       setShowDetail(null)
       setTimeout(() => setAlert(''), 3000)
@@ -516,9 +498,26 @@ export default function ApprovalPage() {
         (trip.status === 'approved' ? '\n\n참석자들의 근태기록에서 출장 표시도 함께 삭제됩니다.' : '')
       if (!confirm(msg)) return
 
-      // 승인 상태였으면 해당 출장 문서와 연결된 attendance 표시만 정리
+      // 승인 상태였으면 attendance 정리
       if (trip.status === 'approved') {
-        await clearBusinessTripAttendance(supabase, trip)
+        const raw = trip.attendees || ''
+        const idsPart = raw.split('|')[0] || ''
+        const internalIds = idsPart.startsWith('staff:')
+          ? idsPart.replace('staff:', '').split(';').filter(Boolean) : []
+        const allUserIds = Array.from(new Set([trip.user_id, ...internalIds]))
+        for (const userId of allUserIds) {
+          const { data: existing } = await supabase.from('attendance')
+            .select('id, note').eq('user_id', userId).eq('work_date', trip.trip_date).maybeSingle()
+          if (existing) {
+            if (['출장(장)','출장(단)','출장'].includes(existing.note)) {
+              await supabase.from('attendance').delete().eq('id', existing.id)
+            } else if (existing.note?.includes('출장')) {
+              await supabase.from('attendance').update({
+                note: existing.note.replace(/\s*·?\s*출장(?:\([장단]\))?/, '').replace(/^·\s*/, '') || null
+              }).eq('id', existing.id)
+            }
+          }
+        }
       }
 
       const { error } = await supabase.from('business_trips')
@@ -571,99 +570,6 @@ export default function ApprovalPage() {
     setTimeout(()=>setAlert(''),3000)
   }
 
-  function canDelete(r: any) {
-    if (!r || !profile) return false
-    // 대기/반려 문서는 신청자·결재자·관리자 삭제 가능
-    if (r.status === 'pending' || r.status === 'rejected') {
-      return r.requester_id === profile.id || r.approver_id === profile.id || profile.role === 'director'
-    }
-    // 승인 문서는 관리자/결재자만 삭제 가능. 삭제 시 관련 근태/캘린더도 정리합니다.
-    return r.status === 'approved' && (r.approver_id === profile.id || profile.role === 'director')
-  }
-
-  function canEdit(r: any) {
-    if (!r || !profile) return false
-    // 우선 대기 상태의 본인 작성 문서만 수정 진입 허용
-    return r.status === 'pending' && r.requester_id === profile.id
-  }
-
-  function handleEdit(r: any) {
-    if (!r) return
-    if (r.kind === 'biztrip') {
-      window.location.href = '/dashboard/biztrip'
-      return
-    }
-    if (['연차','반차(오전)','반차(오후)','반반차','병가','공가','특별휴가'].includes(r.type)) {
-      window.location.href = '/dashboard/leave'
-      return
-    }
-    if (r.type === '외근') {
-      window.location.href = '/dashboard/biztrip'
-      return
-    }
-    window.alert('이 문서는 별도 수정 화면이 없어 삭제 후 다시 작성하는 방식으로 처리해 주세요.')
-  }
-
-  async function handleDelete(r: any) {
-    if (!r || !canDelete(r)) return
-    const statusKr = r.status === 'approved' ? '승인' : r.status === 'rejected' ? '반려' : '대기'
-    const cleanupMsg = r.status === 'approved'
-      ? '\n\n승인 문서이므로 관련 근태기록/캘린더/출장 연결 기록도 함께 정리됩니다.'
-      : ''
-    if (!confirm(`이 ${statusKr} 결재 문서를 삭제하시겠습니까?${cleanupMsg}`)) return
-
-    const supabase = createClient()
-
-    if (r.kind === 'biztrip') {
-      const { data: trip } = await supabase.from('business_trips').select('*').eq('id', r.id).single()
-      if (trip?.status === 'approved') {
-        await clearBusinessTripAttendance(supabase, trip)
-      }
-      await supabase.from('business_trip_attendance_links').delete().eq('business_trip_id', r.id)
-      const { error } = await supabase.from('business_trips').delete().eq('id', r.id)
-      if (error) {
-        setAlert('삭제 실패: ' + error.message)
-        setTimeout(() => setAlert(''), 3000)
-        return
-      }
-      setAlert('출장 결재 문서가 삭제되었습니다.')
-      setShowDetail(null)
-      load()
-      setTimeout(() => setAlert(''), 3000)
-      return
-    }
-
-    // 승인된 일반 결재 삭제 시 근태/캘린더 정리
-    if (r.status === 'approved') {
-      const dates = getDateRange(r.start_date, r.end_date || r.start_date)
-      for (const dateStr of dates) {
-        await supabase.from('attendance')
-          .delete()
-          .eq('user_id', r.requester_id)
-          .eq('work_date', dateStr)
-          .eq('note', r.type)
-      }
-      await supabase.from('events')
-        .delete()
-        .eq('creator_id', r.requester_id)
-        .eq('is_locked', true)
-        .like('title', `[${r.type}]%`)
-        .gte('start_at', `${r.start_date}T00:00:00`)
-        .lte('start_at', `${(r.end_date || r.start_date)}T23:59:59`)
-    }
-
-    const { error } = await supabase.from('approvals').delete().eq('id', r.id)
-    if (error) {
-      setAlert('삭제 실패: ' + error.message)
-      setTimeout(() => setAlert(''), 3000)
-      return
-    }
-    setAlert('결재 문서가 삭제되었습니다.')
-    setShowDetail(null)
-    load()
-    setTimeout(() => setAlert(''), 3000)
-  }
-
   const Badge = ({s}:{s:string}) => (
     <span className={s==='pending'?'badge-pending':s==='approved'?'badge-approved':'badge-rejected'}>
       {s==='pending'?'대기':s==='approved'?'승인':'반려'}
@@ -714,9 +620,6 @@ export default function ApprovalPage() {
                     {canRevoke(r) && (
                       <button onClick={()=>handleRevoke(r.id, r.kind)} className="btn-secondary text-xs px-2 py-1 text-orange-600 border-orange-200 hover:bg-orange-50">철회</button>
                     )}
-                    {canDelete(r) && (
-                      <button onClick={()=>handleDelete(r)} className="btn-danger text-xs px-2 py-1">삭제</button>
-                    )}
                   </div>
                 </td>
               </tr>
@@ -753,26 +656,16 @@ export default function ApprovalPage() {
 
       {/* 결재 문서 상세 모달 */}
       {showDetail && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3">
-          <div className="bg-white rounded-xl w-full max-w-2xl shadow-xl max-h-[88vh] flex flex-col overflow-hidden">
-            <div className="p-5 border-b border-gray-100 flex items-center justify-between gap-4 flex-shrink-0">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-md shadow-xl">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
               <div>
                 <div className="text-base font-semibold text-gray-800">결재 문서</div>
                 <div className="text-xs text-gray-400 mt-0.5">{showDetail.created_at?.slice(0,16).replace('T',' ')} 신청</div>
               </div>
-              <div className="flex items-center gap-3">
-                <Badge s={showDetail.status} />
-                <button
-                  onClick={()=>setShowDetail(null)}
-                  className="w-8 h-8 rounded-full border border-gray-200 text-gray-400 hover:text-gray-700 hover:bg-gray-50 flex items-center justify-center text-lg"
-                  aria-label="닫기"
-                  title="닫기"
-                >
-                  ×
-                </button>
-              </div>
+              <Badge s={showDetail.status} />
             </div>
-            <div className="p-5 space-y-3 overflow-y-auto flex-1">
+            <div className="p-5 space-y-3">
               {[
                 {label:'신청자', val:(showDetail.requester as any)?.name || profile?.name},
                 {label:'부서', val:(showDetail.requester as any)?.dept || profile?.dept},
@@ -835,16 +728,8 @@ export default function ApprovalPage() {
                 </div>
               </div>
             </div>
-            <div className="p-4 border-t border-gray-100 flex gap-2 justify-end flex-wrap flex-shrink-0 bg-white">
+            <div className="p-4 border-t border-gray-100 flex gap-2 justify-end">
               <button onClick={()=>setShowDetail(null)} className="btn-secondary text-sm">닫기</button>
-
-              {canEdit(showDetail) && (
-                <button onClick={()=>handleEdit(showDetail)}
-                  className="btn-secondary text-sm text-blue-700 border-blue-200 hover:bg-blue-50">
-                  수정
-                </button>
-              )}
-
               {canApprove(showDetail) && (
                 <>
                   <button onClick={()=>handle(showDetail.id,'rejected', showDetail.kind)} className="btn-danger text-sm">반려</button>
@@ -852,17 +737,10 @@ export default function ApprovalPage() {
                     className="btn-secondary text-sm text-green-700 border-green-200 hover:bg-green-50">승인</button>
                 </>
               )}
-
               {canRevoke(showDetail) && (
                 <button onClick={()=>handleRevoke(showDetail.id, showDetail.kind)}
                   className="btn-secondary text-sm text-orange-600 border-orange-200 hover:bg-orange-50">
                   {showDetail.status==='approved' ? '승인 철회' : '반려 철회'}
-                </button>
-              )}
-
-              {canDelete(showDetail) && (
-                <button onClick={()=>handleDelete(showDetail)} className="btn-danger text-sm">
-                  삭제
                 </button>
               )}
             </div>

@@ -1,113 +1,105 @@
+
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  { auth: { autoRefreshToken: false, persistSession: false } }
+  { auth: { persistSession: false } }
 )
 
-function kstNow() {
-  return new Date(Date.now() + 9 * 60 * 60 * 1000)
-}
 function todayStr() {
-  return kstNow().toISOString().slice(0, 10)
+  const now = new Date()
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000)
+  return `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}`
 }
 function nowTimeStr() {
-  const d = kstNow()
-  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}:${String(d.getUTCSeconds()).padStart(2, '0')}`
+  const now = new Date()
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000)
+  return `${String(kst.getUTCHours()).padStart(2,'0')}:${String(kst.getUTCMinutes()).padStart(2,'0')}:${String(kst.getUTCSeconds()).padStart(2,'0')}`
 }
-function clientIp(req: NextRequest) {
-  const xf = req.headers.get('x-forwarded-for') || ''
-  return xf.split(',')[0]?.trim() || req.headers.get('x-real-ip') || 'unknown'
+function nowKstIso() {
+  return new Date().toISOString()
 }
 function isMobileUA(ua: string) {
-  return /Mobile|Android|iPhone|iPad|iPod|Windows Phone/i.test(ua || '')
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(ua || '')
 }
-function allowIps() {
-  return (process.env.COMPANY_ALLOWED_IPS || '')
-    .split(',').map(v => v.trim()).filter(Boolean)
-}
-function isAllowedCompanyIp(ip: string) {
-  const list = allowIps()
-  if (!list.length || !ip || ip === 'unknown') return false
-  return list.some(v => ip === v || ip.startsWith(v))
-}
-function toNumber(v: any) {
-  const n = Number(v)
-  return Number.isFinite(n) ? n : null
+function getIp(req: NextRequest) {
+  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || req.headers.get('x-real-ip') || ''
 }
 function distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
   const R = 6371000
-  const toRad = (x: number) => x * Math.PI / 180
-  const dLat = toRad(lat2 - lat1)
-  const dLon = toRad(lon2 - lon1)
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2
-  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)))
-}
-function companyLocation() {
-  const lat = toNumber(process.env.COMPANY_LATITUDE)
-  const lng = toNumber(process.env.COMPANY_LONGITUDE)
-  const radius = toNumber(process.env.COMPANY_RADIUS_METERS) || 150
-  if (lat === null || lng === null) return null
-  return { lat, lng, radius }
+  const toRad = (v: number) => v * Math.PI / 180
+  const dLat = toRad(lat2-lat1)
+  const dLon = toRad(lon2-lon1)
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)))
 }
 async function getUser(req: NextRequest) {
-  const auth = req.headers.get('authorization') || ''
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
-  if (!token) return { user: null, error: '로그인이 필요합니다.' }
+  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
+  if (!token) return { user: null as any, error: '로그인이 필요합니다.' }
   const { data, error } = await supabaseAdmin.auth.getUser(token)
-  if (error || !data.user) return { user: null, error: '로그인 정보가 만료되었습니다.' }
-  return { user: data.user, error: null }
+  if (error || !data.user) return { user: null as any, error: '로그인이 만료되었습니다.' }
+  return { user: data.user, error: null as any }
 }
 async function getDirectorId() {
   const { data } = await supabaseAdmin.from('profiles')
-    .select('id, grade, role')
-    .eq('status', 'active')
-    .eq('role', 'director')
-    .limit(1)
-    .maybeSingle()
-  return data?.id || null
+    .select('id,name,grade,role')
+    .eq('status','active')
+    .eq('role','director')
+  const sorted = (data || []).sort((a:any,b:any) => {
+    if (a.name === '박팔주') return -1
+    if (b.name === '박팔주') return 1
+    return (a.name || '').localeCompare(b.name || '', 'ko')
+  })
+  return sorted[0]?.id || null
 }
-function decision(req: NextRequest, gps: any) {
-  const ip = clientIp(req)
-  const ua = req.headers.get('user-agent') || ''
-  const mobile = isMobileUA(ua)
-  const companyIp = isAllowedCompanyIp(ip)
-  const cfg = companyLocation()
-  const lat = toNumber(gps?.latitude)
-  const lng = toNumber(gps?.longitude)
-  const accuracy = toNumber(gps?.accuracy)
-  let distance: number | null = null
-  let inCompanyRadius = false
-  if (cfg && lat !== null && lng !== null) {
-    distance = distanceMeters(cfg.lat, cfg.lng, lat, lng)
-    inCompanyRadius = distance <= cfg.radius
-  }
-  const hasGps = lat !== null && lng !== null
-  const normal = companyIp || inCompanyRadius
-  const needsApproval = !normal
-  const reason = companyIp
-    ? '회사 허용 IP에서 접속'
-    : inCompanyRadius
-      ? `회사 위치 반경 내 접속${distance !== null ? ` (${distance}m)` : ''}`
-      : hasGps
-        ? `회사 위치 반경 밖 접속${distance !== null ? ` (${distance}m)` : ''}`
-        : 'GPS 위치 확인 불가 또는 권한 거부'
-  return { ip, ua, mobile, companyIp, hasGps, lat, lng, accuracy, distance, inCompanyRadius, needsApproval, reason }
-}
-
-async function getNextSeq(userId: string, workDate: string) {
+async function nextSeq(userId: string, workDate: string) {
   const { data } = await supabaseAdmin.from('attendance')
-    .select('seq, check_in, check_out')
+    .select('seq')
     .eq('user_id', userId)
     .eq('work_date', workDate)
     .order('seq', { ascending: false })
-    .order('created_at', { ascending: false })
-  const rows = data || []
-  const open = rows.find((s:any) => s.check_in && !s.check_out)
-  const maxSeq = rows.reduce((max:number, s:any) => Math.max(max, Number(s.seq || 1)), 0)
-  return { nextSeq: maxSeq + 1, open }
+    .limit(1)
+  return Number(data?.[0]?.seq || 0) + 1
+}
+function requestTypeLabel(t: string) {
+  if (t === 'business_trip') return '출장'
+  if (t === 'training') return '교육'
+  if (t === 'exception') return '예외'
+  return '외근'
+}
+function noteForType(t: string) {
+  if (t === 'business_trip') return '모바일 출장출근 승인'
+  if (t === 'training') return '모바일 교육출근 승인'
+  if (t === 'exception') return '모바일 예외출근 승인'
+  return '모바일 외근출근 승인'
+}
+function makeDecision(req: NextRequest, gps: any, attendanceType: string) {
+  const ua = req.headers.get('user-agent') || ''
+  const ip = getIp(req)
+  const lat = Number(gps?.lat ?? gps?.latitude)
+  const lng = Number(gps?.lng ?? gps?.longitude)
+  const accuracy = Number(gps?.accuracy || 0)
+  const hasGps = Number.isFinite(lat) && Number.isFinite(lng)
+  const officeLat = Number(process.env.OFFICE_LAT || process.env.NEXT_PUBLIC_OFFICE_LAT || 0)
+  const officeLng = Number(process.env.OFFICE_LNG || process.env.NEXT_PUBLIC_OFFICE_LNG || 0)
+  const radius = Number(process.env.OFFICE_RADIUS_M || process.env.NEXT_PUBLIC_OFFICE_RADIUS_M || 150)
+  const hasOffice = !!officeLat && !!officeLng
+  const distance = hasGps && hasOffice ? distanceMeters(lat, lng, officeLat, officeLng) : null
+  const inCompanyRadius = distance !== null && distance <= radius
+  const mobile = isMobileUA(ua)
+
+  const externalType = ['business_trip','training','outside_work','exception'].includes(attendanceType)
+  let needsApproval = externalType
+  let reason = externalType ? `${requestTypeLabel(attendanceType)} 출근 신청` : '회사 출근'
+
+  if (!externalType) {
+    if (!hasGps) { needsApproval = true; reason = 'GPS 위치정보 없음' }
+    else if (accuracy && accuracy > 300) { needsApproval = true; reason = `GPS 정확도 낮음(${Math.round(accuracy)}m)` }
+    else if (hasOffice && !inCompanyRadius) { needsApproval = true; reason = `회사 반경 밖(${distance}m)` }
+  }
+  return { ip, ua, mobile, lat: hasGps ? lat : null, lng: hasGps ? lng : null, accuracy: accuracy || null, distance, inCompanyRadius, needsApproval, reason }
 }
 
 export async function GET(req: NextRequest) {
@@ -116,7 +108,7 @@ export async function GET(req: NextRequest) {
   const ds = todayStr()
   const { data: profile } = await supabaseAdmin.from('profiles').select('*').eq('id', user.id).maybeSingle()
   const { data: sessions } = await supabaseAdmin.from('attendance')
-    .select('*').eq('user_id', user.id).eq('work_date', ds).order('created_at', { ascending: true })
+    .select('*').eq('user_id', user.id).eq('work_date', ds).order('seq', { ascending: true }).order('created_at', { ascending: true })
   const { data: pending } = await supabaseAdmin.from('mobile_attendance_requests')
     .select('*').eq('user_id', user.id).eq('work_date', ds).eq('status', 'pending').order('created_at', { ascending: false })
   return NextResponse.json({ ok: true, today: ds, now: nowTimeStr(), profile, sessions: sessions || [], pending: pending || [] })
@@ -125,18 +117,21 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const { user, error } = await getUser(req)
   if (!user) return NextResponse.json({ error }, { status: 401 })
-
   const body = await req.json().catch(() => ({}))
   const action = body.action
-  const gps = body.gps || {}
   const memo = String(body.memo || '').trim()
-  const attendanceType = body.attendanceType || 'outside_work'
+  const attendanceType = String(body.attendanceType || 'normal')
+  const gps = body.gps || {}
   const ds = todayStr()
   const t = nowTimeStr()
-  const d = decision(req, gps)
+  const d = makeDecision(req, gps, attendanceType)
 
   if (action === 'checkin') {
-    const { nextSeq, open } = await getNextSeq(user.id, ds)
+    const { data: open } = await supabaseAdmin.from('attendance')
+      .select('id,check_in,check_out')
+      .eq('user_id', user.id).eq('work_date', ds)
+      .is('check_out', null).not('check_in', 'is', null)
+      .limit(1).maybeSingle()
     if (open) return NextResponse.json({ error: '이미 근무 중인 출근 기록이 있습니다.' }, { status: 400 })
 
     const { data: pending } = await supabaseAdmin.from('mobile_attendance_requests')
@@ -144,10 +139,11 @@ export async function POST(req: NextRequest) {
     if (pending) return NextResponse.json({ error: '이미 승인 대기 중인 모바일 출근 신청이 있습니다.' }, { status: 400 })
 
     if (!d.needsApproval) {
+      const seq = await nextSeq(user.id, ds)
       const { data, error: insErr } = await supabaseAdmin.from('attendance').insert({
         user_id: user.id,
         work_date: ds,
-        seq: nextSeq,
+        seq,
         check_in: t,
         is_holiday: false,
         note: d.mobile ? '모바일 정상출근' : '정상출근',
@@ -156,15 +152,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, mode: 'approved', message: '출근 처리되었습니다.', record: data, audit: d })
     }
 
-    if (!memo) {
-      return NextResponse.json({ error: '회사 밖 모바일 출근은 출장/교육/외근/예외 사유를 입력해야 합니다.' }, { status: 400 })
-    }
+    const requestType = attendanceType === 'normal' ? 'outside_work' : attendanceType
+    if (!memo) return NextResponse.json({ error: `${requestTypeLabel(requestType)} 출근 사유를 입력해야 합니다.` }, { status: 400 })
     const approverId = await getDirectorId()
     const { data: reqRow, error: reqErr } = await supabaseAdmin.from('mobile_attendance_requests').insert({
       user_id: user.id,
       work_date: ds,
       requested_time: t,
-      request_type: attendanceType,
+      request_type: requestType,
       reason: memo,
       status: 'pending',
       approver_id: approverId,
@@ -178,20 +173,8 @@ export async function POST(req: NextRequest) {
       decision_reason: d.reason,
     }).select('*').single()
     if (reqErr) return NextResponse.json({ error: reqErr.message }, { status: 400 })
-    return NextResponse.json({ ok: true, mode: 'pending', message: '회사 밖 모바일 출근으로 감지되어 관리자 승인 대기로 접수되었습니다.', request: reqRow, audit: d })
+    return NextResponse.json({ ok: true, mode: 'pending', message: '모바일 외부 출근 신청이 관리자 결재함으로 접수되었습니다.', request: reqRow, audit: d })
   }
 
-  if (action === 'checkout') {
-    const { data: open } = await supabaseAdmin.from('attendance')
-      .select('*').eq('user_id', user.id).eq('work_date', ds).is('check_out', null).not('check_in', 'is', null)
-      .order('created_at', { ascending: false }).limit(1).maybeSingle()
-    if (!open) return NextResponse.json({ error: '퇴근 처리할 근무 중 기록이 없습니다.' }, { status: 400 })
-    const { data, error: updErr } = await supabaseAdmin.from('attendance')
-      .update({ check_out: t, note: open.note ? `${open.note} · 모바일퇴근` : '모바일퇴근' })
-      .eq('id', open.id).select('*').single()
-    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 400 })
-    return NextResponse.json({ ok: true, message: '퇴근 처리되었습니다.', record: data, audit: d })
-  }
-
-  return NextResponse.json({ error: '지원하지 않는 작업입니다.' }, { status: 400 })
+  return NextResponse.json({ error: '지원하지 않는 요청입니다.' }, { status: 400 })
 }

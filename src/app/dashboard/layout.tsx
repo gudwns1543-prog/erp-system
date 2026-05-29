@@ -5,7 +5,6 @@ import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
 import AgentChat from '@/components/AgentChat'
-import { getAuthorityLabel, isAdminLike } from '@/lib/org'
 
 const NAV = [
   { group: '홈', items: [
@@ -25,6 +24,7 @@ const NAV = [
     { href: '/dashboard/annual', label: '연차 관리', icon: '📅' },
     { href: '/dashboard/biztrip', label: '출장 보고', icon: '🚗' },
     { href: '/dashboard/approval', label: '결재함', icon: '✅' },
+    { href: '/dashboard/mobile-requests', label: '모바일 출근 승인', icon: '📱', adminOnly: true },
   ]},
   { group: '소통', items: [
     { href: '/dashboard/notice', label: '공지사항', icon: '📢' },
@@ -45,7 +45,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter()
   const pathname = usePathname()
   const [profile, setProfile] = useState<any>(null)
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [pendingCount, setPendingCount] = useState(0)
   const [unreadChat, setUnreadChat] = useState(0)
   const [unreadNotice, setUnreadNotice] = useState(0)
@@ -72,7 +71,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       }
       setProfile(data)
       // 결재 대기
-      if (isAdminLike(data)) {
+      if (data.role === 'director') {
         const { count } = await supabase
           .from('approvals').select('*', { count: 'exact', head: true })
           .eq('approver_id', session.user.id).eq('status', 'pending')
@@ -247,7 +246,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           const supabase2 = createClient()
           const { data: { session } } = await supabase2.auth.getSession()
           if (!session) return
-          if (isAdminLike(profile)) {
+          if (profile.role === 'director') {
             const { count } = await supabase2.from('approvals').select('*',{count:'exact',head:true})
               .eq('approver_id', session.user.id).eq('status','pending')
             setPendingCount(count||0)
@@ -305,7 +304,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       const supabase = createClient()
       supabase.auth.getSession().then(async ({ data: { session } }) => {
         if (!session || !profile) return
-        if (isAdminLike(profile)) {
+        if (profile.role === 'director') {
           const { count } = await supabase.from('approvals')
             .select('*',{count:'exact',head:true})
             .eq('approver_id', session.user.id).eq('status','pending')
@@ -329,14 +328,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       localStorage.setItem(`tasks_read_${profile.id}`, new Date().toISOString())
       setUnreadTasks(0)
     }
-    if (pathname === '/dashboard/signup' && isAdminLike(profile)) {
+    if (pathname === '/dashboard/signup' && profile?.role==='director') {
       setPendingSignup(0)
     }
   }, [pathname, profile])
-
-  useEffect(() => {
-    setMobileMenuOpen(false)
-  }, [pathname])
 
   if (!profile) return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -344,168 +339,106 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     </div>
   )
 
-  const mobileQuickItems = [
-    { href: '/dashboard/home', label: '홈', icon: '🏠' },
-    { href: '/dashboard/calendar', label: '일정', icon: '📅' },
-    { href: '/dashboard/attendance', label: '근태', icon: '⏰' },
-    { href: '/dashboard/approval', label: '결재', icon: '✅' },
-    { href: '/dashboard/tasks', label: '업무', icon: '✔️' },
-  ]
-
-  const renderBadge = (href: string) => (
-    <>
-      {href === '/dashboard/approval' && pendingCount > 0 && (
-        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingCount}</span>
-      )}
-      {href === '/dashboard/chat' && unreadChat > 0 && (
-        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{unreadChat}</span>
-      )}
-      {href === '/dashboard/notice' && unreadNotice > 0 && pathname !== '/dashboard/notice' && (
-        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{unreadNotice}</span>
-      )}
-      {href === '/dashboard/calendar' && pendingInvite > 0 && (
-        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingInvite}</span>
-      )}
-      {href === '/dashboard/leave' && pendingLeave > 0 && (
-        <span className="bg-amber-500 text-white text-xs px-1.5 py-0.5 rounded-full" title="대기 중인 결재">{pendingLeave}</span>
-      )}
-      {href === '/dashboard/leave' && rejectedCount > 0 && pathname !== '/dashboard/leave' && (
-        <span className="bg-orange-500 text-white text-xs px-1.5 py-0.5 rounded-full" title="반려된 결재">⚠️{rejectedCount}</span>
-      )}
-      {href === '/dashboard/leave' && approvedCount > 0 && pathname !== '/dashboard/leave' && (
-        <span className="bg-green-500 text-white text-xs px-1.5 py-0.5 rounded-full" title="새로 승인된 결재">✓{approvedCount}</span>
-      )}
-      {href === '/dashboard/tasks' && unreadTasks > 0 && pathname !== '/dashboard/tasks' && (
-        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{unreadTasks}</span>
-      )}
-      {href === '/dashboard/signup' && pendingSignup > 0 && isAdminLike(profile) && (
-        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingSignup}</span>
-      )}
-    </>
-  )
-
-  const sidebar = (isMobile = false) => (
-    <div className={`bg-white border-r border-gray-100 flex flex-col h-full ${isMobile ? 'w-72 max-w-[86vw]' : 'w-52 flex-shrink-0'}`}>
-      <div className="px-4 pt-5 pb-4 border-b border-gray-100">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex flex-col items-center gap-1.5 mb-3 cursor-pointer hover:opacity-80 transition-opacity flex-1"
+  return (
+    <div className="flex h-screen overflow-hidden bg-gray-50">
+      {/* 사이드바 */}
+      <div className="w-52 flex-shrink-0 bg-white border-r border-gray-100 flex flex-col">
+        <div className="px-4 pt-5 pb-4 border-b border-gray-100">
+          <div className="flex flex-col items-center gap-1.5 mb-3 cursor-pointer hover:opacity-80 transition-opacity"
             onClick={()=>router.push('/dashboard/home')}>
             <Logo size={48} />
             <div className="text-sm font-bold text-gray-700 tracking-wide">(주)솔루션 ERP</div>
           </div>
-          {isMobile && (
-            <button onClick={() => setMobileMenuOpen(false)} className="mt-1 w-9 h-9 rounded-xl bg-gray-50 text-gray-500 text-xl" aria-label="메뉴 닫기">×</button>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {profile.avatar_url
-            ? <img src={profile.avatar_url} alt="" className="w-14 h-14 rounded-full object-cover flex-shrink-0 border-2 border-gray-100" />
-            : <div className="w-14 h-14 rounded-full flex items-center justify-center text-lg font-bold flex-shrink-0"
-                style={{ background: profile.color || '#EEEDFE', color: profile.tc || '#3C3489' }}>
-                {profile.name?.[0]}
-              </div>}
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-gray-800 truncate">{profile.name}</div>
-            <div className="text-xs text-gray-500 truncate">{profile.dept} · {profile.grade}</div>
-            <div className={`text-xs font-medium ${isAdminLike(profile)?'text-purple-600':'text-gray-400'}`}>
-              {isAdminLike(profile)?getAuthorityLabel(profile):'일반직원'}
+          <div className="flex items-center gap-2">
+            {profile.avatar_url
+              ? <img src={profile.avatar_url} alt="" className="w-14 h-14 rounded-full object-cover flex-shrink-0 border-2 border-gray-100" />
+              : <div className="w-14 h-14 rounded-full flex items-center justify-center text-lg font-bold flex-shrink-0"
+                  style={{ background: profile.color || '#EEEDFE', color: profile.tc || '#3C3489' }}>
+                  {profile.name?.[0]}
+                </div>}
+            <div>
+              <div className="text-xs font-semibold text-gray-800">{profile.name}</div>
+              <div className="text-xs text-gray-500">{profile.dept} · {profile.grade}</div>
+              <div className={`text-xs font-medium ${profile.role==='director'?'text-purple-600':'text-gray-400'}`}>
+                {profile.role==='director'?'관리자':'일반직원'}
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <nav className="flex-1 overflow-y-auto py-2 px-2 overscroll-contain">
-        {NAV.map(group => (
-          <div key={group.group} className="mb-1">
-            <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-2 py-1.5">
-              {group.group}
+        <nav className="flex-1 overflow-y-auto py-2 px-2">
+          {NAV.map(group => (
+            <div key={group.group} className="mb-1">
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-2 py-1.5">
+                {group.group}
+              </div>
+              {group.items
+                .filter(item => !item.adminOnly || profile.role === 'director')
+                .map(item => {
+                  const isActive = pathname === item.href ||
+                    (item.href !== '/dashboard' && pathname.startsWith(item.href))
+                  return (
+                    <Link key={item.href} href={item.href}
+                      className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-sm mb-0.5 transition-colors
+                        ${isActive
+                          ? 'bg-purple-50 text-purple-700 font-medium'
+                          : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}>
+                      <span className="text-sm w-4 text-center">{item.icon}</span>
+                      <span className="flex-1">{item.label}</span>
+                      {item.href === '/dashboard/approval' && pendingCount > 0 && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingCount}</span>
+                      )}
+                    {item.href === '/dashboard/chat' && unreadChat > 0 && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{unreadChat}</span>
+                      )}
+                    {item.href === '/dashboard/notice' && unreadNotice > 0 && pathname !== '/dashboard/notice' && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{unreadNotice}</span>
+                      )}
+                    {item.href === '/dashboard/calendar' && pendingInvite > 0 && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingInvite}</span>
+                      )}
+                    {item.href === '/dashboard/leave' && pendingLeave > 0 && (
+                        <span className="bg-amber-500 text-white text-xs px-1.5 py-0.5 rounded-full" title="대기 중인 결재">{pendingLeave}</span>
+                      )}
+                    {item.href === '/dashboard/leave' && rejectedCount > 0 && pathname !== '/dashboard/leave' && (
+                        <span className="bg-orange-500 text-white text-xs px-1.5 py-0.5 rounded-full" title="반려된 결재">⚠️{rejectedCount}</span>
+                      )}
+                    {item.href === '/dashboard/leave' && approvedCount > 0 && pathname !== '/dashboard/leave' && (
+                        <span className="bg-green-500 text-white text-xs px-1.5 py-0.5 rounded-full" title="새로 승인된 결재">✓{approvedCount}</span>
+                      )}
+                    {item.href === '/dashboard/tasks' && unreadTasks > 0 && pathname !== '/dashboard/tasks' && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{unreadTasks}</span>
+                      )}
+                    {item.href === '/dashboard/signup' && pendingSignup > 0 && profile?.role==='director' && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingSignup}</span>
+                      )}
+                    </Link>
+                  )
+                })}
             </div>
-            {group.items
-              .filter(item => !item.adminOnly || isAdminLike(profile))
-              .map(item => {
-                const isActive = pathname === item.href ||
-                  (item.href !== '/dashboard' && pathname.startsWith(item.href))
-                return (
-                  <Link key={item.href} href={item.href}
-                    className={`flex items-center gap-2 px-2.5 py-2 md:py-1.5 rounded-lg text-sm mb-0.5 transition-colors
-                      ${isActive
-                        ? 'bg-purple-50 text-purple-700 font-medium'
-                        : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}>
-                    <span className="text-sm w-4 text-center">{item.icon}</span>
-                    <span className="flex-1 truncate">{item.label}</span>
-                    {renderBadge(item.href)}
-                  </Link>
-                )
-              })}
-          </div>
-        ))}
-      </nav>
+          ))}
+        </nav>
 
-      <div className="p-3 border-t border-gray-100">
-        <button onClick={handleLogout}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-gray-500
-            border border-gray-200 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors">
-          <span>⎋</span> 로그아웃
-        </button>
-        <div className="text-center text-xs text-gray-300 mt-1.5 truncate">{profile.email}</div>
-      </div>
-    </div>
-  )
-
-  const currentPageLabel = NAV.flatMap(g => g.items).find(item => pathname === item.href || pathname.startsWith(item.href + '/'))?.label || 'ERP'
-
-  return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
-      {/* PC 사이드바 */}
-      <div className="hidden md:flex h-screen">
-        {sidebar(false)}
-      </div>
-
-      {/* 모바일 상단바 */}
-      <div className="md:hidden fixed top-0 left-0 right-0 z-40 h-14 bg-white/95 backdrop-blur border-b border-gray-100 flex items-center justify-between px-3">
-        <button onClick={() => setMobileMenuOpen(true)} className="w-10 h-10 rounded-xl bg-gray-50 text-gray-700 text-xl" aria-label="메뉴 열기">☰</button>
-        <div className="min-w-0 flex-1 px-3 text-center">
-          <div className="text-sm font-bold text-gray-800 truncate">{currentPageLabel}</div>
-          <div className="text-[11px] text-gray-400 truncate">{profile.name} · {profile.dept || '부서 미지정'}</div>
+        <div className="p-3 border-t border-gray-100">
+          <button onClick={handleLogout}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-gray-500
+              border border-gray-200 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors">
+            <span>⎋</span> 로그아웃
+          </button>
+          <div className="text-center text-xs text-gray-300 mt-1.5">{profile.email}</div>
         </div>
-        <button onClick={handleLogout} className="px-2.5 py-2 rounded-xl bg-gray-50 text-xs text-gray-500">로그아웃</button>
       </div>
-
-      {/* 모바일 드로어 */}
-      {mobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-50 flex">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setMobileMenuOpen(false)} />
-          <div className="relative h-full shadow-2xl">
-            {sidebar(true)}
-          </div>
-        </div>
-      )}
 
       {/* 메인 콘텐츠 */}
-      <div className="flex-1 overflow-y-auto pt-14 md:pt-0 pb-20 md:pb-0 mobile-main-area">
+      <div className="flex-1 overflow-y-auto">
         {children}
-      </div>
-
-      {/* 모바일 하단 빠른 탭 */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur border-t border-gray-100 safe-bottom">
-        <div className="grid grid-cols-5 h-16">
-          {mobileQuickItems.map(item => {
-            const active = pathname === item.href || pathname.startsWith(item.href + '/')
-            return (
-              <Link key={item.href} href={item.href} className={`flex flex-col items-center justify-center gap-0.5 text-[11px] ${active ? 'text-purple-700 font-semibold' : 'text-gray-500'}`}>
-                <span className="text-lg leading-none">{item.icon}</span>
-                <span>{item.label}</span>
-              </Link>
-            )
-          })}
-        </div>
       </div>
 
       {/* 전역 채팅 토스트 알림 */}
       {chatToast && (
         <div
           onClick={()=>{router.push('/dashboard/chat');setChatToast(null)}}
-          className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-[9999] cursor-pointer w-[calc(100vw-2rem)] md:w-72 rounded-2xl shadow-2xl overflow-hidden border border-gray-100"
+          className="fixed bottom-6 right-6 z-[9999] cursor-pointer w-72 rounded-2xl shadow-2xl overflow-hidden border border-gray-100"
           style={{animation:'slideUpToast .3s ease'}}>
           <div className="bg-purple-600 px-4 py-2 flex items-center justify-between">
             <span className="text-xs font-semibold text-white truncate">&#128172; {chatToast.room}</span>
