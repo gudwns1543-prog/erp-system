@@ -106,6 +106,19 @@ export default function HomePage() {
     return String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0')+':'+String(n.getSeconds()).padStart(2,'0')
   }
 
+  async function runAutoCheckoutIfNeeded() {
+    const now = new Date()
+    const todayKey = todayStr()
+    const totalMin = now.getHours() * 60 + now.getMinutes()
+    if (totalMin < 18 * 60) return
+    const storageKey = `auto_checkout_checked_${todayKey}`
+    if (typeof window !== 'undefined' && localStorage.getItem(storageKey)) return
+    try {
+      await fetch('/api/auto-checkout', { method: 'GET' })
+      if (typeof window !== 'undefined') localStorage.setItem(storageKey, new Date().toISOString())
+    } catch {}
+  }
+
   async function handleCheckIn() {
     // 저녁식사 시간(18:00 ~ 19:00) 출근 차단
     const now = new Date()
@@ -261,6 +274,7 @@ export default function HomePage() {
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
+    await runAutoCheckoutIfNeeded()
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
     const { data: todaySess } = await supabase.from('attendance')

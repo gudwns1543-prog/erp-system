@@ -21,6 +21,19 @@ async function getUser(req: NextRequest) {
   return { user: data.user, profile, error: null }
 }
 
+async function getNextSeq(userId: string, workDate: string) {
+  const { data } = await supabaseAdmin.from('attendance')
+    .select('seq, check_in, check_out')
+    .eq('user_id', userId)
+    .eq('work_date', workDate)
+    .order('seq', { ascending: false })
+    .order('created_at', { ascending: false })
+  const rows = data || []
+  const open = rows.find((s:any) => s.check_in && !s.check_out)
+  const maxSeq = rows.reduce((max:number, s:any) => Math.max(max, Number(s.seq || 1)), 0)
+  return { nextSeq: maxSeq + 1, open }
+}
+
 export async function GET(req: NextRequest) {
   const { error } = await getUser(req)
   if (error) return NextResponse.json({ error }, { status: 401 })
@@ -62,15 +75,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, message: '반려 처리되었습니다.', request: data })
   }
 
-  const noteLabel = reqRow.request_type === 'business_trip' ? '모바일 출장출근 승인' : reqRow.request_type === 'exception' ? '모바일 예외출근 승인' : '모바일 외근출근 승인'
-  const { data: open } = await supabaseAdmin.from('attendance')
-    .select('id, check_in, check_out, note')
-    .eq('user_id', reqRow.user_id)
-    .eq('work_date', reqRow.work_date)
-    .is('check_out', null)
-    .not('check_in', 'is', null)
-    .limit(1)
-    .maybeSingle()
+  const noteLabel = reqRow.request_type === 'business_trip' ? '모바일 출장출근 승인' : reqRow.request_type === 'training' ? '모바일 교육출근 승인' : reqRow.request_type === 'exception' ? '모바일 예외출근 승인' : '모바일 외근출근 승인'
+  const { nextSeq, open } = await getNextSeq(reqRow.user_id, reqRow.work_date)
 
   if (open) {
     return NextResponse.json({ error: '이미 해당 직원에게 근무 중인 출근 기록이 있습니다. 기존 기록을 확인한 뒤 처리해 주세요.' }, { status: 400 })
@@ -79,6 +85,7 @@ export async function POST(req: NextRequest) {
   const { data: att, error: attErr } = await supabaseAdmin.from('attendance').insert({
     user_id: reqRow.user_id,
     work_date: reqRow.work_date,
+    seq: nextSeq,
     check_in: reqRow.requested_time,
     is_holiday: false,
     note: noteLabel,

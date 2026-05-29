@@ -28,8 +28,9 @@ function calcWork(checkIn: string, checkOut: string) {
 
 export async function POST(req: NextRequest) {
   // Vercel Cron 또는 수동 호출 시 보안 키 확인
+  // CRON_SECRET이 설정된 경우에만 강제 검증합니다.
   const authHeader = req.headers.get('authorization')
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -57,18 +58,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: '미퇴근자 없음' })
     }
 
-    // 각 직원별 가장 최근 미퇴근 세션만 처리 (여러 세션 중 마지막 것만)
-    const byUser: Record<string, any> = {}
-    for (const s of openSessions) {
-      if (!byUser[s.user_id] || s.check_in > byUser[s.user_id].check_in) {
-        byUser[s.user_id] = s
-      }
-    }
-
     const autoCheckout = '18:00:00'
     let processed = 0
 
-    for (const session of Object.values(byUser)) {
+    // 같은 직원에게 여러 미퇴근 세션이 있더라도 열린 세션은 모두 닫아 데이터가 꼬이지 않게 합니다.
+    for (const session of openSessions) {
       // 이미 연차/반차로 처리된 날이면 스킵 (note 컬럼 확인)
       const { data: noteCheck } = await supabaseAdmin
         .from('attendance').select('note').eq('id', session.id).maybeSingle()

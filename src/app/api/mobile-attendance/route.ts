@@ -97,6 +97,19 @@ function decision(req: NextRequest, gps: any) {
   return { ip, ua, mobile, companyIp, hasGps, lat, lng, accuracy, distance, inCompanyRadius, needsApproval, reason }
 }
 
+async function getNextSeq(userId: string, workDate: string) {
+  const { data } = await supabaseAdmin.from('attendance')
+    .select('seq, check_in, check_out')
+    .eq('user_id', userId)
+    .eq('work_date', workDate)
+    .order('seq', { ascending: false })
+    .order('created_at', { ascending: false })
+  const rows = data || []
+  const open = rows.find((s:any) => s.check_in && !s.check_out)
+  const maxSeq = rows.reduce((max:number, s:any) => Math.max(max, Number(s.seq || 1)), 0)
+  return { nextSeq: maxSeq + 1, open }
+}
+
 export async function GET(req: NextRequest) {
   const { user, error } = await getUser(req)
   if (!user) return NextResponse.json({ error }, { status: 401 })
@@ -123,9 +136,7 @@ export async function POST(req: NextRequest) {
   const d = decision(req, gps)
 
   if (action === 'checkin') {
-    const { data: open } = await supabaseAdmin.from('attendance')
-      .select('id, check_in, check_out, note').eq('user_id', user.id).eq('work_date', ds).is('check_out', null).not('check_in', 'is', null)
-      .limit(1).maybeSingle()
+    const { nextSeq, open } = await getNextSeq(user.id, ds)
     if (open) return NextResponse.json({ error: '이미 근무 중인 출근 기록이 있습니다.' }, { status: 400 })
 
     const { data: pending } = await supabaseAdmin.from('mobile_attendance_requests')
@@ -136,6 +147,7 @@ export async function POST(req: NextRequest) {
       const { data, error: insErr } = await supabaseAdmin.from('attendance').insert({
         user_id: user.id,
         work_date: ds,
+        seq: nextSeq,
         check_in: t,
         is_holiday: false,
         note: d.mobile ? '모바일 정상출근' : '정상출근',
@@ -145,7 +157,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!memo) {
-      return NextResponse.json({ error: '회사 밖 모바일 출근은 출장/외근 사유를 입력해야 합니다.' }, { status: 400 })
+      return NextResponse.json({ error: '회사 밖 모바일 출근은 출장/교육/외근/예외 사유를 입력해야 합니다.' }, { status: 400 })
     }
     const approverId = await getDirectorId()
     const { data: reqRow, error: reqErr } = await supabaseAdmin.from('mobile_attendance_requests').insert({

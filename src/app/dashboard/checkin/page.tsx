@@ -13,6 +13,19 @@ function todayStr() {
 }
 const DAYS = ['일','월','화','수','목','금','토']
 
+async function runAutoCheckoutIfNeeded() {
+  const now = new Date()
+  const todayKey = todayStr()
+  const totalMin = now.getHours() * 60 + now.getMinutes()
+  if (totalMin < 18 * 60) return
+  const storageKey = `auto_checkout_checked_${todayKey}`
+  if (typeof window !== 'undefined' && localStorage.getItem(storageKey)) return
+  try {
+    await fetch('/api/auto-checkout', { method: 'GET' })
+    if (typeof window !== 'undefined') localStorage.setItem(storageKey, new Date().toISOString())
+  } catch {}
+}
+
 export default function DashboardPage() {
   const [time, setTime] = useState('00:00:00')
   const [profile, setProfile] = useState<any>(null)
@@ -26,6 +39,7 @@ export default function DashboardPage() {
     const supabase = createClient()
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return
+    await runAutoCheckoutIfNeeded()
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
 

@@ -24,7 +24,8 @@ export default function MobileAttendancePage() {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [memo, setMemo] = useState('')
-  const [attendanceType, setAttendanceType] = useState<'outside_work'|'business_trip'|'exception'>('outside_work')
+  const [attendanceType, setAttendanceType] = useState<'outside_work'|'business_trip'|'training'|'exception'>('outside_work')
+  const [showCheckinModal, setShowCheckinModal] = useState(false)
   const [gpsState, setGpsState] = useState('위치 미확인')
 
   useEffect(() => {
@@ -103,9 +104,15 @@ export default function MobileAttendancePage() {
     } else {
       setMessage((json.mode === 'pending' ? '🟠 ' : '✅ ') + (json.message || '처리 완료'))
       setMemo('')
+      setShowCheckinModal(false)
       await load()
     }
     setBusy(false)
+  }
+
+  function openCheckinModal() {
+    setMessage('')
+    setShowCheckinModal(true)
   }
 
   const active = sessions.find(s => s.check_in && !s.check_out)
@@ -162,17 +169,11 @@ export default function MobileAttendancePage() {
 
           <section className="rounded-3xl border border-slate-100 p-4 shadow-sm space-y-3">
             <div>
-              <div className="font-semibold mb-1">회사 밖 출근 사유</div>
-              <div className="text-xs text-slate-400 mb-2">회사 IP 또는 회사 GPS 반경 밖이면 바로 정상출근 처리되지 않고 관리자 승인 대기로 접수됩니다.</div>
-              <select value={attendanceType} onChange={e => setAttendanceType(e.target.value as any)} className="w-full border border-slate-200 rounded-2xl px-3 py-3 text-sm mb-2 bg-white">
-                <option value="outside_work">외근 출근</option>
-                <option value="business_trip">출장 출근</option>
-                <option value="exception">예외 출근</option>
-              </select>
-              <textarea value={memo} onChange={e => setMemo(e.target.value)} rows={3} placeholder="예: 창일텍스타일 스마트생태공장 현장 방문으로 회사 밖에서 업무 시작" className="w-full border border-slate-200 rounded-2xl px-3 py-3 text-sm resize-none" />
+              <div className="font-semibold mb-1">모바일 출근 확인</div>
+              <div className="text-xs text-slate-400 mb-2">회사 밖에서 출근을 찍는 경우 출장/교육/외근을 구분해 관리자 승인 대기로 접수합니다.</div>
             </div>
             <div className="text-xs text-slate-400">📍 {gpsState}</div>
-            <button onClick={() => action('checkin')} disabled={busy || !!active || hasPending} className="w-full h-14 rounded-2xl bg-purple-600 text-white font-bold disabled:opacity-40">
+            <button onClick={openCheckinModal} disabled={busy || !!active || hasPending} className="w-full h-14 rounded-2xl bg-purple-600 text-white font-bold disabled:opacity-40">
               {sessions.length > 0 && !active ? '복귀 출근' : '출근하기'}
             </button>
             <button onClick={() => action('checkout')} disabled={busy || !active} className="w-full h-14 rounded-2xl bg-slate-900 text-white font-bold disabled:opacity-40">
@@ -184,6 +185,43 @@ export default function MobileAttendancePage() {
             <div className="font-semibold text-slate-700 mb-1">부정출근 방지 기준</div>
             회사 허용 IP 또는 회사 위치 반경 내 출근은 정상 처리됩니다. 그 외 모바일 출근은 IP, GPS, 기기정보, 위치 정확도, 사유를 기록하고 관리자 승인 후 근태에 반영됩니다.
           </section>
+
+          {showCheckinModal && (
+            <div className="fixed inset-0 bg-black/45 z-50 flex items-end sm:items-center justify-center p-4">
+              <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl p-5 space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-lg font-bold text-slate-900">회사 밖 출근인가요?</div>
+                    <div className="text-xs text-slate-500 mt-1">출장은 수당 산정 대상, 교육/외근/예외는 출장수당 대상이 아닙니다.</div>
+                  </div>
+                  <button onClick={() => setShowCheckinModal(false)} className="text-slate-400 text-xl leading-none">×</button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    ['business_trip','🚗 출장','출장수당 대상'],
+                    ['training','🎓 교육','출장수당 없음'],
+                    ['outside_work','🏢 외근','출장수당 없음'],
+                    ['exception','⚠️ 예외','관리자 확인'],
+                  ].map(([v, label, desc]) => (
+                    <button key={v} onClick={() => setAttendanceType(v as any)}
+                      className={`rounded-2xl border px-3 py-3 text-left ${attendanceType===v ? 'border-purple-500 bg-purple-50 text-purple-700' : 'border-slate-200 bg-white text-slate-700'}`}>
+                      <div className="font-bold text-sm">{label}</div>
+                      <div className="text-[11px] opacity-70 mt-0.5">{desc}</div>
+                    </button>
+                  ))}
+                </div>
+                <textarea value={memo} onChange={e => setMemo(e.target.value)} rows={3}
+                  placeholder="예: 거래처 방문 / 외부 교육 참석 / 현장 미팅 등 사유를 입력하세요."
+                  className="w-full border border-slate-200 rounded-2xl px-3 py-3 text-sm resize-none" />
+                <div className="text-xs text-slate-400">📍 {gpsState}</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setShowCheckinModal(false)} className="h-12 rounded-2xl bg-slate-100 text-slate-600 font-bold">취소</button>
+                  <button onClick={() => action('checkin')} disabled={busy} className="h-12 rounded-2xl bg-purple-600 text-white font-bold disabled:opacity-40">출근 접수</button>
+                </div>
+              </div>
+            </div>
+          )}
+
         </main>
       </div>
     </div>
