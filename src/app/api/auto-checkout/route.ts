@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
-// Supabase Admin 클라이언트 (서비스 롤 키 필요)
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// 초 단위 시간 계산
 function parseTimeSec(t: string): number {
-  const parts = t.split(':').map(Number)
-  return parts[0] * 3600 + parts[1] * 60 + (parts[2] || 0)
+  const parts = String(t || '00:00:00').split(':').map(Number)
+  return (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0)
 }
 function overlap(s1:number,e1:number,s2:number,e2:number){ return Math.max(0,Math.min(e1,e2)-Math.max(s1,s2)) }
 function secToHours(s:number){ return Math.round(Math.max(s,0)/360)/10 }
@@ -26,75 +24,93 @@ function calcWork(checkIn: string, checkOut: string) {
   return { reg: secToHours(reg), ext: secToHours(ext), night: secToHours(night) }
 }
 
+function kstTodayStr() {
+  const now = new Date()
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000)
+  return kst.toISOString().slice(0, 10)
+}
+
+function kstHour() {
+  const now = new Date()
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000)
+  return kst.getUTCHours()
+}
+
 export async function POST(req: NextRequest) {
-  // Vercel Cron 또는 수동 호출 시 보안 키 확인
-  // CRON_SECRET이 설정된 경우에만 강제 검증합니다.
-  const authHeader = req.headers.get('authorization')
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const secret = process.env.CRON_SECRET
+  if (secret) {
+    const authHeader = req.headers.get('authorization')
+    if (authHeader !== `Bearer ${secret}`) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
   }
 
   try {
-    const now = new Date()
-    const koreaTime = new Date(now.getTime() + 9 * 60 * 60 * 1000) // KST
-    const todayStr = koreaTime.toISOString().slice(0, 10)
-    const hour = koreaTime.getHours()
+    const todayStr = kstTodayStr()
+    const hour = kstHour()
 
-    // 18시 이전이면 실행 안 함
     if (hour < 18) {
-      return NextResponse.json({ message: '18시 이전 - 자동퇴근 미실행', hour })
+      // 과거 미퇴근 세션은 18시 이전에도 정리할 수 있게 처리합니다.
+      // 오늘 건은 18시 전에는 닫지 않습니다.
     }
 
-    // 오늘 미퇴근(check_out IS NULL) 세션 모두 조회
     const { data: openSessions, error } = await supabaseAdmin
       .from('attendance')
-      .select('id, user_id, work_date, check_in')
-      .eq('work_date', todayStr)
+      .select('id, user_id, work_date, check_in, note, created_at')
+      .lte('work_date', todayStr)
       .is('check_out', null)
       .not('check_in', 'is', null)
+      .order('work_date', { ascending: true })
+      .order('created_at', { ascending: true })
 
     if (error) throw error
     if (!openSessions?.length) {
-      return NextResponse.json({ message: '미퇴근자 없음' })
+      return NextResponse.json({ message: '미퇴근자 없음', processed: 0 })
     }
 
-    const autoCheckout = '18:00:00'
     let processed = 0
+    const skippedTodayBefore18 = []
 
-    // 같은 직원에게 여러 미퇴근 세션이 있더라도 열린 세션은 모두 닫아 데이터가 꼬이지 않게 합니다.
     for (const session of openSessions) {
-      // 이미 연차/반차로 처리된 날이면 스킵 (note 컬럼 확인)
-      const { data: noteCheck } = await supabaseAdmin
-        .from('attendance').select('note').eq('id', session.id).maybeSingle()
-      if (noteCheck?.note && ['연차','반차(오전)','반차(오후)','반반차'].includes(noteCheck.note)) continue
+      const note = session.note || ''
+      if (['연차','반차(오전)','반차(오후)','반반차','병가','공가','특별휴가'].includes(note)) continue
 
-      // check_in이 18시 이후면 스킵 (야근 시작한 경우)
-      const inHour = parseInt(session.check_in.slice(0, 2))
-      if (inHour >= 18) continue
+      const isToday = session.work_date === todayStr
+      if (isToday && hour < 18) {
+        skippedTodayBefore18.push(session.id)
+        continue
+      }
 
-      // check_in이 18시 이전이면 18:00으로 자동 퇴근
+      const inHour = parseInt(String(session.check_in || '00').slice(0, 2))
+      const autoCheckout = inHour >= 18 ? '23:59:00' : '18:00:00'
       const { reg, ext, night } = calcWork(session.check_in, autoCheckout)
-      await supabaseAdmin.from('attendance').update({
+
+      const newNote = note
+        ? (note.includes('자동퇴근') ? note : `${note} · 자동퇴근`)
+        : '자동퇴근'
+
+      const { error: updErr } = await supabaseAdmin.from('attendance').update({
         check_out: autoCheckout,
         reg_hours: reg,
         ext_hours: ext,
         night_hours: night,
-        note: '자동퇴근',
+        note: newNote,
       }).eq('id', session.id)
-      processed++
+
+      if (!updErr) processed++
     }
 
     return NextResponse.json({
-      message: `자동퇴근 완료: ${processed}명 처리`,
+      message: `자동퇴근 완료: ${processed}건 처리`,
       date: todayStr,
-      processed
+      processed,
+      skippedTodayBefore18: skippedTodayBefore18.length,
     })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })
   }
 }
 
-// GET도 지원 (Vercel Cron은 GET으로 호출)
 export async function GET(req: NextRequest) {
   return POST(req)
 }
