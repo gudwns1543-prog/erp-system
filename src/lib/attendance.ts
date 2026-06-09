@@ -122,14 +122,17 @@ function calcIncomeTax(taxable: number, dep: number): number {
 }
 
 export function calcSalary(input: SalaryInput): SalaryResult {
-  const rate = input.annual / 12 / 209
-  const base = input.annual / 12
+  // 계약연봉은 기본급만이 아니라 월 총지급액 기준입니다.
+  // 예: 연봉 60,000,000원 → 월 5,000,000원 = 기본급 4,780,000 + 식대 200,000 + 통신비 20,000
+  const monthlyContract = input.annual / 12
+  const rate = monthlyContract / 209
+  const allowance   = (input.meal || 0) + (input.transport || 0) + (input.comm || 0)
+  const base = Math.max(0, monthlyContract - allowance)
   const payExt      = input.extH      * rate * 1.5
   const payNight    = input.nightH    * rate * 2.0
   const payHol      = input.holH      * rate * 1.5
   const payHolExt   = input.holExtH   * rate * 2.0
   const payHolNight = input.holNightH * rate * 2.5
-  const allowance   = input.meal + input.transport + input.comm
   const grossTaxable = base + payExt + payNight + payHol + payHolExt + payHolNight
   const grossTotal   = grossTaxable + allowance
   const pension    = Math.round(grossTaxable * 0.045)
