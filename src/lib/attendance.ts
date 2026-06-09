@@ -87,155 +87,160 @@ export function minutesToHours(seconds: number): number {
 
 // 연차 계산 (입사일 기준, 1년차 15일, 매년 자동부여)
 export function calcAnnualLeave(joinDate: string): number {
-  const join = new Date(joinDate)
-  const today = new Date()
-  const diffMs = today.getTime() - join.getTime()
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-  if (diffDays < 365) return Math.min(Math.floor(diffDays / 30), 11)
-  const years = Math.floor(diffDays / 365)
-  return Math.min(15 + Math.floor((years - 1) / 2), 25)
-}
-
-
-// ─── 입사일 기준 연/월차 발생 계산 ──────
-// 내부 단위: 1일 = 8H. 1년 미만 월차는 입사 후 1개월 만근 시 1일씩, 최대 11일로 계산합니다.
-export type LeaveGrantKind = 'monthly' | 'annual'
-export interface LeaveGrantBucket {
-  kind: LeaveGrantKind
-  label: string
-  grantDate: string
-  expireDate: string
-  days: number
-  hours: number
-  remainingHours: number
+  const ent = getCurrentLeaveEntitlement(joinDate)
+  return ent.totalHours
 }
 
 function dateOnly(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate())
 }
-function parseDateOnly(s?: string | null): Date | null {
-  if (!s) return null
-  const [y,m,d] = String(s).slice(0,10).split('-').map(Number)
-  if (!y || !m || !d) return null
-  return new Date(y, m-1, d)
+
+function toDateLocal(dateStr: string): Date {
+  const [y, m, d] = String(dateStr).slice(0, 10).split('-').map(Number)
+  return new Date(y || 1970, (m || 1) - 1, d || 1)
 }
+
 function fmtDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
-function addMonthsSafe(d: Date, months: number): Date {
-  const r = new Date(d)
-  const day = r.getDate()
-  r.setMonth(r.getMonth() + months)
-  if (r.getDate() !== day) r.setDate(0)
-  return dateOnly(r)
-}
-function addYearsSafe(d: Date, years: number): Date {
-  const r = new Date(d)
-  r.setFullYear(r.getFullYear() + years)
-  return dateOnly(r)
+
+function addMonthsLocal(date: Date, months: number): Date {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const day = d.getDate()
+  d.setMonth(d.getMonth() + months)
+  if (d.getDate() !== day) d.setDate(0)
+  return d
 }
 
-export function leaveRequestHours(type: string, startDate?: string | null, endDate?: string | null): number {
-  if (type === '반반차') return 2
-  if (type === '반차(오전)' || type === '반차(오후)') return 4
-  if (type !== '연차') return 0
-  if (!startDate) return 0
-  const start = parseDateOnly(startDate)
-  const end = parseDateOnly(endDate || startDate)
-  if (!start || !end) return 0
-  let count = 0
-  const cur = new Date(start)
-  while (cur <= end) {
-    const ds = fmtDate(cur)
-    const dow = cur.getDay()
-    if (dow !== 0 && dow !== 6 && !isHoliday(ds)) count++
-    cur.setDate(cur.getDate() + 1)
+function addYearsLocal(date: Date, years: number): Date {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  d.setFullYear(d.getFullYear() + years)
+  return d
+}
+
+function fullYearsBetween(join: Date, base: Date): number {
+  let years = base.getFullYear() - join.getFullYear()
+  const anniv = addYearsLocal(join, years)
+  if (base < anniv) years--
+  return Math.max(0, years)
+}
+
+function fullMonthsBetween(join: Date, base: Date): number {
+  let months = (base.getFullYear() - join.getFullYear()) * 12 + (base.getMonth() - join.getMonth())
+  const monthly = addMonthsLocal(join, months)
+  if (base < monthly) months--
+  return Math.max(0, months)
+}
+
+export type LeaveEntitlement = {
+  type: 'monthly' | 'annual' | 'none'
+  label: string
+  yearNo: number
+  generatedAt: string
+  expiresAt: string
+  totalDays: number
+  totalHours: number
+}
+
+export function annualDaysByServiceYear(yearNo: number): number {
+  if (yearNo < 1) return 0
+  return Math.min(25, 15 + Math.floor((yearNo - 1) / 2))
+}
+
+export function getCurrentLeaveEntitlement(joinDate?: string | null, baseDate: Date = new Date()): LeaveEntitlement {
+  if (!joinDate) {
+    return { type: 'none', label: '입사일 미등록', yearNo: 0, generatedAt: '', expiresAt: '', totalDays: 0, totalHours: 0 }
   }
-  return count * 8
-}
+  const join = toDateLocal(joinDate)
+  const today = dateOnly(baseDate)
 
-export function buildLeaveGrants(joinDate?: string | null, asOfInput: Date = new Date()): LeaveGrantBucket[] {
-  const join = parseDateOnly(joinDate)
-  if (!join) return []
-  const asOf = dateOnly(asOfInput)
-  const buckets: LeaveGrantBucket[] = []
-
-  for (let m = 1; m <= 11; m++) {
-    const grant = addMonthsSafe(join, m)
-    if (grant > asOf) break
-    const expire = addYearsSafe(grant, 1)
-    buckets.push({
-      kind: 'monthly',
-      label: `${m}개월 만근 월차`,
-      grantDate: fmtDate(grant),
-      expireDate: fmtDate(expire),
-      days: 1,
-      hours: 8,
-      remainingHours: 8,
-    })
-  }
-
-  for (let year = 1; year <= 40; year++) {
-    const grant = addYearsSafe(join, year)
-    if (grant > asOf) break
-    const days = Math.min(15 + Math.floor((year - 1) / 2), 25)
-    const expire = addYearsSafe(grant, 1)
-    buckets.push({
-      kind: 'annual',
-      label: `${year}년 근속 연차`,
-      grantDate: fmtDate(grant),
-      expireDate: fmtDate(expire),
-      days,
-      hours: days * 8,
-      remainingHours: days * 8,
-    })
+  if (today < join) {
+    return { type: 'none', label: '입사 전', yearNo: 0, generatedAt: '', expiresAt: '', totalDays: 0, totalHours: 0 }
   }
 
-  return buckets.sort((a,b) => a.expireDate.localeCompare(b.expireDate) || a.grantDate.localeCompare(b.grantDate))
-}
+  const years = fullYearsBetween(join, today)
 
-export function calcLeaveBalance(joinDate: string | null | undefined, approvals: any[] = [], asOfInput: Date = new Date()) {
-  const asOf = dateOnly(asOfInput)
-  const buckets = buildLeaveGrants(joinDate, asOf)
-  const usageRows = (approvals || [])
-    .filter((a:any) => ['연차','반차(오전)','반차(오후)','반반차'].includes(a.type))
-    .filter((a:any) => ['approved','pending'].includes(a.status || 'approved'))
-    .map((a:any) => ({ ...a, hours: leaveRequestHours(a.type, a.start_date, a.end_date || a.start_date) }))
-    .filter((a:any) => a.hours > 0)
-    .sort((a:any,b:any) => String(a.start_date).localeCompare(String(b.start_date)))
-
-  let usedApprovedHours = 0
-  let usedPendingHours = 0
-
-  for (const u of usageRows) {
-    let need = u.hours
-    const useDate = parseDateOnly(u.start_date) || asOf
-    const available = buckets
-      .filter(b => parseDateOnly(b.grantDate)! <= useDate && parseDateOnly(b.expireDate)! > useDate && b.remainingHours > 0)
-      .sort((a,b) => a.expireDate.localeCompare(b.expireDate) || a.grantDate.localeCompare(b.grantDate))
-    for (const b of available) {
-      if (need <= 0) break
-      const take = Math.min(b.remainingHours, need)
-      b.remainingHours -= take
-      need -= take
-      if (u.status === 'pending') usedPendingHours += take
-      else usedApprovedHours += take
+  // 입사 1년 미만: 전월 만근분 월단위 휴가 1일(8H). 발생월 안에서만 사용.
+  if (years < 1) {
+    const months = fullMonthsBetween(join, today)
+    if (months < 1) {
+      return { type: 'none', label: '1개월 미만', yearNo: 0, generatedAt: '', expiresAt: '', totalDays: 0, totalHours: 0 }
+    }
+    const generated = addMonthsLocal(join, months)
+    const expires = addMonthsLocal(generated, 1)
+    return {
+      type: 'monthly',
+      label: '1년 미만 월단위 휴가',
+      yearNo: 0,
+      generatedAt: fmtDate(generated),
+      expiresAt: fmtDate(expires),
+      totalDays: 1,
+      totalHours: 8,
     }
   }
 
-  const validBuckets = buckets.filter(b => parseDateOnly(b.expireDate)! > asOf)
-  const totalHours = validBuckets.reduce((s,b)=>s+b.hours,0)
-  const remainingHours = validBuckets.reduce((s,b)=>s+b.remainingHours,0)
-  const usedHours = Math.max(0, totalHours - remainingHours)
-
+  // 입사 1년 이후: 입사일마다 연차 생성, 1년 유효. 이월/수당대체 없음.
+  const generated = addYearsLocal(join, years)
+  const expires = addYearsLocal(generated, 1)
+  const days = annualDaysByServiceYear(years)
   return {
-    totalHours,
-    remainingHours,
+    type: 'annual',
+    label: `${years}년차 연차`,
+    yearNo: years,
+    generatedAt: fmtDate(generated),
+    expiresAt: fmtDate(expires),
+    totalDays: days,
+    totalHours: days * 8,
+  }
+}
+
+export function leaveHoursForApproval(a: { type: string, start_date: string, end_date?: string | null }): number {
+  if (a.type === '반반차') return 2
+  if (a.type === '반차(오전)' || a.type === '반차(오후)') return 4
+  if (a.type === '연차') {
+    const start = toDateLocal(a.start_date)
+    const end = toDateLocal(a.end_date || a.start_date)
+    let hours = 0
+    const cur = new Date(start)
+    while (cur <= end) {
+      const ds = fmtDate(cur)
+      const dow = cur.getDay()
+      if (dow !== 0 && dow !== 6 && !isHoliday(ds)) hours += 8
+      cur.setDate(cur.getDate() + 1)
+    }
+    return hours
+  }
+  return 0
+}
+
+export function calcLeaveUsageForEntitlement(
+  approvals: { type: string, start_date: string, end_date?: string | null, status?: string }[],
+  entitlement: LeaveEntitlement,
+): { approvedHours: number, pendingHours: number, usedHours: number, remainHours: number } {
+  if (!entitlement.generatedAt || !entitlement.expiresAt || entitlement.totalHours <= 0) {
+    return { approvedHours: 0, pendingHours: 0, usedHours: 0, remainHours: 0 }
+  }
+
+  const start = entitlement.generatedAt
+  const end = entitlement.expiresAt
+  let approvedHours = 0
+  let pendingHours = 0
+
+  for (const a of approvals || []) {
+    if (!['연차','반차(오전)','반차(오후)','반반차'].includes(a.type)) continue
+    const s = String(a.start_date).slice(0, 10)
+    if (s < start || s >= end) continue
+    const hours = leaveHoursForApproval(a)
+    if (a.status === 'approved') approvedHours += hours
+    else if (a.status === 'pending') pendingHours += hours
+  }
+
+  const usedHours = approvedHours + pendingHours
+  return {
+    approvedHours,
+    pendingHours,
     usedHours,
-    usedApprovedHours,
-    usedPendingHours,
-    grants: buckets,
-    validGrants: validBuckets,
+    remainHours: Math.max(0, entitlement.totalHours - usedHours),
   }
 }
 

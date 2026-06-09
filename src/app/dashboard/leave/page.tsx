@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
-import { calcLeaveBalance, isHoliday, classifyWork, minutesToHours } from '@/lib/attendance'
+import { canApprove, sortByOrgAuthority } from '@/lib/org'
+import { isHoliday, classifyWork, minutesToHours, getCurrentLeaveEntitlement, calcLeaveUsageForEntitlement } from '@/lib/attendance'
 
 // 한국어 조사 자동 (은/는, 이/가, 을/를)
 function josa(word: string, eunNun: '은/는' | '이/가' | '을/를' = '은/는'): string {
@@ -120,17 +121,16 @@ export default function LeavePage() {
     if (!session) return
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
-    // 결재자 후보: 이사급 이상(grade_order <= 7) + 본인 제외 (셀프 결재 방지)
-    const APPROVER_GRADES = ['회장','대표이사','대표','사장','부사장','전무이사','전무','상무이사','상무','이사','감사']
-    const { data: dirs } = await supabase.from('profiles').select('id,name,grade')
+    // 결재자 후보: 조직 정책상 결재 가능자 + 본인 제외
+    // DB 마이그레이션 전에도 동작하도록 select('*') 후 클라이언트에서 판정합니다.
+    const { data: allApprovers } = await supabase.from('profiles').select('*')
       .eq('status', 'active')
-      .in('grade', APPROVER_GRADES)
-      .neq('id', session.user.id) // 본인 제외 (셀프 결재 차단)
-    // 박팔주를 기본 결재자로 우선 배치 (있으면 맨 앞으로)
-    const sortedDirs = (dirs||[]).slice().sort((a:any, b:any) => {
+      .neq('id', session.user.id)
+    const sortedDirs = sortByOrgAuthority((allApprovers || []).filter((u:any) => canApprove(u))).sort((a:any, b:any) => {
+      // 기본 결재자는 실질 최종관리자인 박팔주 이사를 우선합니다.
       if (a.name === '박팔주') return -1
       if (b.name === '박팔주') return 1
-      return (a.name||'').localeCompare(b.name||'')
+      return 0
     })
     setApprovers(sortedDirs)
     if (sortedDirs[0] && !form.approverId) setForm(f=>({...f, approverId: sortedDirs[0].id}))
@@ -144,19 +144,23 @@ export default function LeavePage() {
         .order('created_at',{ascending:false})
       setAllRequests(a||[])
     }
-    // 잔여 연/월차 계산: 입사일 기준 발생분 + 개별 만료일 기준으로 통합 잔여 계산
+    // 잔여 연차 계산: 입사일 기준 현재 유효한 월단위 휴가/연차를 시간 단위로 계산
+    const entitlement = getCurrentLeaveEntitlement(p?.join_date)
+    setTotalLeave(entitlement.totalHours)
+
     const { data: usedApprovals } = await supabase.from('approvals')
       .select('type, start_date, end_date, status')
       .eq('requester_id', session.user.id)
       .in('status', ['approved', 'pending'])
       .in('type', ['연차','반차(오전)','반차(오후)','반반차'])
-    const balanceAll = calcLeaveBalance(p?.join_date, usedApprovals || [], new Date())
-    const balanceApproved = calcLeaveBalance(p?.join_date, (usedApprovals || []).filter((a:any)=>a.status==='approved'), new Date())
-    setTotalLeave(balanceAll.totalHours)
-    setUsedLeave(balanceAll.usedHours)
-    setUsedApprovedLeave(balanceApproved.usedHours)
-    setUsedPendingLeave(Math.max(0, balanceAll.usedHours - balanceApproved.usedHours))
-    setRemainLeave(balanceAll.remainingHours)
+      .gte('start_date', entitlement.generatedAt || '1900-01-01')
+      .lt('start_date', entitlement.expiresAt || '1900-01-01')
+
+    const usage = calcLeaveUsageForEntitlement(usedApprovals || [], entitlement)
+    setUsedLeave(usage.usedHours)
+    setUsedApprovedLeave(usage.approvedHours)
+    setUsedPendingLeave(usage.pendingHours)
+    setRemainLeave(usage.remainHours)
     // 캘린더 이벤트 - 승인된 events 테이블 + 전체 직원 결재(신청중+승인됨) 통합
     const { data: evs } = await supabase.from('events')
       .select('id,title,start_at,end_at,color,calendar_type,creator_id')
@@ -444,7 +448,7 @@ export default function LeavePage() {
           <div className="card border-purple-100 bg-purple-50/50 py-2.5 px-3">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-semibold text-gray-700">📅 내 연/월차</span>
+                  <span className="text-xs font-semibold text-gray-700">📅 내 연차</span>
                 </div>
                 <div className="flex items-center gap-3 text-xs">
                   <span className="text-gray-500">총 <strong className="text-gray-700 text-sm">{totalLeave}</strong>H</span>
