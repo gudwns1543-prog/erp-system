@@ -326,13 +326,26 @@ export default function PayrollPage() {
   const selSalary = salaryList.find(s=>s.user_id===selStaff?.id)
   const rate = selSalary ? Math.round(selSalary.annual/12/209) : 0
 
+
+  function formatInputAmount(value: number | undefined | null): string {
+    if (value === undefined || value === null || Number.isNaN(Number(value))) return ''
+    return Number(value).toLocaleString('ko-KR')
+  }
+
+  function parseAmountInput(value: string): number | undefined {
+    const cleaned = value.replace(/[^0-9-]/g, '')
+    if (cleaned === '' || cleaned === '-') return undefined
+    const parsed = Number(cleaned)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+
   // 입력값 표시용 (DB 저장값과 자동값 둘 다 고려)
   function getInputDisplayValue(item: ItemDef, type: 'pay' | 'deduct'): string {
     const override = type === 'pay' ? payOverrides[item.key] : deductOverrides[item.key]
-    if (override !== undefined) return String(override)
+    if (override !== undefined) return formatInputAmount(override)
     if (item.auto) {
       const autoVal = type === 'pay' ? getAutoPayValue(item.key) : getAutoDeductValue(item.key)
-      return autoVal > 0 ? String(autoVal) : ''
+      return autoVal > 0 ? formatInputAmount(autoVal) : ''
     }
     return ''
   }
@@ -545,7 +558,7 @@ export default function PayrollPage() {
                             ${item.auto ? (isOverridden ? 'bg-amber-50' : 'bg-white') : ''}`}
                           placeholder={item.auto ? String(getAutoPayValue(item.key)) : '0'}
                           value={display}
-                          onChange={e => setPayValue(item.key, e.target.value === '' ? undefined : +e.target.value)} />
+                          onChange={e => setPayValue(item.key, parseAmountInput(e.target.value))} />
                         {item.auto && isOverridden && (
                           <button onClick={() => setPayValue(item.key, undefined)}
                             title="자동값으로 복원"
@@ -597,7 +610,7 @@ export default function PayrollPage() {
                         ${item.auto ? (isOverridden ? 'bg-amber-50' : 'bg-white') : ''}`}
                       placeholder={item.auto ? String(getAutoDeductValue(item.key)) : '0'}
                       value={display}
-                      onChange={e => setDeductValue(item.key, e.target.value === '' ? undefined : +e.target.value)} />
+                      onChange={e => setDeductValue(item.key, parseAmountInput(e.target.value))} />
                     {item.auto && isOverridden && (
                       <button onClick={() => setDeductValue(item.key, undefined)}
                         title="자동값으로 복원"
