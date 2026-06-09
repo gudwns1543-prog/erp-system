@@ -9,8 +9,8 @@ type ItemDef = { key: string; label: string; auto?: boolean; description?: strin
 
 const PAY_ITEMS: ItemDef[] = [
   // 자동 항목 (시급 × 근무시간)
-  { key: 'base',         label: '기본급',         auto: true, description: '월 계약액에서 식대/통신비/교통비 제외' },
-  { key: 'reg',          label: '정규근무수당',   auto: true, description: '시급 × 정규근무 시간' },
+  { key: 'base',         label: '기본급',         auto: true, description: '계약연봉 기준 월급' },
+  { key: 'reg',          label: '정규근무수당',   auto: true, description: '월급제 기본급에 포함' },
   { key: 'overtime',     label: '평일연장수당',   auto: true, description: '시급 × 1.5 × 연장시간' },
   { key: 'night',        label: '평일야간수당',   auto: true, description: '시급 × 2.0 × 야간시간' },
   { key: 'holiday',      label: '휴일근무수당',   auto: true, description: '시급 × 1.5 × 휴일근무' },
@@ -64,16 +64,42 @@ export default function PayrollPage() {
   const [autoCalc, setAutoCalc] = useState<any>(null) // calcSalary 결과
   const [editingAnnual, setEditingAnnual] = useState(false)
   const [newAnnual, setNewAnnual] = useState(0)
-  const [payComp, setPayComp] = useState({ annual: 0, meal: 0, transport: 0, comm: 0 })
+  const [newMeal, setNewMeal] = useState(200000)
+  const [newComm, setNewComm] = useState(20000)
+  const [newTransport, setNewTransport] = useState(0)
   // 수기 입력: 지급/공제 모두 한 객체로
   const [payOverrides, setPayOverrides] = useState<Record<string, number>>({})
   const [deductOverrides, setDeductOverrides] = useState<Record<string, number>>({})
   const [tripCount, setTripCount] = useState(0)
   const [tripTotalFromTrips, setTripTotalFromTrips] = useState(0)
   // 회사 출장 정책 (4시간 미만 / 4시간 이상)
-  const [tripPolicy, setTripPolicy] = useState({ short: 15000, long: 25000 })
+  const [tripPolicy, setTripPolicy] = useState({ short: 13000, long: 25000 })
 
   const years = Array.from({length:5},(_,i)=>new Date().getFullYear()-i)
+
+
+  function isExecutiveStaff(staff: any): boolean {
+    const name = String(staff?.name || '')
+    const grade = String(staff?.grade || '')
+    return name === '송영아' || name === '박팔주' || grade.includes('대표') || grade.includes('이사')
+  }
+
+  function salaryMeal(sal: any, staff: any): number {
+    if (!sal) return 0
+    if (isExecutiveStaff(staff)) return Number(sal.meal || 0)
+    return Number(sal.meal || 200000)
+  }
+
+  function salaryComm(sal: any, staff: any): number {
+    if (!sal) return 0
+    if (isExecutiveStaff(staff)) return Number(sal.comm || 0)
+    return Number(sal.comm || 20000)
+  }
+
+  function salaryTransport(sal: any, staff: any): number {
+    if (!sal) return 0
+    return Number(sal.transport || 0)
+  }
 
   const load = useCallback(async () => {
     const supabase = createClient()
@@ -83,10 +109,10 @@ export default function PayrollPage() {
     setSalaryList(salaries||[])
     // 회사 출장 정책 가져오기
     const { data: cs } = await supabase.from('company_settings')
-      .select('trip_short_amount, trip_long_amount').eq('id', 1).maybeSingle()
+      .select('trip_short_amount, trip_long_amount').limit(1).maybeSingle()
     if (cs) {
       setTripPolicy({
-        short: cs.trip_short_amount ?? 15000,
+        short: cs.trip_short_amount ?? 13000,
         long: cs.trip_long_amount ?? 25000,
       })
     }
@@ -102,69 +128,84 @@ export default function PayrollPage() {
       const uid = staffList[selIdx].id
       const start = `${selYear}-${String(month).padStart(2,'0')}-01`
       const end   = `${selYear}-${String(month).padStart(2,'0')}-31`
-      // 근태: 근태기록 화면과 동일하게 날짜별 첫 출근~마지막 퇴근 기준으로 재계산합니다.
-      // DB에 저장된 개별 세션 합산값과 화면 표시값이 달라지는 문제를 방지합니다.
+      // 근태
+      // 급여 계산은 근태기록 화면과 동일하게 날짜별 첫 출근~마지막 퇴근 기준으로 재계산합니다.
+      // 저장된 reg_hours/ext_hours/night_hours가 과거 로직으로 저장되어 있어도 급여표와 근태표가 어긋나지 않게 하기 위함입니다.
       const { data: recs } = await supabase.from('attendance').select('*')
         .eq('user_id', uid).gte('work_date', start).lte('work_date', end)
+        .order('work_date', { ascending: true })
+        .order('created_at', { ascending: true })
       if (recs?.length) {
-        const sorted = (recs || []).slice().sort((a:any,b:any) => {
-          if (a.work_date !== b.work_date) return String(a.work_date).localeCompare(String(b.work_date))
-          return String(a.check_in || '').localeCompare(String(b.check_in || ''))
-        })
-        const dateMap: Record<string, any> = {}
-        for (const r of sorted) {
-          const ds = r.work_date
-          if (!ds || !r.check_in) continue
-          if (!dateMap[ds]) {
-            dateMap[ds] = {
-              work_date: ds,
-              _firstCheckIn: r.check_in,
-              _lastCheckOut: r.check_out || null,
-              _hasOpenSession: !r.check_out,
-              _fallback: { ...r },
-            }
+        const byDate: Record<string, any[]> = {}
+        for (const r of recs) {
+          if (!byDate[r.work_date]) byDate[r.work_date] = []
+          byDate[r.work_date].push(r)
+        }
+        const total = {regH:0,extH:0,nightH:0,holH:0,holExtH:0,holNightH:0}
+        for (const [date, rows] of Object.entries(byDate)) {
+          const worked = rows.filter((r:any) => r.check_in && r.check_out)
+          if (worked.length > 0) {
+            const firstIn = worked.map((r:any)=>r.check_in).sort()[0]
+            const lastOut = worked.map((r:any)=>r.check_out).sort().slice(-1)[0]
+            const c = classifyWork(date, firstIn, lastOut)
+            total.regH += minutesToHours(c.reg)
+            total.extH += minutesToHours(c.ext)
+            total.nightH += minutesToHours(c.night)
+            total.holH += minutesToHours(c.hReg)
+            total.holExtH += minutesToHours(c.hEve)
+            total.holNightH += minutesToHours(c.hNight)
           } else {
-            if (r.check_in < dateMap[ds]._firstCheckIn) dateMap[ds]._firstCheckIn = r.check_in
-            if (r.check_out && (!dateMap[ds]._lastCheckOut || r.check_out > dateMap[ds]._lastCheckOut)) {
-              dateMap[ds]._lastCheckOut = r.check_out
-            }
-            if (!r.check_out) dateMap[ds]._hasOpenSession = true
+            // 연차/출장 등 check_in 없는 결재성 기록은 시간 산정에서 제외
+            total.regH += rows.reduce((s:number,r:any)=>s+(r.reg_hours||0),0)
+            total.extH += rows.reduce((s:number,r:any)=>s+(r.ext_hours||0),0)
+            total.nightH += rows.reduce((s:number,r:any)=>s+(r.night_hours||0),0)
+            total.holH += rows.reduce((s:number,r:any)=>s+(r.hol_hours||0),0)
+            total.holExtH += rows.reduce((s:number,r:any)=>s+(r.hol_eve_hours||0),0)
+            total.holNightH += rows.reduce((s:number,r:any)=>s+(r.hol_night_hours||0),0)
           }
         }
-        const merged = Object.values(dateMap).map((d:any) => {
-          const ci = d._firstCheckIn
-          const co = d._lastCheckOut
-          if (ci && co) {
-            const r = classifyWork(d.work_date, ci, co)
-            return {
-              reg_hours: minutesToHours(r.reg),
-              ext_hours: minutesToHours(r.ext),
-              night_hours: minutesToHours(r.night),
-              hol_hours: minutesToHours(r.hReg),
-              hol_eve_hours: minutesToHours(r.hEve),
-              hol_night_hours: minutesToHours(r.hNight),
-            }
-          }
-          // 미퇴근/휴무성 기록은 저장된 값만 보수적으로 반영합니다.
-          return d._fallback || {}
-        })
-        setWorkData(merged.reduce((a:any,r:any)=>({
-          regH:      a.regH      + (r.reg_hours||0),
-          extH:      a.extH      + (r.ext_hours||0),
-          nightH:    a.nightH    + (r.night_hours||0),
-          holH:      a.holH      + (r.hol_hours||0),
-          holExtH:   a.holExtH   + (r.hol_eve_hours||0),
-          holNightH: a.holNightH + (r.hol_night_hours||0),
-        }),{regH:0,extH:0,nightH:0,holH:0,holExtH:0,holNightH:0}))
+        setWorkData(total)
       } else {
         setWorkData(null)
       }
-      // 출장 (승인된 것만)
-      const { data: trips } = await supabase.from('business_trips')
-        .select('id, allowance').eq('user_id', uid).eq('status', 'approved')
-        .gte('trip_date', start).lte('trip_date', end)
-      const tripsCount = trips?.length || 0
-      const tripsTotal = (trips || []).reduce((sum: number, t: any) => sum + (t.allowance || 0), 0)
+      // 출장수당: 작성자뿐 아니라 내부 참석자/동행자도 반영
+      const calcTripAllowance = (t: any) => {
+        const hours = t?.all_day ? 8 : Number(t?.duration_hours || 0)
+        return hours >= 4 ? tripPolicy.long : tripPolicy.short
+      }
+
+      const tripMap = new Map<string, any>()
+
+      const { data: linkedTrips } = await supabase.from('business_trip_attendance_links')
+        .select('business_trip_id, trip_date, business_trip:business_trip_id(id, status, allowance, duration_hours, all_day, trip_date)')
+        .eq('user_id', uid)
+        .gte('trip_date', start)
+        .lte('trip_date', end)
+
+      for (const row of (linkedTrips || [])) {
+        const trip: any = (row as any).business_trip
+        if (trip && trip.status === 'approved') {
+          tripMap.set(trip.id, trip)
+        }
+      }
+
+      const { data: fallbackTrips } = await supabase.from('business_trips')
+        .select('id, user_id, attendees, status, allowance, duration_hours, all_day, trip_date')
+        .eq('status', 'approved')
+        .gte('trip_date', start)
+        .lte('trip_date', end)
+
+      for (const trip of (fallbackTrips || [])) {
+        const raw = String((trip as any).attendees || '')
+        const isParticipant = (trip as any).user_id === uid || raw.includes(uid)
+        if (isParticipant) {
+          tripMap.set((trip as any).id, trip)
+        }
+      }
+
+      const trips = Array.from(tripMap.values())
+      const tripsCount = trips.length
+      const tripsTotal = trips.reduce((sum: number, t: any) => sum + calcTripAllowance(t), 0)
       setTripCount(tripsCount)
       setTripTotalFromTrips(tripsTotal)
 
@@ -186,28 +227,27 @@ export default function PayrollPage() {
       setEditingAnnual(false)
     }
     loadWork()
-  }, [selIdx, selYear, month, staffList])
+  }, [selIdx, selYear, month, staffList, tripPolicy.short, tripPolicy.long])
 
   // 자동 계산
   useEffect(() => {
     const sal = salaryList.find(s=>s.user_id===staffList[selIdx]?.id)
     if (!sal) { setAutoCalc(null); return }
     const w = workData || {regH:0,extH:0,nightH:0,holH:0,holExtH:0,holNightH:0}
+    const staff = staffList[selIdx]
     const base = calcSalary({
-      annual: sal.annual, dependents: sal.dependents,
-      meal: sal.meal, transport: sal.transport, comm: sal.comm, ...w
+      annual: sal.annual,
+      dependents: sal.dependents,
+      meal: salaryMeal(sal, staff),
+      transport: salaryTransport(sal, staff),
+      comm: salaryComm(sal, staff),
+      ...w
     })
     setAutoCalc({
       ...base,
       tripPay: tripTotalFromTrips, // business_trips 자동 합계
     })
     setNewAnnual(sal.annual)
-    setPayComp({
-      annual: sal.annual || 0,
-      meal: sal.meal || 0,
-      transport: sal.transport || 0,
-      comm: sal.comm || 0,
-    })
   }, [workData, salaryList, selIdx, staffList, tripTotalFromTrips])
 
   // 자동 항목의 기본값 - calcSalary 결과에서 가져옴
@@ -222,9 +262,9 @@ export default function PayrollPage() {
       case 'holiday':         return autoCalc.payHol || 0
       case 'holiday_ext':     return autoCalc.payHolExt || 0
       case 'holiday_night':   return autoCalc.payHolNight || 0
-      case 'meal':            return sal?.meal || 0
-      case 'transport_fixed': return sal?.transport || 0
-      case 'comm_fixed':      return sal?.comm || 0
+      case 'meal':            return salaryMeal(sal, staffList[selIdx])
+      case 'transport_fixed': return salaryTransport(sal, staffList[selIdx])
+      case 'comm_fixed':      return salaryComm(sal, staffList[selIdx])
       case 'trip':            return autoCalc.tripPay || 0
       default:                return 0
     }
@@ -245,7 +285,7 @@ export default function PayrollPage() {
   // 최종 값 = 수기 입력이 있으면 그 값, 없으면 자동값 (자동 항목만), 수기 항목은 입력값 그대로
   // 단, 근태 기반 자동 항목은 절대 override 불가 (시급×시간으로 엄격하게)
   function getPayValue(item: ItemDef): number {
-    const isFromAttendance = ['base','reg','overtime','night','holiday','holiday_ext','holiday_night'].includes(item.key)
+    const isFromAttendance = ['base','reg','overtime','night','holiday','holiday_ext','holiday_night','trip'].includes(item.key)
     if (isFromAttendance) return getAutoPayValue(item.key) // 강제로 자동값
     if (payOverrides[item.key] !== undefined) return payOverrides[item.key]
     if (item.auto) return getAutoPayValue(item.key)
@@ -284,8 +324,8 @@ export default function PayrollPage() {
     const supabase = createClient()
     // 자동 항목은 입력값이 있을 때만 저장 (자동값과 다른 경우만 의미 있음)
     const items: Record<string, number> = {}
-    for (const [k, v] of Object.entries(payOverrides)) items[k] = Number(v || 0)
-    for (const [k, v] of Object.entries(deductOverrides)) items[k] = Number(v || 0)
+    for (const [k, v] of Object.entries(payOverrides)) if (v !== undefined) items[k] = v
+    for (const [k, v] of Object.entries(deductOverrides)) if (v !== undefined) items[k] = v
     const { error } = await supabase.from('salary_manual_inputs').upsert({
       user_id: staffList[selIdx].id,
       work_year: selYear,
@@ -302,39 +342,41 @@ export default function PayrollPage() {
     setTimeout(()=>setAlert(''),2500)
   }
 
-  async function saveSalarySettings() {
+  async function saveAnnual() {
     if (!staffList[selIdx]) return
     const supabase = createClient()
-    const { error } = await supabase.from('salary_info').update({
-      annual: payComp.annual,
-      meal: payComp.meal,
-      transport: payComp.transport,
-      comm: payComp.comm,
-      updated_at: new Date().toISOString(),
+    await supabase.from('salary_info').update({
+      annual: newAnnual,
+      meal: newMeal,
+      comm: newComm,
+      transport: newTransport,
+      updated_at: new Date().toISOString()
     }).eq('user_id', staffList[selIdx].id)
-    if (error) {
-      setAlert('급여 구성 저장 실패: ' + error.message)
-      setTimeout(()=>setAlert(''),3000)
-      return
-    }
     setEditingAnnual(false)
-    setAlert('급여 구성이 저장되었습니다.')
-    await load(); setTimeout(()=>setAlert(''),3000)
+    setAlert('급여 구성이 수정되었습니다.')
+    load(); setTimeout(()=>setAlert(''),3000)
   }
 
   const selStaff = staffList[selIdx]
   const selSalary = salaryList.find(s=>s.user_id===selStaff?.id)
   const rate = selSalary ? Math.round(selSalary.annual/12/209) : 0
 
+  useEffect(() => {
+    if (!selSalary) return
+    setNewAnnual(Number(selSalary.annual || 0))
+    setNewMeal(salaryMeal(selSalary, selStaff))
+    setNewComm(salaryComm(selSalary, selStaff))
+    setNewTransport(salaryTransport(selSalary, selStaff))
+  }, [selSalary?.id, selSalary?.annual, selSalary?.meal, selSalary?.comm, selSalary?.transport, selStaff?.id])
 
-  function formatInputAmount(value: number | undefined | null): string {
-    if (value === undefined || value === null || Number.isNaN(Number(value))) return ''
+  function formatInputAmount(value: number | undefined): string {
+    if (value === undefined || value === null || Number.isNaN(value)) return ''
     return Number(value).toLocaleString('ko-KR')
   }
 
   function parseAmountInput(value: string): number | undefined {
     const cleaned = value.replace(/[^0-9-]/g, '')
-    if (cleaned === '' || cleaned === '-') return undefined
+    if (cleaned === '' || cleaned === '-') return 0
     const parsed = Number(cleaned)
     return Number.isFinite(parsed) ? parsed : undefined
   }
@@ -368,7 +410,7 @@ export default function PayrollPage() {
       {/* 사용 안내 */}
       <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 space-y-1">
         <div className="font-semibold">💡 명세서 작성 흐름</div>
-        <div>1. <strong>회색 자동 항목</strong>: 기본급/근태수당/출장수당은 자동 계산, 공제 자동항목은 필요 시 0원 포함 수기 조정 가능</div>
+        <div>1. <strong>회색 자동 항목</strong>: ERP가 근태/연봉/출장보고로 자동 계산 (수정 가능 - 세무사 조정 시)</div>
         <div>2. <strong>흰색 수기 항목</strong>: 빈칸은 0원, 세무사 명세서 보고 직접 입력</div>
         <div>3. 모두 입력 후 우측 상단 <strong>💾 명세서 저장</strong> 클릭 → 직원의 급여명세 조회에 반영</div>
       </div>
@@ -400,40 +442,49 @@ export default function PayrollPage() {
             </select>
           </div>
           {selSalary && (
-            <div className="ml-auto flex items-center gap-3 text-xs text-gray-500 flex-wrap justify-end">
-              <span>계약연봉:
-                <span className="ml-1 font-semibold text-gray-800">{formatWon(selSalary.annual)}</span>
-              </span>
-              <span>월 계약액: <strong className="text-gray-800">{formatWon((selSalary.annual || 0) / 12)}</strong></span>
-              <span>기본급: <strong className="text-gray-800">{formatWon(Math.max(0, (selSalary.annual || 0) / 12 - ((selSalary.meal||0)+(selSalary.transport||0)+(selSalary.comm||0))))}</strong></span>
-              <span>시급(기준): <strong className="text-gray-800">{formatWon(rate)}/h</strong></span>
-              <button onClick={()=>setEditingAnnual(!editingAnnual)} className="text-[10px] text-purple-500 hover:text-purple-700">
-                {editingAnnual ? '닫기' : '급여구성 수정'}
-              </button>
+            <div className="ml-auto flex flex-col items-end gap-1 text-xs text-gray-500">
+              {editingAnnual ? (
+                <div className="rounded-xl border border-purple-100 bg-purple-50/40 p-2 grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {[
+                    ['계약연봉', newAnnual, setNewAnnual],
+                    ['식대', newMeal, setNewMeal],
+                    ['통신비', newComm, setNewComm],
+                    ['교통비', newTransport, setNewTransport],
+                  ].map(([label, value, setter]: any) => (
+                    <label key={label} className="text-[10px] text-gray-500">
+                      <span className="block mb-0.5">{label}</span>
+                      <input className="input text-xs py-1 w-28 text-right" inputMode="numeric"
+                        value={formatInputAmount(value)}
+                        onChange={e=>setter(parseAmountInput(e.target.value) || 0)} />
+                    </label>
+                  ))}
+                  <div className="col-span-2 md:col-span-4 flex justify-end gap-2">
+                    <button onClick={saveAnnual} className="btn-primary text-xs px-2 py-1">저장</button>
+                    <button onClick={()=>setEditingAnnual(false)} className="btn-secondary text-xs px-2 py-1">취소</button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    계약연봉 <strong className="text-gray-800">{formatWon(selSalary.annual)}</strong>
+                    <button onClick={()=>setEditingAnnual(true)} className="text-[10px] text-purple-500 hover:text-purple-700 ml-1">급여구성 수정</button>
+                  </div>
+                  <div>
+                    월급 {formatWon(Math.round((selSalary.annual || 0) / 12))}
+                    <span className="mx-1 text-gray-300">=</span>
+                    기본급 <strong className="text-gray-800">{formatWon(getAutoPayValue('base'))}</strong>
+                    <span className="mx-1 text-gray-300">+</span>
+                    식대 {formatWon(getAutoPayValue('meal'))}
+                    <span className="mx-1 text-gray-300">+</span>
+                    통신비 {formatWon(getAutoPayValue('comm_fixed'))}
+                    {getAutoPayValue('transport_fixed') > 0 && <> + 교통비 {formatWon(getAutoPayValue('transport_fixed'))}</>}
+                  </div>
+                  <div>시급(기준): <strong className="text-gray-800">{formatWon(rate)}/h</strong></div>
+                </>
+              )}
             </div>
           )}
         </div>
-        {selSalary && editingAnnual && (
-          <div className="mt-3 p-3 bg-purple-50/60 border border-purple-100 rounded-xl grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
-            {[
-              ['annual','계약연봉'], ['meal','식대'], ['comm','통신비'], ['transport','교통비']
-            ].map(([key,label]) => (
-              <label key={key} className="block">
-                <span className="text-gray-500 mb-1 block">{label}</span>
-                <input className="input text-xs py-1 text-right" inputMode="numeric"
-                  value={formatInputAmount((payComp as any)[key])}
-                  onChange={e=>setPayComp(prev=>({...prev, [key]: parseAmountInput(e.target.value) || 0}))} />
-              </label>
-            ))}
-            <div className="flex items-end gap-2">
-              <button onClick={saveSalarySettings} className="btn-primary text-xs px-3 py-2">저장</button>
-              <button onClick={()=>setEditingAnnual(false)} className="btn-secondary text-xs px-3 py-2">취소</button>
-            </div>
-            <div className="col-span-2 md:col-span-5 text-[11px] text-purple-700">
-              월 계약액은 연봉÷12이며, 기본급은 월 계약액에서 식대·통신비·교통비를 제외한 금액으로 자동 산정됩니다.
-            </div>
-          </div>
-        )}
         {workData ? (
           <div className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-500 grid grid-cols-3 md:grid-cols-6 gap-2">
             <div>정규 <strong className="text-gray-800">{workData.regH.toFixed(1)}h</strong></div>
@@ -469,8 +520,8 @@ export default function PayrollPage() {
               </thead>
               <tbody>
                 {[
-                  { label: '평일 정규근무', hours: workData.regH, rate: rate, pay: autoCalc.base || 0,
-                    note: '기본급에 포함 (월 209h 기준)' },
+                  { label: '평일 정규근무', hours: workData.regH, rate: null, pay: null,
+                    note: '월급제 기본급에 포함 · 시간만 참고 표시' },
                   { label: '평일 연장수당', hours: workData.extH, rate: Math.round(rate * 1.5), pay: autoCalc.payExt || 0,
                     note: '시급 × 1.5' },
                   { label: '평일 야간수당', hours: workData.nightH, rate: Math.round(rate * 2.0), pay: autoCalc.payNight || 0,
@@ -481,26 +532,30 @@ export default function PayrollPage() {
                     note: '시급 × 2.0' },
                   { label: '휴일 야간수당', hours: workData.holNightH, rate: Math.round(rate * 2.5), pay: autoCalc.payHolNight || 0,
                     note: '시급 × 2.5' },
+                  { label: '출장수당', hours: tripCount, rate: null, pay: autoCalc.tripPay || 0,
+                    note: `승인 출장 ${tripCount}건 · 4시간 이상 ${tripPolicy.long.toLocaleString()}원 / 미만 ${tripPolicy.short.toLocaleString()}원` },
                 ].map((row, i) => (
                   <tr key={i} className={`border-b border-gray-50 ${row.hours > 0 ? '' : 'opacity-40'}`}>
                     <td className="px-2 py-1.5">
                       <div className="text-gray-700 font-medium">{row.label}</div>
                       <div className="text-[9px] text-gray-400">{row.note}</div>
                     </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-700">{row.hours.toFixed(1)}h</td>
-                    <td className="px-2 py-1.5 text-center text-gray-300">×</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-600">{formatWon(row.rate)}</td>
-                    <td className="px-2 py-1.5 text-center text-gray-300">=</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-700">
+                      {row.label === '출장수당' ? `${row.hours}건` : `${Number(row.hours || 0).toFixed(1)}h`}
+                    </td>
+                    <td className="px-2 py-1.5 text-center text-gray-300">{row.rate === null ? '' : '×'}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums text-gray-600">{row.rate === null ? '-' : formatWon(row.rate)}</td>
+                    <td className="px-2 py-1.5 text-center text-gray-300">{row.pay === null ? '' : '='}</td>
                     <td className="px-2 py-1.5 text-right tabular-nums font-semibold text-blue-700">
-                      {row.pay > 0 ? formatWon(row.pay) : '-'}
+                      {row.pay === null ? '-' : row.pay > 0 ? formatWon(row.pay) : '-'}
                     </td>
                   </tr>
                 ))}
                 <tr className="bg-blue-50 font-semibold">
-                  <td colSpan={5} className="px-2 py-2 text-right text-blue-800">근로 지급 소계</td>
+                  <td colSpan={5} className="px-2 py-2 text-right text-blue-800">근태/출장 기준 산출액 소계</td>
                   <td className="px-2 py-2 text-right tabular-nums text-blue-700">
-                    {formatWon((autoCalc.base||0) + (autoCalc.payExt||0) + (autoCalc.payNight||0) +
-                      (autoCalc.payHol||0) + (autoCalc.payHolExt||0) + (autoCalc.payHolNight||0))}
+                    {formatWon((autoCalc.payExt||0) + (autoCalc.payNight||0) +
+                      (autoCalc.payHol||0) + (autoCalc.payHolExt||0) + (autoCalc.payHolNight||0) + (autoCalc.tripPay||0))}
                   </td>
                 </tr>
               </tbody>
@@ -528,7 +583,7 @@ export default function PayrollPage() {
               const display = getInputDisplayValue(item, 'pay')
               const isOverridden = payOverrides[item.key] !== undefined
               // 근태 기반 자동 항목은 수정 불가 (시급 × 시간으로 정확히 산정)
-              const isFromAttendance = ['base','reg','overtime','night','holiday','holiday_ext','holiday_night'].includes(item.key)
+              const isFromAttendance = ['base','reg','overtime','night','holiday','holiday_ext','holiday_night','trip'].includes(item.key)
               return (
                 <div key={item.key}
                   className={`px-3 py-2 border-b border-gray-50 last:border-0 flex items-center gap-2
@@ -553,11 +608,13 @@ export default function PayrollPage() {
                     ) : (
                       // 수정 가능
                       <>
-                        <input type="number"
+                        <input type="text"
+                          inputMode="numeric"
                           className={`input text-xs py-1 w-28 text-right tabular-nums
                             ${item.auto ? (isOverridden ? 'bg-amber-50' : 'bg-white') : ''}`}
-                          placeholder={item.auto ? String(getAutoPayValue(item.key)) : '0'}
+                          placeholder={item.auto ? formatInputAmount(getAutoPayValue(item.key)) : '0'}
                           value={display}
+                          onWheel={e => e.currentTarget.blur()}
                           onChange={e => setPayValue(item.key, parseAmountInput(e.target.value))} />
                         {item.auto && isOverridden && (
                           <button onClick={() => setPayValue(item.key, undefined)}
@@ -605,11 +662,13 @@ export default function PayrollPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-1">
-                    <input type="number"
+                    <input type="text"
+                      inputMode="numeric"
                       className={`input text-xs py-1 w-28 text-right tabular-nums
                         ${item.auto ? (isOverridden ? 'bg-amber-50' : 'bg-white') : ''}`}
-                      placeholder={item.auto ? String(getAutoDeductValue(item.key)) : '0'}
+                      placeholder={item.auto ? formatInputAmount(getAutoDeductValue(item.key)) : '0'}
                       value={display}
+                      onWheel={e => e.currentTarget.blur()}
                       onChange={e => setDeductValue(item.key, parseAmountInput(e.target.value))} />
                     {item.auto && isOverridden && (
                       <button onClick={() => setDeductValue(item.key, undefined)}
@@ -624,32 +683,21 @@ export default function PayrollPage() {
               <div className="text-xs font-semibold text-red-800">공제 합계</div>
               <div className="text-sm font-bold text-red-700 tabular-nums">-{formatWon(totalDeduct)}</div>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 출장 수당 + 실수령액 */}
-      <div className="mt-4 grid md:grid-cols-2 gap-4">
-        <div className="card bg-amber-50/40 border-amber-200">
-          <div className="text-xs font-semibold text-amber-800 mb-2">🚗 출장수당 (자동)</div>
-          {tripCount > 0 ? (
-            <>
-              <div className="text-xs text-amber-700">승인된 출장 <strong>{tripCount}건</strong></div>
-              <div className="text-base font-bold text-amber-700 mt-1 tabular-nums">{formatWon(tripTotalFromTrips)}</div>
-              <div className="text-[10px] text-amber-600 mt-1">
-                정책: 4시간 이상 {tripPolicy.long.toLocaleString()}원 / 4시간 미만 {tripPolicy.short.toLocaleString()}원
+            <div className="p-4 bg-white border-t border-gray-100">
+              <div className="rounded-2xl bg-gradient-to-r from-purple-600 to-purple-700 px-4 py-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold text-purple-100 mb-1">실수령액</div>
+                    <div className="text-2xl font-bold text-white tabular-nums">{formatWon(netPay)}</div>
+                    <div className="text-[10px] text-purple-100 mt-1">지급 {formatWon(totalPay)} − 공제 {formatWon(totalDeduct)}</div>
+                  </div>
+                  <div className="text-right text-[10px] text-purple-100 shrink-0">
+                    <div>출장 {tripCount}건</div>
+                    <div className="mt-1">출장수당 {formatWon(tripTotalFromTrips)}</div>
+                  </div>
+                </div>
               </div>
-            </>
-          ) : (
-            <div className="text-xs text-amber-500">해당 월 승인된 출장 보고서 없음</div>
-          )}
-        </div>
-
-        <div className="card bg-gradient-to-r from-purple-600 to-purple-700 border-0">
-          <div className="text-xs font-semibold text-purple-100 mb-1">실수령액</div>
-          <div className="text-2xl font-bold text-white tabular-nums">{formatWon(netPay)}</div>
-          <div className="text-[10px] text-purple-100 mt-1">
-            지급 {formatWon(totalPay)} − 공제 {formatWon(totalDeduct)}
+            </div>
           </div>
         </div>
       </div>

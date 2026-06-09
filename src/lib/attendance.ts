@@ -122,12 +122,13 @@ function calcIncomeTax(taxable: number, dep: number): number {
 }
 
 export function calcSalary(input: SalaryInput): SalaryResult {
-  // 계약연봉은 기본급만이 아니라 월 총지급액 기준입니다.
-  // 예: 연봉 60,000,000원 → 월 5,000,000원 = 기본급 4,780,000 + 식대 200,000 + 통신비 20,000
   const monthlyContract = input.annual / 12
-  const rate = monthlyContract / 209
   const allowance   = (input.meal || 0) + (input.transport || 0) + (input.comm || 0)
+  // 월급제 계약금액은 기본급 + 비과세수당(식대/통신비/교통비)으로 구성됩니다.
+  // 예: 연봉 6천만원 → 월 500만원 = 기본급 478만원 + 식대 20만원 + 통신비 2만원
   const base = Math.max(0, monthlyContract - allowance)
+  // 시간외/야간 수당 계산 기준 시급은 기존 정책대로 계약월액 ÷ 209시간을 유지합니다.
+  const rate = monthlyContract / 209
   const payExt      = input.extH      * rate * 1.5
   const payNight    = input.nightH    * rate * 2.0
   const payHol      = input.holH      * rate * 1.5
