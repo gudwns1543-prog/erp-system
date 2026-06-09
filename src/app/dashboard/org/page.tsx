@@ -1,6 +1,8 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import { GRADE_ORDER } from '@/lib/attendance'
+import { sortByOrgAuthority } from '@/lib/org'
 
 const DEPT_COLORS = [
   '#534AB7','#185FA5','#0F6E56','#A32D2D',
@@ -8,32 +10,30 @@ const DEPT_COLORS = [
   '#1A6B45','#7B3F6E','#2C5F8A','#5C6B1A',
 ]
 
-const RANK_ORDER: Record<string, number> = {
-  '대표': 1, '대표이사': 1,
-  '이사': 2, '전무': 2, '상무': 2,
-  '부장': 10,
-  '차장': 11,
-  '과장': 12,
-  '대리': 20,
-  '주임': 21,
-  '사원': 22,
+const TEAM_ORDER = ['운영팀', '실무팀']
+const NAME_ORDER: Record<string, number> = {
+  '송영아': 10,
+  '박팔주': 20,
+  '박형준': 30,
+  '김덕규': 40,
+  '박황규': 41,
+  '박형규': 41,
+  '박희원': 42,
+  '김경세': 43,
+  '김재현': 44,
 }
 
-function rankOf(u: any) {
-  const grade = String(u?.grade || '')
-  for (const [key, rank] of Object.entries(RANK_ORDER)) {
-    if (grade.includes(key)) return rank
-  }
-  return 99
+function sortMembers(a: any, b: any) {
+  const oa = typeof a.org_sort === 'number' ? a.org_sort : NAME_ORDER[a.name] || 999
+  const ob = typeof b.org_sort === 'number' ? b.org_sort : NAME_ORDER[b.name] || 999
+  if (oa !== ob) return oa - ob
+  const gradeDiff = (GRADE_ORDER[a.grade || ''] || 99) - (GRADE_ORDER[b.grade || ''] || 99)
+  if (gradeDiff !== 0) return gradeDiff
+  return String(a.name || '').localeCompare(String(b.name || ''), 'ko')
 }
 
-function sortPeople(list: any[]) {
-  return [...list].sort((a, b) => {
-    const ra = rankOf(a)
-    const rb = rankOf(b)
-    if (ra !== rb) return ra - rb
-    return String(a?.name || '').localeCompare(String(b?.name || ''), 'ko')
-  })
+function shortLine(className = '') {
+  return <div className={`bg-gray-300 ${className}`} aria-hidden="true" />
 }
 
 export default function OrgPage() {
@@ -42,8 +42,8 @@ export default function OrgPage() {
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.from('profiles').select('*').eq('status','active').then(({ data }) => {
-      setStaff(data || [])
+    supabase.from('profiles').select('*').eq('status', 'active').then(({ data }) => {
+      setStaff(sortByOrgAuthority(data || []))
     })
   }, [])
 
@@ -56,160 +56,146 @@ export default function OrgPage() {
 
   const getColor = (u: any) => deptColorMap[u.dept || '기타'] || DEPT_COLORS[0]
 
-  const directors = sortPeople(staff.filter(u => u.role === 'director' || ['송영아','박팔주'].includes(u.name)))
-  const devTeam = sortPeople(staff.filter(u => (u.dept || '') === '개발팀' || u.name === '박형준'))
-    .filter(u => !directors.some((d:any) => d.id === u.id))
-  const opsTeam = sortPeople(staff.filter(u => (u.dept || '') === '운영팀'))
-    .filter(u => !directors.some((d:any) => d.id === u.id) && !devTeam.some((d:any) => d.id === u.id))
-  const workTeam = sortPeople(staff.filter(u => (u.dept || '') === '실무팀'))
-    .filter(u => !directors.some((d:any) => d.id === u.id) && !devTeam.some((d:any) => d.id === u.id))
+  const ceo = staff.find(u => u.name === '송영아')
+  const executive = staff.find(u => u.name === '박팔주')
+  const hyungjoon = staff.find(u => u.name === '박형준')
 
-  const excludedIds = new Set([...directors, ...devTeam, ...opsTeam, ...workTeam].map(u => u.id))
-  const otherByDept: Record<string, any[]> = {}
-  staff.filter(u => !excludedIds.has(u.id)).forEach(u => {
-    const d = u.dept || '기타'
-    if (!otherByDept[d]) otherByDept[d] = []
-    otherByDept[d].push(u)
-  })
-  const otherDeptEntries = Object.entries(otherByDept).map(([dept, members]) => [dept, sortPeople(members)] as [string, any[]])
+  const teamGroups = useMemo(() => {
+    const exclude = new Set(['송영아', '박팔주', '박형준'])
+    const groups: Record<string, any[]> = {}
+    staff.filter(u => !exclude.has(u.name)).forEach(u => {
+      const dept = u.dept || '기타'
+      if (!groups[dept]) groups[dept] = []
+      groups[dept].push(u)
+    })
+    Object.keys(groups).forEach(dept => groups[dept].sort(sortMembers))
+    return Object.entries(groups).sort(([a], [b]) => {
+      const ai = TEAM_ORDER.indexOf(a)
+      const bi = TEAM_ORDER.indexOf(b)
+      if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
+      return a.localeCompare(b, 'ko')
+    })
+  }, [staff])
 
-  const Card = ({ u, large=false }: { u: any, large?: boolean }) => {
+  const Card = ({ u }: { u: any }) => {
     const color = getColor(u)
     return (
-      <div
+      <button
         onClick={() => setSelected(u)}
-        className={`rounded-xl overflow-hidden shadow-sm cursor-pointer hover:shadow-lg hover:-translate-y-1 transition-all duration-200 flex-shrink-0 ${large ? 'w-36' : 'w-32'}`}
-        style={{ border: `2px solid ${color}30` }}
+        className="w-40 rounded-2xl overflow-hidden shadow-sm cursor-pointer hover:shadow-lg hover:-translate-y-1 transition-all duration-200 bg-white text-left flex-shrink-0"
+        style={{ border: `2px solid ${color}35` }}
       >
-        <div className={`${large ? 'h-36' : 'h-32'} flex items-center justify-center overflow-hidden`} style={{ background: `${color}12` }}>
-          {u.avatar_url ? (
-            <img src={u.avatar_url} alt={u.name} className="w-full h-full object-cover object-top" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-2xl font-bold" style={{ background: color, color: '#fff' }}>{u.name?.[0]}</div>
-          )}
+        <div className="h-44 flex items-center justify-center overflow-hidden" style={{ background: `${color}10` }}>
+          {u.avatar_url
+            ? <img src={u.avatar_url} alt={u.name} className="w-full h-full object-cover object-top" />
+            : <div className="w-full h-full flex items-center justify-center text-4xl font-bold" style={{ background: color, color: '#fff' }}>{u.name?.[0]}</div>}
         </div>
-        <div className="p-2 text-center" style={{ background: color }}>
+        <div className="p-3 text-center" style={{ background: color }}>
           <div className="font-bold text-white truncate text-base">{u.name}</div>
-          <div className="text-white/80 text-sm">{u.grade}</div>
+          <div className="text-white/90 text-sm truncate mt-0.5">{u.grade}</div>
         </div>
-      </div>
+      </button>
     )
   }
 
-  const DeptBox = ({ title, members, align='center' }: { title: string, members: any[], align?: 'center'|'left' }) => {
-    if (!members.length) return null
-    return (
-      <div className="bg-white border border-indigo-100 rounded-2xl shadow-sm overflow-hidden min-w-[280px]">
-        <div className="bg-gray-50 border-b border-gray-100 px-4 py-3 flex items-center justify-between">
-          <span className="text-sm font-semibold text-gray-700">{title}</span>
-          <span className="text-xs text-gray-400">{members.length}명</span>
-        </div>
-        <div className={`p-5 flex gap-4 flex-wrap ${align === 'left' ? 'justify-start' : 'justify-center'}`}>
-          {sortPeople(members).map((u:any) => <Card key={u.id} u={u} large />)}
-        </div>
+  const GroupBox = ({ title, count, children, className = '' }: any) => (
+    <section className={`bg-gray-50 border border-[#cfcdf6] rounded-2xl overflow-hidden ${className}`}>
+      <div className="px-4 py-3 border-b border-gray-100 bg-white flex items-center justify-between">
+        <div className="text-sm font-bold text-gray-800">{title}</div>
+        {typeof count === 'number' ? <span className="text-xs text-gray-400">{count}명</span> : <span />}
       </div>
-    )
-  }
+      <div className="p-5">{children}</div>
+    </section>
+  )
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <h1 className="text-lg font-semibold text-gray-800 mb-6">조직도</h1>
+    <div className="p-4 sm:p-6 max-w-6xl mx-auto">
+      <div className="mb-6">
+        <h1 className="text-lg font-semibold text-gray-800">조직도</h1>
+      </div>
 
-      <div className="relative overflow-x-auto pb-4">
-        <div className="min-w-[980px] mx-auto px-6">
-          <div className="flex justify-center">
-            <div className="w-[420px]">
-              <DeptBox title="경영지원팀" members={directors} />
+      <div className="bg-white border border-gray-100 rounded-3xl shadow-sm p-4 sm:p-6 overflow-x-auto">
+        <div className="min-w-[980px] flex flex-col items-center">
+          <GroupBox title="경영지원팀" count={2} className="w-[620px]">
+            <div className="flex justify-center gap-16 w-full">
+              {ceo && <Card u={ceo} />}
+              {executive && <Card u={executive} />}
             </div>
-          </div>
+          </GroupBox>
 
-          <div className="h-10 flex justify-center">
-            <div className="w-px h-full bg-gray-300" />
-          </div>
-
-          <div className="grid grid-cols-[1fr_1fr] gap-20 items-center">
-            <div className="relative h-full min-h-[130px]">
-              <div className="absolute right-0 top-1/2 w-1/2 h-px bg-gray-300" />
-            </div>
-            <div className="relative">
-              <div className="absolute -left-10 top-1/2 w-10 h-px bg-gray-300" />
-              <DeptBox title="개발팀" members={devTeam} />
-            </div>
-          </div>
-
-          <div className="h-10 flex justify-center">
-            <div className="w-px h-full bg-gray-300" />
-          </div>
-
-          <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-8">
-            <div className="relative flex justify-end pt-4">
-              <div className="absolute right-0 top-0 w-1/2 h-px bg-gray-300" />
-              <div className="w-[390px]">
-                <DeptBox title="운영팀" members={opsTeam} align="left" />
+          {teamGroups.length > 0 && (
+            <>
+              <div className="flex flex-col items-center my-4">
+                {shortLine('w-px h-6')}
+                {shortLine('w-[340px] h-px')}
               </div>
-            </div>
-
-            <div className="w-px h-4 bg-gray-300 self-start" />
-
-            <div className="relative flex justify-start pt-4">
-              <div className="absolute left-0 top-0 w-1/2 h-px bg-gray-300" />
-              <div className="w-[390px]">
-                <DeptBox title="실무팀" members={workTeam} align="left" />
-              </div>
-            </div>
-          </div>
-
-          {otherDeptEntries.length > 0 && (
-            <div className="mt-10">
-              <div className="border-t border-gray-200 pt-6">
-                <div className="flex gap-6 justify-center flex-wrap">
-                  {otherDeptEntries.map(([dept, members]) => (
-                    <div key={dept} className="w-[320px]">
-                      <DeptBox title={dept} members={members} align="left" />
+              <div className="grid grid-cols-2 gap-8 w-full max-w-[820px] items-start">
+                {teamGroups.map(([dept, members]) => (
+                  <GroupBox key={dept} title={dept} count={members.length}>
+                    <div className="flex flex-wrap justify-center gap-4">
+                      {members.map((u: any) => <Card key={u.id} u={u} />)}
                     </div>
-                  ))}
+                  </GroupBox>
+                ))}
+              </div>
+            </>
+          )}
+
+          {hyungjoon && (
+            <>
+              <div className="w-full max-w-[820px] flex justify-end mt-4">
+                <div className="flex flex-col items-center w-[310px]">
+                  {shortLine('w-px h-6')}
+                  {shortLine('w-[155px] h-px self-start')}
                 </div>
               </div>
-            </div>
+              <div className="w-full max-w-[820px] flex justify-end">
+                <GroupBox title="개발팀" count={1} className="w-[310px]">
+                  <div className="flex justify-center">
+                    <Card u={hyungjoon} />
+                  </div>
+                </GroupBox>
+              </div>
+            </>
           )}
         </div>
       </div>
 
       {selected && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSelected(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-72 overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-2xl w-80 overflow-hidden" onClick={e => e.stopPropagation()}>
             <div className="bg-gray-50 flex items-center justify-center p-5" style={{ minHeight: '220px' }}>
-              {selected.avatar_url ? (
-                <img src={selected.avatar_url} alt={selected.name} className="max-w-full max-h-52 object-contain rounded-xl" />
-              ) : (
-                <div className="w-36 h-36 rounded-full flex items-center justify-center text-5xl font-bold" style={{ background: getColor(selected), color: '#fff' }}>
-                  {selected.name?.[0]}
-                </div>
-              )}
+              {selected.avatar_url
+                ? <img src={selected.avatar_url} alt={selected.name} className="max-w-full max-h-52 object-contain rounded-xl" />
+                : <div className="w-36 h-36 rounded-full flex items-center justify-center text-5xl font-bold" style={{ background: getColor(selected), color: '#fff' }}>{selected.name?.[0]}</div>}
             </div>
             <div className="p-5">
-              <div className="flex items-start justify-between mb-3">
+              <div className="flex items-start justify-between mb-3 gap-3">
                 <div>
                   <div className="text-xl font-bold text-gray-800">{selected.name}</div>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <span className="text-sm text-gray-500">{selected.dept}</span>
                     <span className="text-gray-300">·</span>
                     <span className="text-sm font-semibold text-purple-600">{selected.grade}</span>
                   </div>
                 </div>
-                <span className={`text-xs px-2 py-1 rounded-full flex-shrink-0 ${selected.role==='director'?'bg-purple-100 text-purple-700':'bg-gray-100 text-gray-500'}`}>
-                  {selected.role==='director' ? '관리자' : '직원'}
+                <span className={`text-xs px-2 py-1 rounded-full flex-shrink-0 ${selected.role === 'director' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-500'}`}>
+                  {selected.role === 'director' ? '관리자' : '직원'}
                 </span>
               </div>
               <div className="space-y-2 border-t border-gray-100 pt-3">
-                {[['이메일', selected.email], ['연락처', selected.tel], ['입사일', selected.join_date]]
-                  .filter(([,v]) => v)
-                  .map(([l, v]) => (
-                    <div key={String(l)} className="flex gap-3">
-                      <span className="text-gray-400 w-14 flex-shrink-0 text-xs">{l}</span>
-                      <span className="text-gray-700 text-xs">{v}</span>
-                    </div>
-                  ))}
+                {[
+                  ['부서', selected.dept],
+                  ['직급', selected.grade],
+                  ['이메일', selected.email],
+                  ['연락처', selected.tel],
+                  ['입사일', selected.join_date],
+                ].filter(([, v]) => v).map(([l, v]) => (
+                  <div key={String(l)} className="flex gap-3">
+                    <span className="text-gray-400 w-16 flex-shrink-0 text-xs">{l}</span>
+                    <span className="text-gray-700 text-xs break-all">{v}</span>
+                  </div>
+                ))}
               </div>
             </div>
             <div className="px-5 pb-5">
