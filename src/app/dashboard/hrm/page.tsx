@@ -2,7 +2,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { sortByGrade, formatWon } from '@/lib/attendance'
-import { AUTHORITY_LABEL } from '@/lib/org'
 
 async function uploadAvatar(file: File, userId: string) {
   const supabase = createClient()
@@ -25,12 +24,17 @@ export default function HrmPage() {
   const [pwAlert, setPwAlert] = useState('')
   const [pwLoading, setPwLoading] = useState(false)
   const [alert, setAlert] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'active'|'inactive'|'all'>('active')
   const fileRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
     const supabase = createClient()
-    const { data: s } = await supabase.from('profiles').select('*').eq('status','active')
-    setStaff(sortByGrade(s||[]))
+    const { data: s } = await supabase.from('profiles').select('*')
+    const rows = (s || []).sort((a:any,b:any) => {
+      if ((a.status === 'active') !== (b.status === 'active')) return a.status === 'active' ? -1 : 1
+      return 0
+    })
+    setStaff(sortByGrade(rows))
     const { data: sal } = await supabase.from('salary_info').select('*')
     setSalaries(sal||[])
   }, [])
@@ -45,30 +49,13 @@ export default function HrmPage() {
       if (url) avatarUrl = url
     }
     const supabase = createClient()
-    const baseUpdate: any = {
+    await supabase.from('profiles').update({
       name: editing.name, dept: editing.dept, grade: editing.grade,
       role: editing.role, join_date: editing.join_date, gender: editing.gender,
-      birth_date: editing.birth_date, tel: editing.tel, address: editing.address,
+      birth_date: editing.birth_date, resignation_date: editing.resignation_date, tel: editing.tel, address: editing.address,
       annual_leave: editing.annual_leave, avatar_url: avatarUrl, status: editing.status,
-    }
-    const orgUpdate: any = {
-      ...baseUpdate,
-      authority_role: editing.authority_role || 'staff',
-      org_level: Number(editing.org_level || 40),
-      manager_id: editing.manager_id || null,
-      can_approve: Boolean(editing.can_approve),
-      org_sort: Number(editing.org_sort || 999),
-    }
-    let { error } = await supabase.from('profiles').update(orgUpdate).eq('id', editing.id)
-    if (error && String(error.message || '').includes('authority_role')) {
-      await supabase.from('profiles').update(baseUpdate).eq('id', editing.id)
-      setAlert('기본 정보는 저장되었습니다. 조직 역할 항목은 Supabase SQL 적용 후 저장됩니다.')
-    } else if (error) {
-      setAlert('저장 실패: ' + error.message)
-      return
-    } else {
-      setAlert('저장되었습니다.')
-    }
+    }).eq('id', editing.id)
+    setAlert('저장되었습니다.')
     setEditing(null)
     load()
     setTimeout(()=>setAlert(''), 3000)
@@ -138,15 +125,28 @@ export default function HrmPage() {
 
       {/* 인사정보 탭 */}
       {tab==='info' && (
+        <div className="space-y-3">
+          <div className="flex gap-2 text-xs">
+            {[
+              {key:'active', label:'재직자'},
+              {key:'inactive', label:'퇴사자'},
+              {key:'all', label:'전체'},
+            ].map((f:any)=>(
+              <button key={f.key} onClick={()=>setStatusFilter(f.key)}
+                className={`px-3 py-1.5 rounded-full border ${statusFilter===f.key?'bg-purple-600 text-white border-purple-600':'bg-white text-gray-500 border-gray-200'}`}>
+                {f.label}
+              </button>
+            ))}
+          </div>
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="border-b border-gray-100">
-              {['사진','이름','부서','직급','입사일','성별','연락처','권한',''].map(h=>(
+              {['사진','이름','부서','직급','입사일','퇴사일','성별','연락처','권한','상태',''].map(h=>(
                 <th key={h} className="pb-2 text-left font-medium text-gray-400 pr-3 text-xs whitespace-nowrap">{h}</th>
               ))}
             </tr></thead>
             <tbody>
-              {staff.map(u=>(
+              {staff.filter((u:any)=>statusFilter==='all' || (statusFilter==='active' ? u.status==='active' : u.status!=='active')).map(u=>(
                 <tr key={u.id}
                   onClick={()=>setViewing(u)}
                   className="border-b border-gray-50 hover:bg-purple-50 cursor-pointer transition-colors">
@@ -155,12 +155,16 @@ export default function HrmPage() {
                   <td className="py-2 pr-3 text-gray-500 text-xs">{u.dept}</td>
                   <td className="py-2 pr-3">{u.grade}</td>
                   <td className="py-2 pr-3 text-gray-500 text-xs">{u.join_date}</td>
+                  <td className="py-2 pr-3 text-gray-500 text-xs">{u.resignation_date||'-'}</td>
                   <td className="py-2 pr-3 text-gray-500 text-xs">{u.gender||'-'}</td>
                   <td className="py-2 pr-3 text-gray-500 text-xs">{u.tel||'-'}</td>
                   <td className="py-2 pr-3">
                     <span className={u.role==='director'?'badge-pending':'badge-work'}>
                       {u.role==='director'?'관리자':'직원'}
                     </span>
+                  </td>
+                  <td className="py-2 pr-3">
+                    <span className={u.status==='active'?'badge-work':'badge-holiday'}>{u.status==='active'?'재직':'퇴사'}</span>
                   </td>
                   <td className="py-2">
                     <button onClick={e=>{e.stopPropagation();setEditing({...u})}}
@@ -170,6 +174,7 @@ export default function HrmPage() {
               ))}
             </tbody>
           </table>
+        </div>
         </div>
       )}
 
@@ -234,6 +239,7 @@ export default function HrmPage() {
                   ['로그인 이메일', viewing.email],
                   ['연락처', viewing.tel],
                   ['입사일', viewing.join_date],
+                  ['퇴사일', viewing.resignation_date],
                   ['생년월일', viewing.birth_date],
                   ['성별', viewing.gender],
                   ['주소', viewing.address],
@@ -333,6 +339,7 @@ export default function HrmPage() {
                   {label:'부서', key:'dept'},
                   {label:'직급', key:'grade'},
                   {label:'입사일', key:'join_date', type:'date'},
+                  {label:'퇴사일', key:'resignation_date', type:'date'},
                   {label:'생년월일', key:'birth_date', type:'date'},
                   {label:'연락처', key:'tel'},
                 ].map(f=>(
@@ -353,45 +360,11 @@ export default function HrmPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">시스템 권한</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">권한</label>
                   <select className="input text-sm" value={editing.role||'staff'}
                     onChange={e=>setEditing((p:any)=>({...p,role:e.target.value}))}>
                     <option value="staff">일반직원</option>
                     <option value="director">관리자</option>
-                  </select>
-                  <p className="text-[11px] text-gray-400 mt-1">접근 권한입니다. 실제 조직 서열은 아래 조직 역할로 관리합니다.</p>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">조직 역할</label>
-                  <select className="input text-sm" value={editing.authority_role||'staff'}
-                    onChange={e=>setEditing((p:any)=>({...p,authority_role:e.target.value}))}>
-                    {Object.entries(AUTHORITY_LABEL).map(([key,label])=>(
-                      <option key={key} value={key}>{label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">직속 상급자</label>
-                  <select className="input text-sm" value={editing.manager_id||''}
-                    onChange={e=>setEditing((p:any)=>({...p,manager_id:e.target.value||null}))}>
-                    <option value="">없음</option>
-                    {staff.filter((u:any)=>u.id!==editing.id).map((u:any)=>(
-                      <option key={u.id} value={u.id}>{u.name} {u.grade}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">조직 단계</label>
-                  <input type="number" className="input text-sm" value={editing.org_level||40}
-                    onChange={e=>setEditing((p:any)=>({...p,org_level:+e.target.value}))} />
-                  <p className="text-[11px] text-gray-400 mt-1">10 대표 / 20 이사 / 30 중간관리자 / 40 직원</p>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">결재 가능</label>
-                  <select className="input text-sm" value={editing.can_approve ? 'true' : 'false'}
-                    onChange={e=>setEditing((p:any)=>({...p,can_approve:e.target.value==='true'}))}>
-                    <option value="false">불가</option>
-                    <option value="true">가능</option>
                   </select>
                 </div>
                 <div>

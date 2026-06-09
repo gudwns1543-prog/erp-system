@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
-import { sortByGrade, isHoliday } from '@/lib/attendance'
+import { sortByGrade, isHoliday, calcLeaveBalance } from '@/lib/attendance'
 
 export default function AnnualPage() {
   const [profile, setProfile] = useState<any>(null)
@@ -23,57 +23,42 @@ export default function AnnualPage() {
     const { data: p } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
     setProfile(p)
 
-    // 직원 목록 (관리자만)
+    let targetProfiles: any[] = [p]
     if (p?.role === 'director') {
-      const { data: s } = await supabase.from('profiles').select('id,name,grade,dept,annual_leave,color,tc,avatar_url').eq('status','active')
-      setStaff(sortByGrade(s||[]))
+      const { data: s } = await supabase.from('profiles')
+        .select('id,name,grade,dept,annual_leave,join_date,status,color,tc,avatar_url')
+        .eq('status','active')
+      targetProfiles = s || []
+      setStaff(sortByGrade(targetProfiles))
     }
 
-    // 연차 사용 내역
-    const year = new Date().getFullYear()
-    const targetIds = p?.role === 'director'
-      ? (await supabase.from('profiles').select('id').eq('status','active')).data?.map((x:any) => x.id) || []
-      : [session.user.id]
-
+    const targetIds = targetProfiles.map((x:any)=>x.id).filter(Boolean)
     const { data: leaves } = await supabase.from('approvals')
       .select('requester_id,type,start_date,end_date,status')
-      .in('requester_id', targetIds)
+      .in('requester_id', targetIds.length ? targetIds : [session.user.id])
       .in('type', ['연차','반차(오전)','반차(오후)','반반차'])
       .in('status', ['approved','pending'])
-      .gte('start_date', year + '-01-01')
 
-    // 사용자별 집계
     const map: Record<string,any> = {}
-    ;(leaves||[]).forEach((l:any) => {
-      if (!map[l.requester_id]) map[l.requester_id] = { used: 0, history: [] }
-      let days = 0
-      if (l.type === '반반차') {
-        days = 2  // 2H
-      } else if (l.type === '반차(오전)' || l.type === '반차(오후)') {
-        days = 4  // 4H
-      } else {
-        // 연차: 주말/공휴일 제외한 실제 근무일 x 8H
-        const start = new Date(l.start_date + 'T12:00:00')
-        const end = new Date((l.end_date || l.start_date) + 'T12:00:00')
-        let count = 0
-        const cur = new Date(start)
-        while (cur <= end) {
-          const dow = cur.getDay()
-          const ds = `${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`
-          if (dow !== 0 && dow !== 6 && !isHoliday(ds)) count++
-          cur.setDate(cur.getDate() + 1)
-        }
-        days = count * 8  // 8H/일
+    for (const u of targetProfiles) {
+      const rows = (leaves || []).filter((l:any)=>l.requester_id === u.id)
+      const bal = calcLeaveBalance(u.join_date, rows, new Date())
+      map[u.id] = {
+        base: bal.totalHours,
+        used: bal.usedHours,
+        usedApproved: bal.usedApprovedHours,
+        usedPending: bal.usedPendingHours,
+        remain: bal.remainingHours,
+        grants: bal.validGrants,
+        history: rows.map((l:any)=>({ ...l, days: l.type === '연차' ? 8 : l.type === '반반차' ? 2 : 4 }))
       }
-      map[l.requester_id].used += days
-      map[l.requester_id].history.push({ ...l, days })
-    })
+    }
     setLeaveData(map)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  // 기본 연차 수정 (세팅연차)
+  // 기본 연차 수정 (발생연월차)
   async function saveBaseLeave(userId: string) {
     const supabase = createClient()
     await supabase.from('profiles').update({ annual_leave: editVal }).eq('id', userId)
@@ -100,9 +85,9 @@ export default function AnnualPage() {
           style={{background:u?.color||'#EEEDFE',color:u?.tc||'#3C3489'}}>{u?.name?.[0]}</div>
   )
 
-  const myData = leaveData[profile?.id] || { used: 0, history: [] }
-  const myBase = profile?.annual_leave || 0
-  const myRemain = myBase - myData.used
+  const myData = leaveData[profile?.id] || { used: 0, history: [], grants: [], base: 0, remain: 0 }
+  const myBase = myData.base || 0
+  const myRemain = myData.remain || 0
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -139,7 +124,7 @@ export default function AnnualPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
             {[
-              {label:'기본 연차', val:myBase+'H', c:'text-gray-700', sub:'연도 기준 세팅'},
+              {label:'발생 연/월차', val:myBase+'H', c:'text-gray-700', sub:'입사일 기준'},
               {label:'사용 연차', val:myData.used+'H', c:'text-amber-600', sub:'올해 사용'},
               {label:'잔여 연차', val:myRemain+'H', c:myRemain<=24?'text-red-600':'text-teal-600', sub:'사용 가능'},
             ].map(m=>(
@@ -192,15 +177,15 @@ export default function AnnualPage() {
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="border-b border-gray-100">
-              {['','이름','직급','세팅연차','사용','잔여','사용률',''].map(h=>(
+              {['','이름','직급','발생연월차','사용','잔여','사용률',''].map(h=>(
                 <th key={h} className="pb-2 text-left text-xs font-medium text-gray-400 pr-4 whitespace-nowrap">{h}</th>
               ))}
             </tr></thead>
             <tbody>
               {staff.map(u=>{
-                const data = leaveData[u.id] || { used:0 }
-                const base = u.annual_leave || 0
-                const remain = base - data.used
+                const data = leaveData[u.id] || { used:0, base:0, remain:0 }
+                const base = data.base || 0
+                const remain = data.remain || 0
                 const pct = base > 0 ? Math.round(data.used/base*100) : 0
                 return (
                   <tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50">

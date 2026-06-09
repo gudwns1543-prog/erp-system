@@ -96,6 +96,149 @@ export function calcAnnualLeave(joinDate: string): number {
   return Math.min(15 + Math.floor((years - 1) / 2), 25)
 }
 
+
+// ─── 입사일 기준 연/월차 발생 계산 ──────
+// 내부 단위: 1일 = 8H. 1년 미만 월차는 입사 후 1개월 만근 시 1일씩, 최대 11일로 계산합니다.
+export type LeaveGrantKind = 'monthly' | 'annual'
+export interface LeaveGrantBucket {
+  kind: LeaveGrantKind
+  label: string
+  grantDate: string
+  expireDate: string
+  days: number
+  hours: number
+  remainingHours: number
+}
+
+function dateOnly(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate())
+}
+function parseDateOnly(s?: string | null): Date | null {
+  if (!s) return null
+  const [y,m,d] = String(s).slice(0,10).split('-').map(Number)
+  if (!y || !m || !d) return null
+  return new Date(y, m-1, d)
+}
+function fmtDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+}
+function addMonthsSafe(d: Date, months: number): Date {
+  const r = new Date(d)
+  const day = r.getDate()
+  r.setMonth(r.getMonth() + months)
+  if (r.getDate() !== day) r.setDate(0)
+  return dateOnly(r)
+}
+function addYearsSafe(d: Date, years: number): Date {
+  const r = new Date(d)
+  r.setFullYear(r.getFullYear() + years)
+  return dateOnly(r)
+}
+
+export function leaveRequestHours(type: string, startDate?: string | null, endDate?: string | null): number {
+  if (type === '반반차') return 2
+  if (type === '반차(오전)' || type === '반차(오후)') return 4
+  if (type !== '연차') return 0
+  if (!startDate) return 0
+  const start = parseDateOnly(startDate)
+  const end = parseDateOnly(endDate || startDate)
+  if (!start || !end) return 0
+  let count = 0
+  const cur = new Date(start)
+  while (cur <= end) {
+    const ds = fmtDate(cur)
+    const dow = cur.getDay()
+    if (dow !== 0 && dow !== 6 && !isHoliday(ds)) count++
+    cur.setDate(cur.getDate() + 1)
+  }
+  return count * 8
+}
+
+export function buildLeaveGrants(joinDate?: string | null, asOfInput: Date = new Date()): LeaveGrantBucket[] {
+  const join = parseDateOnly(joinDate)
+  if (!join) return []
+  const asOf = dateOnly(asOfInput)
+  const buckets: LeaveGrantBucket[] = []
+
+  for (let m = 1; m <= 11; m++) {
+    const grant = addMonthsSafe(join, m)
+    if (grant > asOf) break
+    const expire = addYearsSafe(grant, 1)
+    buckets.push({
+      kind: 'monthly',
+      label: `${m}개월 만근 월차`,
+      grantDate: fmtDate(grant),
+      expireDate: fmtDate(expire),
+      days: 1,
+      hours: 8,
+      remainingHours: 8,
+    })
+  }
+
+  for (let year = 1; year <= 40; year++) {
+    const grant = addYearsSafe(join, year)
+    if (grant > asOf) break
+    const days = Math.min(15 + Math.floor((year - 1) / 2), 25)
+    const expire = addYearsSafe(grant, 1)
+    buckets.push({
+      kind: 'annual',
+      label: `${year}년 근속 연차`,
+      grantDate: fmtDate(grant),
+      expireDate: fmtDate(expire),
+      days,
+      hours: days * 8,
+      remainingHours: days * 8,
+    })
+  }
+
+  return buckets.sort((a,b) => a.expireDate.localeCompare(b.expireDate) || a.grantDate.localeCompare(b.grantDate))
+}
+
+export function calcLeaveBalance(joinDate: string | null | undefined, approvals: any[] = [], asOfInput: Date = new Date()) {
+  const asOf = dateOnly(asOfInput)
+  const buckets = buildLeaveGrants(joinDate, asOf)
+  const usageRows = (approvals || [])
+    .filter((a:any) => ['연차','반차(오전)','반차(오후)','반반차'].includes(a.type))
+    .filter((a:any) => ['approved','pending'].includes(a.status || 'approved'))
+    .map((a:any) => ({ ...a, hours: leaveRequestHours(a.type, a.start_date, a.end_date || a.start_date) }))
+    .filter((a:any) => a.hours > 0)
+    .sort((a:any,b:any) => String(a.start_date).localeCompare(String(b.start_date)))
+
+  let usedApprovedHours = 0
+  let usedPendingHours = 0
+
+  for (const u of usageRows) {
+    let need = u.hours
+    const useDate = parseDateOnly(u.start_date) || asOf
+    const available = buckets
+      .filter(b => parseDateOnly(b.grantDate)! <= useDate && parseDateOnly(b.expireDate)! > useDate && b.remainingHours > 0)
+      .sort((a,b) => a.expireDate.localeCompare(b.expireDate) || a.grantDate.localeCompare(b.grantDate))
+    for (const b of available) {
+      if (need <= 0) break
+      const take = Math.min(b.remainingHours, need)
+      b.remainingHours -= take
+      need -= take
+      if (u.status === 'pending') usedPendingHours += take
+      else usedApprovedHours += take
+    }
+  }
+
+  const validBuckets = buckets.filter(b => parseDateOnly(b.expireDate)! > asOf)
+  const totalHours = validBuckets.reduce((s,b)=>s+b.hours,0)
+  const remainingHours = validBuckets.reduce((s,b)=>s+b.remainingHours,0)
+  const usedHours = Math.max(0, totalHours - remainingHours)
+
+  return {
+    totalHours,
+    remainingHours,
+    usedHours,
+    usedApprovedHours,
+    usedPendingHours,
+    grants: buckets,
+    validGrants: validBuckets,
+  }
+}
+
 export interface SalaryInput {
   annual: number; dependents: number; meal: number; transport: number; comm: number
   regH: number; extH: number; nightH: number; holH: number; holExtH: number; holNightH: number
@@ -122,18 +265,14 @@ function calcIncomeTax(taxable: number, dep: number): number {
 }
 
 export function calcSalary(input: SalaryInput): SalaryResult {
-  const monthlyContract = input.annual / 12
-  const allowance   = (input.meal || 0) + (input.transport || 0) + (input.comm || 0)
-  // 월급제 계약금액은 기본급 + 비과세수당(식대/통신비/교통비)으로 구성됩니다.
-  // 예: 연봉 6천만원 → 월 500만원 = 기본급 478만원 + 식대 20만원 + 통신비 2만원
-  const base = Math.max(0, monthlyContract - allowance)
-  // 시간외/야간 수당 계산 기준 시급은 기존 정책대로 계약월액 ÷ 209시간을 유지합니다.
-  const rate = monthlyContract / 209
+  const rate = input.annual / 12 / 209
+  const base = input.annual / 12
   const payExt      = input.extH      * rate * 1.5
   const payNight    = input.nightH    * rate * 2.0
   const payHol      = input.holH      * rate * 1.5
   const payHolExt   = input.holExtH   * rate * 2.0
   const payHolNight = input.holNightH * rate * 2.5
+  const allowance   = input.meal + input.transport + input.comm
   const grossTaxable = base + payExt + payNight + payHol + payHolExt + payHolNight
   const grossTotal   = grossTaxable + allowance
   const pension    = Math.round(grossTaxable * 0.045)

@@ -2,7 +2,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { GRADE_ORDER } from '@/lib/attendance'
-import { sortByOrgAuthority } from '@/lib/org'
 
 const DEPT_COLORS = [
   '#534AB7','#185FA5','#0F6E56','#A32D2D',
@@ -10,16 +9,16 @@ const DEPT_COLORS = [
   '#1A6B45','#7B3F6E','#2C5F8A','#5C6B1A',
 ]
 
-const TEAM_ORDER = ['운영팀', '실무팀']
+const TEAM_ORDER = ['운영팀', '실무팀', '기타']
 const NAME_ORDER: Record<string, number> = {
   '송영아': 10,
   '박팔주': 20,
   '박형준': 30,
   '박황규': 41,
   '박형규': 41,
-  '김재현': 42,
-  '박희원': 43,
-  '김경세': 44,
+  '김덕규': 42,
+  '김경세': 43,
+  '김재현': 44,
 }
 
 function sortMembers(a: any, b: any) {
@@ -31,7 +30,7 @@ function sortMembers(a: any, b: any) {
   return String(a.name || '').localeCompare(String(b.name || ''), 'ko')
 }
 
-function shortLine(className = '') {
+function line(className = '') {
   return <div className={`bg-gray-300 ${className}`} aria-hidden="true" />
 }
 
@@ -41,23 +40,29 @@ export default function OrgPage() {
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.from('profiles').select('*').eq('status', 'active').then(({ data }) => {
-      setStaff(sortByOrgAuthority(data || []))
+    supabase.from('profiles').select('*').eq('status','active').then(({ data }) => {
+      setStaff((data || []).sort(sortMembers))
     })
   }, [])
-
-  const deptColorMap = useMemo(() => {
-    const map: Record<string, string> = {}
-    const allDepts = staff.map(u => u.dept || '기타').filter((d, i, arr) => arr.indexOf(d) === i)
-    allDepts.forEach((d, i) => { map[d] = DEPT_COLORS[i % DEPT_COLORS.length] })
-    return map
-  }, [staff])
-
-  const getColor = (u: any) => deptColorMap[u.dept || '기타'] || DEPT_COLORS[0]
 
   const ceo = staff.find(u => u.name === '송영아')
   const executive = staff.find(u => u.name === '박팔주')
   const hyungjoon = staff.find(u => u.name === '박형준')
+
+  const displayDept = (u: any) => {
+    if (u?.name === '송영아' || u?.name === '박팔주') return '경영지원팀'
+    if (u?.name === '박형준') return '개발팀'
+    return u?.dept || '기타'
+  }
+
+  const deptColorMap = useMemo(() => {
+    const map: Record<string, string> = {}
+    const allDepts = staff.map(displayDept).filter((d, i, arr) => arr.indexOf(d) === i)
+    allDepts.forEach((d, i) => { map[d] = DEPT_COLORS[i % DEPT_COLORS.length] })
+    return map
+  }, [staff])
+
+  const getColor = (u: any) => deptColorMap[displayDept(u)] || DEPT_COLORS[0]
 
   const teamGroups = useMemo(() => {
     const exclude = new Set(['송영아', '박팔주', '박형준'])
@@ -76,15 +81,15 @@ export default function OrgPage() {
     })
   }, [staff])
 
-  const Card = ({ u }: { u: any }) => {
+  const Card = ({ u, large = false }: { u: any, large?: boolean }) => {
     const color = getColor(u)
     return (
       <button
-        onClick={() => setSelected(u)}
-        className="w-40 rounded-2xl overflow-hidden shadow-sm cursor-pointer hover:shadow-lg hover:-translate-y-1 transition-all duration-200 bg-white text-left flex-shrink-0"
+        onClick={() => setSelected({...u, dept: displayDept(u)})}
+        className={`${large ? 'w-40' : 'w-36'} rounded-2xl overflow-hidden shadow-sm cursor-pointer hover:shadow-lg hover:-translate-y-1 transition-all duration-200 bg-white text-left flex-shrink-0`}
         style={{ border: `2px solid ${color}35` }}
       >
-        <div className="h-44 flex items-center justify-center overflow-hidden" style={{ background: `${color}10` }}>
+        <div className={`${large ? 'h-44' : 'h-36'} flex items-center justify-center overflow-hidden`} style={{ background: `${color}10` }}>
           {u.avatar_url
             ? <img src={u.avatar_url} alt={u.name} className="w-full h-full object-cover object-top" />
             : <div className="w-full h-full flex items-center justify-center text-4xl font-bold" style={{ background: color, color: '#fff' }}>{u.name?.[0]}</div>}
@@ -111,33 +116,38 @@ export default function OrgPage() {
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
       <div className="mb-6">
         <h1 className="text-lg font-semibold text-gray-800">조직도</h1>
-        <p className="text-xs text-gray-500 mt-1">부서와 직급 기준으로 조직 구성을 표시합니다.</p>
+        <p className="text-xs text-gray-500 mt-1">경영지원팀, 개발팀 협업 포지션, 운영/실무팀을 분리 표시합니다.</p>
       </div>
 
       <div className="bg-white border border-gray-100 rounded-3xl shadow-sm p-4 sm:p-6 overflow-x-auto">
         <div className="min-w-[920px] flex flex-col items-center">
           <GroupBox title="경영지원팀" className="w-[620px]">
-            <div className="flex flex-col items-center">
-              <div className="flex justify-center gap-16 w-full">
-                {ceo && <Card u={ceo} />}
-                {executive && <Card u={executive} />}
-              </div>
-              {hyungjoon && (
-                <>
-                  <div className="flex flex-col items-center my-3">
-                    {shortLine('w-px h-6')}
-                  </div>
-                  <Card u={hyungjoon} />
-                </>
-              )}
+            <div className="flex justify-center gap-16 w-full">
+              {ceo && <Card u={{...ceo, dept:'경영지원팀'}} large />}
+              {executive && <Card u={{...executive, dept:'경영지원팀'}} large />}
             </div>
           </GroupBox>
+
+          {hyungjoon && (
+            <>
+              <div className="flex flex-col items-center my-4">{line('w-px h-6')}</div>
+              <GroupBox title="개발팀 · 외부 협업" count={1} className="w-[380px] bg-blue-50/40">
+                <div className="flex flex-col items-center gap-2">
+                  <Card u={{...hyungjoon, dept:'개발팀'}} />
+                  <div className="text-[11px] text-gray-500 text-center leading-relaxed">
+                    퇴사 후 간헐적으로 개발·업무 보조를 수행하는 별도 협업 포지션입니다.<br />
+                    운영팀/실무팀 일반 직원 라인과 분리 표시합니다.
+                  </div>
+                </div>
+              </GroupBox>
+            </>
+          )}
 
           {teamGroups.length > 0 && (
             <>
               <div className="flex flex-col items-center my-4">
-                {shortLine('w-px h-6')}
-                {shortLine('w-[340px] h-px')}
+                {line('w-px h-6')}
+                {line('w-[340px] h-px')}
               </div>
               <div className="grid grid-cols-2 gap-8 w-full max-w-[820px] items-start">
                 {teamGroups.map(([dept, members]) => (
